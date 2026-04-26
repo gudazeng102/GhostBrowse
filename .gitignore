@@ -37,3 +37,6 @@ temp/
 # Database (开发环境)
 *.db
 *.db-journal
+
+# Browser profiles (每个窗口独立的 Chrome 用户数据)
+profiles/

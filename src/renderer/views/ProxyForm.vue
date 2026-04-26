@@ -74,7 +74,8 @@
                 <a-form-item label="主机地址" name="host">
                   <a-input
                     v-model:value="formState.host"
-                    placeholder="如：127.0.0.1 或 proxy.example.com"
+                    placeholder="如：127.0.0.1 或 proxy.example.com，支持粘贴自动解析"
+                    @paste="handleHostPaste"
                   />
                 </a-form-item>
               </a-col>
@@ -402,6 +403,146 @@ function handleBack() {
 // 取消（已改为调用 handleBack）
 function handleCancel() {
   handleBack()
+}
+
+// ==================== 代理粘贴自动解析功能 ====================
+
+/**
+ * 解析代理格式
+ * 支持格式：
+ * - host:port
+ * - host:port:username:password
+ * - protocol://host:port
+ * - protocol://username:password@host:port
+ * - socks5://username:password@host:port
+ */
+interface ParsedProxy {
+  type: 'http' | 'https' | 'socks5'
+  host: string
+  port: number
+  username?: string
+  password?: string
+}
+
+function parseProxyString(input: string): ParsedProxy | null {
+  let trimmed = input.trim()
+  
+  // 去掉可能的前后空格和引号
+  trimmed = trimmed.replace(/^["']|["']$/g, '')
+  
+  let type: 'http' | 'https' | 'socks5' = 'http'
+  let remaining = trimmed
+  
+  // 检测协议前缀
+  const protocolMatch = trimmed.match(/^(https?|socks5):\/\//i)
+  if (protocolMatch) {
+    const protocol = protocolMatch[1].toLowerCase()
+    if (protocol === 'https') {
+      type = 'https'
+    } else if (protocol === 'socks5') {
+      type = 'socks5'
+    } else {
+      type = 'http'
+    }
+    remaining = trimmed.slice(protocolMatch[0].length)
+  }
+  
+  // 去掉认证信息部分
+  let hostPort = remaining
+  let username: string | undefined
+  let password: string | undefined
+  
+  const atIndex = remaining.indexOf('@')
+  if (atIndex !== -1) {
+    const authPart = remaining.slice(0, atIndex)
+    hostPort = remaining.slice(atIndex + 1)
+    
+    // 解析认证信息（URL 编码的可能包含 :）
+    const colonIndex = authPart.indexOf(':')
+    if (colonIndex !== -1) {
+      username = decodeURIComponent(authPart.slice(0, colonIndex))
+      password = decodeURIComponent(authPart.slice(colonIndex + 1))
+    } else {
+      username = decodeURIComponent(authPart)
+    }
+  }
+  
+  // 解析 host:port
+  // IPv6 格式: [::1]:8080
+  const ipv6Match = hostPort.match(/^\[([^\]]+)\]:(\d+)$/)
+  if (ipv6Match) {
+    return {
+      type,
+      host: ipv6Match[1],
+      port: parseInt(ipv6Match[2], 10),
+      username,
+      password
+    }
+  }
+  
+  // 普通格式: host:port（port 必须是数字且在合理范围内）
+  const parts = hostPort.split(':')
+  if (parts.length >= 2) {
+    // 最后一个部分是端口
+    const portStr = parts[parts.length - 1]
+    const port = parseInt(portStr, 10)
+    
+    // 验证端口是数字且在有效范围内
+    if (!isNaN(port) && port >= 1 && port <= 65535) {
+      // host 是除了最后一个部分之外的所有部分
+      const host = parts.slice(0, -1).join(':')
+      
+      if (host) {
+        return {
+          type,
+          host,
+          port,
+          username,
+          password
+        }
+      }
+    }
+  }
+  
+  return null
+}
+
+/**
+ * 处理主机地址粘贴事件
+ * 自动解析粘贴的代理格式并填充表单
+ */
+async function handleHostPaste(e: Event) {
+  const event = e as ClipboardEvent
+  const clipboardData = event.clipboardData
+  
+  if (!clipboardData) return
+  
+  // 获取粘贴的文本
+  const pastedText = clipboardData.getData('text')
+  
+  if (!pastedText) return
+  
+  // 尝试解析
+  const parsed = parseProxyString(pastedText)
+  
+  if (parsed) {
+    // 阻止默认粘贴行为
+    event.preventDefault()
+    
+    // 自动填充表单
+    formState.type = parsed.type
+    formState.host = parsed.host
+    formState.port = parsed.port
+    
+    if (parsed.username) {
+      formState.username = parsed.username
+    }
+    if (parsed.password) {
+      formState.password = parsed.password
+    }
+    
+    message.success(`已自动解析代理：${parsed.type}://${parsed.host}:${parsed.port}`)
+  }
 }
 
 onMounted(() => {

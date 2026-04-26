@@ -361,6 +361,9 @@ router.post('/:id/check', async (req: Request, res: Response) => {
     const { id } = req.params
     const { channel } = req.body as { channel: string }
     
+    console.log(`[Proxy Check] 检测请求: proxyId=${id}, channel=${channel}`)
+    console.log(`[Proxy Check] 请求体:`, JSON.stringify(req.body))
+    
     // 1. 验证渠道
     const channelConfig = CHECK_CHANNELS.find(c => c.id === channel)
     if (!channelConfig) {
@@ -377,6 +380,15 @@ router.post('/:id/check', async (req: Request, res: Response) => {
       SELECT id, name, type, host, port, username, password
       FROM proxies WHERE id = ?
     `).get(Number(id)) as ProxyRecord | undefined
+    
+    console.log(`[Proxy Check] 从数据库加载代理:`, {
+      id: proxy?.id,
+      name: proxy?.name,
+      type: proxy?.type,
+      host: proxy?.host,
+      port: proxy?.port,
+      hasAuth: !!proxy?.username
+    })
     
     if (!proxy) {
       return res.status(404).json({
