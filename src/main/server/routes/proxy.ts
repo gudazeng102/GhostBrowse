@@ -322,6 +322,10 @@ router.delete('/:id', (req: Request, res: Response) => {
       })
     }
     
+    // 【Bug 修复】删除代理前，先将关联的 profiles 的 proxy_id 设为 NULL
+    // 避免 FOREIGN KEY constraint failed 错误
+    db.prepare(`UPDATE profiles SET proxy_id = NULL WHERE proxy_id = ?`).run(Number(id))
+    
     const result = db.prepare(`DELETE FROM proxies WHERE id = ?`).run(Number(id))
     
     res.json({
