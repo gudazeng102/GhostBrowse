@@ -12,6 +12,7 @@ import { initDatabase } from './db'
 
 // 导入路由模块
 import proxyRouter from './routes/proxy'
+import profileRouter from './routes/profile'
 
 // Express 应用实例
 let app: Express | null = null
@@ -81,6 +82,9 @@ export function createApp(): Express {
 
   // ==================== 代理管理 API（Phase 1.1） ====================
   app.use('/api/v1/proxies', proxyRouter)
+
+  // ==================== 窗口配置 API（Phase 1.3） ====================
+  app.use('/api/v1/profiles', profileRouter)
 
   // ==================== 捕获所有路由，返回 index.html (SPA 支持) ====================
   app.get('*', (req: Request, res: Response) => {

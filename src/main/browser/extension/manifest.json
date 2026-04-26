@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "GhostBrowse Fingerprint",
+  "version": "1.0",
+  "description": "Inject fingerprint spoofing for GhostBrowse browser profiles",
+  "permissions": ["scripting"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}
