@@ -1,0 +1,38 @@
+{
+  "productName": "GhostBrowse",
+  "appId": "com.ghostbrowse.app",
+  "directories": {
+    "output": "release",
+    "buildResources": "resources"
+  },
+  "files": [
+    "dist/**/*",
+    "dist-electron/**/*",
+    "resources/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "resources",
+      "to": "resources"
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "artifactName": "${productName} Setup ${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "GhostBrowse"
+  },
+  "asar": true,
+  "compression": "maximum"
+}
