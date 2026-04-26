@@ -61,8 +61,20 @@ const CHROME_USER_AGENTS: Record<string, string> = {
   '134': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36'
 }
 
-/** Chrome Extension 模板目录 */
-const EXTENSION_TEMPLATE_DIR = path.join(__dirname, 'extension')
+/** Chrome Extension 模板目录 
+ * 开发模式: 使用 src/main/browser/extension
+ * 打包模式: 使用 app.getAppPath() 下的 extension 目录
+ */
+function getExtensionTemplateDir(): string {
+  // 检查是否打包
+  if (app.isPackaged) {
+    // 打包模式：从 app 目录读取
+    return path.join(app.getAppPath(), 'dist-electron', 'main', 'browser', 'extension')
+  } else {
+    // 开发模式：从源代码目录读取
+    return path.join(process.cwd(), 'src', 'main', 'browser', 'extension')
+  }
+}
 
 // ==================== Chrome 路径查找 ====================
 
@@ -115,12 +127,12 @@ function generateExtension(profile: Profile, proxy: Proxy | null): string {
   fs.mkdirSync(tempDir, { recursive: true })
   
   // 读取 manifest 模板
-  const manifestPath = path.join(EXTENSION_TEMPLATE_DIR, 'manifest.json')
+  const manifestPath = path.join(getExtensionTemplateDir(), 'manifest.json')
   let manifestContent = fs.readFileSync(manifestPath, 'utf-8')
   fs.writeFileSync(path.join(tempDir, 'manifest.json'), manifestContent)
   
   // 读取 content-script 模板并替换配置
-  const contentScriptPath = path.join(EXTENSION_TEMPLATE_DIR, 'content-script.js')
+  const contentScriptPath = path.join(getExtensionTemplateDir(), 'content-script.js')
   let contentScript = fs.readFileSync(contentScriptPath, 'utf-8')
   
   // 构建配置对象

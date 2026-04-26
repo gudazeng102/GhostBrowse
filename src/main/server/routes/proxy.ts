@@ -322,8 +322,10 @@ router.delete('/:id', (req: Request, res: Response) => {
       })
     }
     
-    // 【Bug 修复】删除代理前，先将关联的 profiles 的 proxy_id 设为 NULL
-    // 避免 FOREIGN KEY constraint failed 错误
+    // 【Bug 修复】删除代理前，需要处理所有关联数据
+    // 1. proxy_checks 表的 proxy_id 是 NOT NULL，必须先删除记录
+    db.prepare(`DELETE FROM proxy_checks WHERE proxy_id = ?`).run(Number(id))
+    // 2. profiles 表的 proxy_id 设为 NULL（允许为空）
     db.prepare(`UPDATE profiles SET proxy_id = NULL WHERE proxy_id = ?`).run(Number(id))
     
     const result = db.prepare(`DELETE FROM proxies WHERE id = ?`).run(Number(id))
@@ -491,6 +493,53 @@ router.post('/:id/check', async (req: Request, res: Response) => {
       code: 500,
       data: null,
       message: err.message || '检测失败'
+    })
+  }
+})
+
+/**
+ * POST /api/v1/proxies/batch-delete
+ * 批量删除代理（在事务中执行）
+ */
+router.post('/batch-delete', (req: Request, res: Response) => {
+  try {
+    const { ids } = req.body as { ids: number[] }
+    
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        code: 400,
+        data: null,
+        message: '请提供要删除的代理 ID 列表'
+      })
+    }
+    
+    const db = getDatabase()
+    
+    // 在事务中执行批量删除
+    const deleteTransaction = db.transaction((idList: number[]) => {
+      for (const id of idList) {
+        // 1. 删除关联的 proxy_checks 记录
+        db.prepare(`DELETE FROM proxy_checks WHERE proxy_id = ?`).run(id)
+        // 2. 将关联的 profiles 的 proxy_id 设为 NULL
+        db.prepare(`UPDATE profiles SET proxy_id = NULL WHERE proxy_id = ?`).run(id)
+        // 3. 删除代理
+        db.prepare(`DELETE FROM proxies WHERE id = ?`).run(id)
+      }
+    })
+    
+    deleteTransaction(ids)
+    
+    res.json({
+      code: 0,
+      data: { deletedCount: ids.length },
+      message: `成功删除 ${ids.length} 条代理`
+    })
+  } catch (err: any) {
+    console.error('[Proxy API] 批量删除失败:', err)
+    res.status(500).json({
+      code: 500,
+      data: null,
+      message: err.message || '批量删除失败'
     })
   }
 })

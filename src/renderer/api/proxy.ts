@@ -110,6 +110,15 @@ export async function deleteProxy(id: number): Promise<{ changes: number }> {
   return response.data.data
 }
 
+/**
+ * 批量删除代理（使用事务）
+ * @param ids 代理 ID 数组
+ */
+export async function batchDeleteProxy(ids: number[]): Promise<{ deletedCount: number }> {
+  const response = await request.post<any>('/proxies/batch-delete', { ids })
+  return response.data.data
+}
+
 // ==================== Phase 1.2: 代理检测 API ====================
 
 /**

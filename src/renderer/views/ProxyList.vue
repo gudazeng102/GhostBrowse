@@ -96,7 +96,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { getProxyList, deleteProxy, type ProxyRecord } from '../api/proxy'
+import { getProxyList, deleteProxy, batchDeleteProxy, type ProxyRecord } from '../api/proxy'
 
 const router = useRouter()
 
@@ -233,7 +233,7 @@ async function handleDelete(record: ProxyRecord) {
   }
 }
 
-// 优化2：批量删除
+// 优化2：批量删除（使用数组一次性提交）
 async function handleBatchDelete() {
   if (selectedRowKeys.value.length === 0) {
     message.warning('请先选择要删除的代理')
@@ -248,33 +248,20 @@ async function handleBatchDelete() {
     cancelText: '取消',
     okButtonProps: { danger: true },
     async onOk() {
-      let successCount = 0
-      let failCount = 0
-      
-      // 循环删除选中的代理
-      for (const id of selectedRowKeys.value) {
-        try {
-          await deleteProxy(id)
-          successCount++
-        } catch (error) {
-          console.error(`删除代理 ${id} 失败:`, error)
-          failCount++
-        }
+      try {
+        // 使用批量删除 API，一次性传递 ID 数组
+        const result = await batchDeleteProxy(selectedRowKeys.value)
+        message.success(`批量删除成功，共删除 ${result.deletedCount} 条`)
+      } catch (error: any) {
+        console.error('批量删除失败:', error)
+        message.error(error?.response?.data?.message || '批量删除失败')
+      } finally {
+        // 清空选中状态
+        selectedRowKeys.value = []
+        selectedRows.value = []
+        // 刷新列表
+        loadProxyList()
       }
-      
-      // 清空选中状态
-      selectedRowKeys.value = []
-      selectedRows.value = []
-      
-      // 显示结果
-      if (failCount === 0) {
-        message.success(`批量删除成功，共删除 ${successCount} 条`)
-      } else {
-        message.warning(`删除完成：成功 ${successCount} 条，失败 ${failCount} 条`)
-      }
-      
-      // 刷新列表
-      loadProxyList()
     }
   })
 }
