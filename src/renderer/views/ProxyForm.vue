@@ -1,6 +1,12 @@
 <template>
   <div class="proxy-form-container">
-    <h1 class="page-title">{{ isEdit ? '✏️ 编辑代理' : '➕ 新建代理' }}</h1>
+    <!-- 优化3：页面标题区增加返回按钮 -->
+    <div class="page-header">
+      <a-button type="link" @click="handleBack">
+        <LeftOutlined /> 返回
+      </a-button>
+      <h1 class="page-title">{{ isEdit ? '✏️ 编辑代理' : '➕ 新建代理' }}</h1>
+    </div>
 
     <a-form
       ref="formRef"
@@ -121,7 +127,8 @@
                 <a-button type="primary" @click="handleSubmit" :loading="submitting">
                   {{ isEdit ? '保存修改' : '保存' }}
                 </a-button>
-                <a-button @click="handleCancel">取消</a-button>
+                <!-- 优化3：保留取消按钮也返回列表 -->
+                <a-button @click="handleBack">取消</a-button>
               </a-space>
             </div>
           </a-card>
@@ -199,6 +206,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
+import { LeftOutlined } from '@ant-design/icons-vue'
 import type { FormInstance } from 'ant-design-vue'
 import { getProxyDetail, createProxy, updateProxy, checkProxy, getProxyChecks, type ProxyRecord, type ProxyDto, type CheckChannel, type ProxyCheckResult } from '../api/proxy'
 
@@ -386,9 +394,14 @@ async function handleSubmit() {
   }
 }
 
-// 取消
-function handleCancel() {
+// 优化3：返回按钮处理函数
+function handleBack() {
   router.push('/proxy')
+}
+
+// 取消（已改为调用 handleBack）
+function handleCancel() {
+  handleBack()
 }
 
 onMounted(() => {
@@ -404,8 +417,15 @@ onMounted(() => {
   padding: 0;
 }
 
-.page-title {
+/* 优化3：页面标题区布局 */
+.page-header {
+  display: flex;
+  align-items: center;
   margin-bottom: 24px;
+}
+
+.page-title {
+  margin: 0 0 0 8px;
   font-size: 24px;
   font-weight: 600;
   color: #262626;

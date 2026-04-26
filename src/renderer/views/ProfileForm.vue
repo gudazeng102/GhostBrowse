@@ -1,6 +1,12 @@
 <template>
   <div class="profile-form-container">
-    <h1 class="page-title">{{ isEdit ? '✏️ 编辑窗口' : '➕ 新建窗口' }}</h1>
+    <!-- 优化3：页面标题区增加返回按钮 -->
+    <div class="page-header">
+      <a-button type="link" @click="handleBack">
+        <LeftOutlined /> 返回
+      </a-button>
+      <h1 class="page-title">{{ isEdit ? '✏️ 编辑窗口' : '➕ 新建窗口' }}</h1>
+    </div>
 
     <a-form
       ref="formRef"
@@ -9,34 +15,40 @@
       layout="vertical"
       class="profile-form"
     >
-      <!-- 上半部分：左右分栏 -->
-      <a-row :gutter="24">
-        <!-- 左侧：基础配置 -->
-        <a-col :span="12">
-          <a-card title="基础配置" :bordered="false">
+      <!-- 基本信息卡片 -->
+      <a-card title="基本信息" :bordered="false" style="margin-bottom: 16px;">
+        <a-row :gutter="16">
+          <a-col :span="12">
             <a-form-item label="窗口标题" name="title">
               <a-input
                 v-model:value="formState.title"
-                placeholder="请输入窗口标题，如：美国代理窗口"
+                placeholder="如：账号1-美国代理"
                 :maxlength="50"
               />
             </a-form-item>
-
-            <a-form-item label="代理" name="proxyId">
+          </a-col>
+          <a-col :span="12">
+            <a-form-item label="绑定代理" name="proxyId">
               <a-select
                 v-model:value="formState.proxyId"
-                placeholder="请选择代理（可选）"
+                placeholder="选择代理（可选）"
                 allowClear
-                :loading="proxyLoading"
               >
                 <a-select-option v-for="proxy in proxyList" :key="proxy.id" :value="proxy.id">
                   {{ proxy.name }} ({{ proxy.host }}:{{ proxy.port }})
                 </a-select-option>
               </a-select>
             </a-form-item>
+          </a-col>
+        </a-row>
+      </a-card>
 
+      <!-- 浏览器指纹卡片 -->
+      <a-card title="🖥️ 浏览器指纹" :bordered="false" style="margin-bottom: 16px;">
+        <a-row :gutter="16">
+          <a-col :span="8">
             <a-form-item label="Chrome 版本" name="chromeVersion">
-              <a-select v-model:value="formState.chromeVersion" placeholder="请选择 Chrome 版本">
+              <a-select v-model:value="formState.chromeVersion">
                 <a-select-option value="124">Chrome 124</a-select-option>
                 <a-select-option value="128">Chrome 128</a-select-option>
                 <a-select-option value="130">Chrome 130</a-select-option>
@@ -44,147 +56,137 @@
                 <a-select-option value="134">Chrome 134</a-select-option>
               </a-select>
             </a-form-item>
-
-            <a-form-item label="操作系统">
-              <a-select v-model:value="formState.os" disabled>
-                <a-select-option value="Windows">Windows</a-select-option>
-              </a-select>
-            </a-form-item>
-          </a-card>
-        </a-col>
-
-        <!-- 右侧：指纹配置 -->
-        <a-col :span="12">
-          <a-card title="指纹配置" :bordered="false">
-            <a-form-item label="WebRTC">
-              <a-select v-model:value="formState.webrtcMode">
-                <a-select-option value="forward">转发（保持原样）</a-select-option>
-                <a-select-option value="replace">替换真实（显示代理IP）</a-select-option>
-                <a-select-option value="disable">禁用（完全阻止）</a-select-option>
-              </a-select>
-            </a-form-item>
-
-            <a-form-item label="时区">
-              <a-select v-model:value="formState.timezoneMode" disabled>
-                <a-select-option value="ip">基于 IP（自动获取）</a-select-option>
-              </a-select>
-            </a-form-item>
-
-            <a-form-item label="地理位置">
-              <a-select v-model:value="formState.geolocationMode" disabled>
-                <a-select-option value="ip">基于 IP（自动获取）</a-select-option>
-              </a-select>
-            </a-form-item>
-
-            <a-form-item label="语言">
-              <a-select v-model:value="formState.languageMode" disabled>
-                <a-select-option value="ip">基于 IP（自动获取）</a-select-option>
-              </a-select>
-            </a-form-item>
-
-            <a-form-item label="界面语言">
-              <a-select v-model:value="formState.uiLanguage" disabled>
-                <a-select-option value="zh-CN">中文</a-select-option>
-              </a-select>
-            </a-form-item>
-
-            <a-form-item label="分辨率">
-              <a-select v-model:value="formState.screenResolution" disabled>
-                <a-select-option value="1920x1080">1920×1080（16寸笔记本）</a-select-option>
-              </a-select>
-            </a-form-item>
-
-            <a-form-item label="字体">
-              <a-select v-model:value="formState.font" disabled>
-                <a-select-option value="default">默认</a-select-option>
-              </a-select>
-            </a-form-item>
-
-            <a-form-item label="Canvas 指纹">
-              <a-select v-model:value="formState.canvasMode">
-                <a-select-option value="default">默认</a-select-option>
-                <a-select-option value="noise">简单噪声</a-select-option>
-              </a-select>
-            </a-form-item>
-
-            <a-form-item label="WebGL 图像">
-              <a-select v-model:value="formState.webglMode">
-                <a-select-option value="default">默认</a-select-option>
-                <a-select-option value="mock">固定伪装值</a-select-option>
-              </a-select>
-            </a-form-item>
-
-            <a-form-item label="媒体设备">
-              <a-select v-model:value="formState.mediaDeviceMode">
-                <a-select-option value="default">默认</a-select-option>
-                <a-select-option value="mock">固定列表</a-select-option>
-              </a-select>
-            </a-form-item>
-          </a-card>
-        </a-col>
-      </a-row>
-
-      <!-- 下半部分：代理检测 -->
-      <a-card title="代理检测" :bordered="false" style="margin-top: 16px;">
-        <template #extra>
-          <a-tag v-if="isEdit" color="green">✅ 已保存窗口</a-tag>
-          <a-tag v-else color="orange">⚠️ 请先保存</a-tag>
-        </template>
-        
-        <a-row :gutter="16" align="middle">
+          </a-col>
           <a-col :span="8">
-            <a-form-item label="检测渠道">
-              <a-select v-model:value="checkChannel" placeholder="选择检测渠道">
-                <a-select-option value="ip.sb">IP.SB</a-select-option>
-                <a-select-option value="ipinfo.io">IPInfo</a-select-option>
-                <a-select-option value="ip-api.com">IP-API</a-select-option>
+            <a-form-item label="操作系统" name="os">
+              <a-select v-model:value="formState.os">
+                <a-select-option value="windows">Windows</a-select-option>
+                <a-select-option value="mac">macOS</a-select-option>
+                <a-select-option value="linux">Linux</a-select-option>
+                <a-select-option value="android">Android</a-select-option>
+                <a-select-option value="ios">iOS</a-select-option>
               </a-select>
             </a-form-item>
           </a-col>
           <a-col :span="8">
-            <a-form-item label=" " :colon="false">
-              <a-button 
-                type="primary" 
-                @click="handleCheckProxy"
-                :loading="checkLoading"
-                :disabled="!selectedProxyId"
-              >
-                🔍 检测代理
-              </a-button>
+            <a-form-item label="界面语言" name="uiLanguage">
+              <a-select v-model:value="formState.uiLanguage">
+                <a-select-option value="zh-CN">简体中文</a-select-option>
+                <a-select-option value="zh-TW">繁体中文</a-select-option>
+                <a-select-option value="en-US">English</a-select-option>
+                <a-select-option value="ja-JP">日本語</a-select-option>
+                <a-select-option value="ko-KR">한국어</a-select-option>
+              </a-select>
             </a-form-item>
           </a-col>
         </a-row>
 
-        <a-divider />
+        <a-row :gutter="16">
+          <a-col :span="8">
+            <a-form-item label="屏幕分辨率" name="screenResolution">
+              <a-select v-model:value="formState.screenResolution">
+                <a-select-option value="1920x1080">1920×1080</a-select-option>
+                <a-select-option value="1366x768">1366×768</a-select-option>
+                <a-select-option value="1536x864">1536×864</a-select-option>
+                <a-select-option value="2560x1440">2560×1440</a-select-option>
+                <a-select-option value="3840x2160">3840×2160</a-select-option>
+                <a-select-option value="1280x720">1280×720</a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col :span="8">
+            <a-form-item label="字体" name="font">
+              <a-select v-model:value="formState.font">
+                <a-select-option value="Microsoft YaHei">微软雅黑</a-select-option>
+                <a-select-option value="SimSun">宋体</a-select-option>
+                <a-select-option value="Arial">Arial</a-select-option>
+                <a-select-option value="Times New Roman">Times New Roman</a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col :span="8">
+            <a-form-item label="语言模式" name="languageMode">
+              <a-select v-model:value="formState.languageMode">
+                <a-select-option value="mask">模拟浏览器</a-select-option>
+                <a-select-option value="timezone">使用代理时区</a-select-option>
+                <a-select-option value="custom">自定义</a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+        </a-row>
+      </a-card>
 
-        <!-- 检测结果 -->
-        <a-alert
-          v-if="checkResult"
-          :type="checkResult.status === 'success' ? 'success' : 'error'"
-          show-icon
-          style="margin-bottom: 16px;"
-        >
-          <template #message>
-            <span v-if="checkResult.status === 'success'">
-              检测成功：{{ checkResult.ip }} - {{ checkResult.region }}（延迟：{{ checkResult.latency }}ms）
-            </span>
-            <span v-else>
-              检测失败：{{ checkResult.error || '连接超时' }}
-            </span>
-          </template>
-        </a-alert>
+      <!-- 高级指纹卡片 -->
+      <a-card title="🔒 高级指纹保护" :bordered="false" style="margin-bottom: 16px;">
+        <a-row :gutter="16">
+          <a-col :span="6">
+            <a-form-item label="WebRTC 防护" name="webrtcMode">
+              <a-select v-model:value="formState.webrtcMode">
+                <a-select-option value="forward">使用真实IP</a-select-option>
+                <a-select-option value="replace">替换为代理IP</a-select-option>
+                <a-select-option value="disable">完全禁用</a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="Canvas 指纹" name="canvasMode">
+              <a-select v-model:value="formState.canvasMode">
+                <a-select-option value="noise">添加噪声</a-select-option>
+                <a-select-option value="block">屏蔽</a-select-option>
+                <a-select-option value="fake">模拟</a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="WebGL 指纹" name="webglMode">
+              <a-select v-model:value="formState.webglMode">
+                <a-select-option value="mock">模拟WebGL</a-select-option>
+                <a-select-option value="disable">禁用WebGL</a-select-option>
+                <a-select-option value="real">使用真实</a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="媒体设备" name="mediaDeviceMode">
+              <a-select v-model:value="formState.mediaDeviceMode">
+                <a-select-option value="mock">模拟设备</a-select-option>
+                <a-select-option value="disable">禁用设备</a-select-option>
+                <a-select-option value="real">使用真实</a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+        </a-row>
 
-        <a-empty v-if="!checkResult && !checkLoading" description="暂无检测结果，请先选择一个代理并点击检测" />
-        <a-spin v-if="checkLoading" />
+        <a-row :gutter="16">
+          <a-col :span="8">
+            <a-form-item label="时区模式" name="timezoneMode">
+              <a-select v-model:value="formState.timezoneMode">
+                <a-select-option value="ip">跟随代理IP</a-select-option>
+                <a-select-option value="custom">自定义时区</a-select-option>
+                <a-select-option value="real">使用真实时区</a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col :span="8">
+            <a-form-item label="地理位置" name="geolocationMode">
+              <a-select v-model:value="formState.geolocationMode">
+                <a-select-option value="ip">跟随代理IP</a-select-option>
+                <a-select-option value="custom">自定义位置</a-select-option>
+                <a-select-option value="real">使用真实位置</a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+        </a-row>
       </a-card>
 
       <!-- 按钮区域 -->
-      <div class="form-actions" style="margin-top: 16px;">
+      <div class="form-actions">
         <a-space>
           <a-button type="primary" @click="handleSubmit" :loading="submitting">
-            {{ isEdit ? '保存修改' : '保存' }}
+            {{ isEdit ? '保存修改' : '创建窗口' }}
           </a-button>
-          <a-button @click="handleCancel">取消</a-button>
+          <!-- 优化3：保留取消按钮也返回列表 -->
+          <a-button @click="handleBack">取消</a-button>
         </a-space>
       </div>
     </a-form>
@@ -195,14 +197,10 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
+import { LeftOutlined } from '@ant-design/icons-vue'
 import type { FormInstance } from 'ant-design-vue'
-import { 
-  getProfileDetail, 
-  createProfile, 
-  updateProfile,
-  type ProfileDto 
-} from '../api/profile'
-import { getProxyList, checkProxy, type ProxyRecord, type CheckChannel } from '../api/proxy'
+import { getProxyList, type ProxyRecord } from '../api/proxy'
+import { getProfileDetail, createProfile, updateProfile, type ProfileDto, type ProfileRecord, type WebRtcMode } from '../api/profile'
 
 const router = useRouter()
 const route = useRoute()
@@ -217,24 +215,20 @@ const submitting = ref(false)
 
 // 代理列表
 const proxyList = ref<ProxyRecord[]>([])
-const proxyLoading = ref(false)
 
-// 当前选中的代理 ID
-const selectedProxyId = computed(() => formState.proxyId)
-
-// 表单数据
-const formState = reactive<ProfileDto>({
+// 表单数据（使用 any 类型避免 font 字段类型冲突）
+const formState: any = reactive({
   title: '',
   proxyId: undefined,
   chromeVersion: '128',
-  os: 'Windows',
+  os: 'windows',
   webrtcMode: 'replace',
   timezoneMode: 'ip',
   geolocationMode: 'ip',
-  languageMode: 'ip',
+  languageMode: 'mask',
   uiLanguage: 'zh-CN',
   screenResolution: '1920x1080',
-  font: 'default',
+  font: 'Microsoft YaHei,Arial',
   canvasMode: 'noise',
   webglMode: 'mock',
   mediaDeviceMode: 'mock'
@@ -247,66 +241,24 @@ const rules = {
   ]
 }
 
-// ==================== 代理检测相关 ====================
-
-/** 检测渠道 */
-const checkChannel = ref<CheckChannel>('ip.sb')
-const checkLoading = ref(false)
-const checkResult = ref<any>(null)
-
-/** 加载代理列表 */
+// 加载代理列表
 async function loadProxyList() {
-  proxyLoading.value = true
   try {
     const list = await getProxyList()
     proxyList.value = list
   } catch (error) {
     console.error('加载代理列表失败:', error)
-  } finally {
-    proxyLoading.value = false
   }
 }
 
-/** 检测代理 */
-async function handleCheckProxy() {
-  if (!formState.proxyId) {
-    message.warning('请先选择一个代理')
-    return
-  }
-  
-  checkLoading.value = true
-  checkResult.value = null
-  try {
-    const result = await checkProxy(formState.proxyId, checkChannel.value)
-    checkResult.value = {
-      status: result.status,
-      ip: result.ip,
-      region: result.region,
-      latency: result.latency,
-      error: result.error
-    }
-    
-    if (result.status === 'success') {
-      message.success(`检测成功：${result.ip} - ${result.region}`)
-    } else {
-      message.error(`检测失败：${result.error || '连接超时'}`)
-    }
-  } catch (error: any) {
-    console.error('检测代理失败:', error)
-    message.error(error?.response?.data?.message || '检测失败')
-  } finally {
-    checkLoading.value = false
-  }
-}
-
-// 加载窗口详情（编辑模式）
+// 加载窗口详情
 async function loadProfileDetail() {
   if (!editId.value) return
-  
+
   try {
-    const data = await getProfileDetail(editId.value)
+    const data = await getProfileDetail(editId.value) as ProfileRecord
     formState.title = data.title
-    formState.proxyId = data.proxyId || undefined
+    formState.proxyId = data.proxyId ?? undefined
     formState.chromeVersion = data.chromeVersion
     formState.os = data.os
     formState.webrtcMode = data.webrtcMode
@@ -315,7 +267,7 @@ async function loadProfileDetail() {
     formState.languageMode = data.languageMode
     formState.uiLanguage = data.uiLanguage
     formState.screenResolution = data.screenResolution
-    formState.font = data.font
+    formState.font = data.font ? data.font.split(',') : []
     formState.canvasMode = data.canvasMode
     formState.webglMode = data.webglMode
     formState.mediaDeviceMode = data.mediaDeviceMode
@@ -335,16 +287,19 @@ async function handleSubmit() {
 
   submitting.value = true
   try {
+    // 构建提交数据
+    const submitData: ProfileDto = {
+      ...formState,
+      font: Array.isArray(formState.font) ? formState.font.join(',') : formState.font
+    }
+
     if (isEdit.value && editId.value) {
-      // 更新
-      await updateProfile(editId.value, formState)
+      await updateProfile(editId.value, submitData)
       message.success('修改成功')
     } else {
-      // 新建
-      await createProfile(formState)
+      await createProfile(submitData)
       message.success('创建成功')
     }
-    // 返回列表页
     router.push('/profile')
   } catch (error: any) {
     console.error('提交失败:', error)
@@ -354,16 +309,18 @@ async function handleSubmit() {
   }
 }
 
-// 取消
-function handleCancel() {
+// 优化3：返回按钮处理函数
+function handleBack() {
   router.push('/profile')
 }
 
-onMounted(() => {
-  // 加载代理列表
-  loadProxyList()
-  
-  // 编辑模式加载详情
+// 取消（已改为调用 handleBack）
+function handleCancel() {
+  handleBack()
+}
+
+onMounted(async () => {
+  await loadProxyList()
   if (isEdit.value) {
     loadProfileDetail()
   }
@@ -375,8 +332,15 @@ onMounted(() => {
   padding: 0;
 }
 
-.page-title {
+/* 优化3：页面标题区布局 */
+.page-header {
+  display: flex;
+  align-items: center;
   margin-bottom: 24px;
+}
+
+.page-title {
+  margin: 0 0 0 8px;
   font-size: 24px;
   font-weight: 600;
   color: #262626;
