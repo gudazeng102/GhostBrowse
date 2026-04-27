@@ -63,13 +63,13 @@ const CHROME_USER_AGENTS: Record<string, string> = {
 
 /** Chrome Extension 模板目录 
  * 开发模式: 使用 src/main/browser/extension
- * 打包模式: 使用 app.getAppPath() 下的 extension 目录
+ * 打包模式: 使用 extraResources 下的 extension 目录
  */
 function getExtensionTemplateDir(): string {
   // 检查是否打包
   if (app.isPackaged) {
-    // 打包模式：从 app 目录读取
-    return path.join(app.getAppPath(), 'dist-electron', 'main', 'browser', 'extension')
+    // 打包模式：从 extraResources 目录读取（electron-builder.json 中配置了 extraResources）
+    return path.join(process.resourcesPath, 'extension')
   } else {
     // 开发模式：从源代码目录读取
     return path.join(process.cwd(), 'src', 'main', 'browser', 'extension')
@@ -324,28 +324,16 @@ export async function launchChrome(
   })
 }
 
-/**
- * 关闭指定 Profile 的 Chrome 窗口
- * 
- * Phase 1.4 实现：维护进程映射表，支持关闭窗口
- */
-export async function closeChrome(profileId: number): Promise<void> {
-  console.log(`[BrowserLauncher] 关闭窗口 (Profile ID: ${profileId})`)
-  // TODO: Phase 1.4 实现
-  // 1. 从进程映射表查找 PID
-  // 2. 发送关闭信号或强制终止
-}
-
 // ==================== 进程映射（Phase 1.4 使用） ====================
 
-/** Profile ID -> Chrome 进程 PID 映射 */
-const profileProcessMap = new Map<number, number>()
+/** Profile ID -> Chrome 进程信息映射 */
+const profileProcessMap = new Map<number, { pid: number; userDataDir: string; startTime: number }>()
 
 /**
  * 注册 Chrome 进程
  */
-export function registerChromeProcess(profileId: number, pid: number): void {
-  profileProcessMap.set(profileId, pid)
+export function registerChromeProcess(profileId: number, pid: number, userDataDir: string): void {
+  profileProcessMap.set(profileId, { pid, userDataDir, startTime: Date.now() })
   console.log(`[BrowserLauncher] 注册进程: Profile ${profileId} -> PID ${pid}`)
 }
 
@@ -353,7 +341,7 @@ export function registerChromeProcess(profileId: number, pid: number): void {
  * 获取 Chrome 进程 PID
  */
 export function getChromeProcessPid(profileId: number): number {
-  return profileProcessMap.get(profileId) ?? -1
+  return profileProcessMap.get(profileId)?.pid ?? -1
 }
 
 /**
@@ -362,4 +350,100 @@ export function getChromeProcessPid(profileId: number): number {
 export function unregisterChromeProcess(profileId: number): void {
   profileProcessMap.delete(profileId)
   console.log(`[BrowserLauncher] 注销进程: Profile ${profileId}`)
+}
+
+/**
+ * 获取所有运行中的 Profile ID 列表
+ * 自动清理已死亡的进程
+ */
+export function getRunningProfiles(): number[] {
+  const result: number[] = []
+  
+  for (const [profileId, info] of profileProcessMap.entries()) {
+    try {
+      // 信号 0 用于检测进程是否存在
+      process.kill(info.pid, 0)
+      result.push(profileId)
+    } catch {
+      // 进程已死亡，从映射表中移除
+      console.log(`[BrowserLauncher] 进程已死亡，自动清理: Profile ${profileId} -> PID ${info.pid}`)
+      profileProcessMap.delete(profileId)
+    }
+  }
+  
+  return result
+}
+
+/**
+ * 检查指定 Profile 是否正在运行
+ */
+export function isProfileRunning(profileId: number): boolean {
+  const info = profileProcessMap.get(profileId)
+  if (!info) return false
+  
+  try {
+    process.kill(info.pid, 0)
+    return true
+  } catch {
+    // 进程已死亡，自动清理
+    profileProcessMap.delete(profileId)
+    return false
+  }
+}
+
+/**
+ * 关闭指定 Profile 的 Chrome 窗口
+ * 使用 SIGTERM 优雅终止，如果失败则使用 SIGKILL 强制终止
+ */
+export function closeProfile(profileId: number): boolean {
+  const info = profileProcessMap.get(profileId)
+  if (!info) {
+    console.log(`[BrowserLauncher] 关闭窗口失败: Profile ${profileId} 未运行`)
+    return false
+  }
+  
+  console.log(`[BrowserLauncher] 关闭窗口: Profile ${profileId} -> PID ${info.pid}`)
+  
+  try {
+    // 先尝试优雅终止（SIGTERM）
+    process.kill(info.pid, 'SIGTERM')
+    
+    // 延迟后检查是否已终止
+    setTimeout(() => {
+      try {
+        process.kill(info.pid, 0)
+        // 进程仍存在，使用强制终止
+        console.log(`[BrowserLauncher] SIGTERM 失败，使用 SIGKILL: PID ${info.pid}`)
+        process.kill(info.pid, 'SIGKILL')
+      } catch {
+        // 进程已正常终止
+      }
+    }, 1000)
+    
+    // 从映射表中移除
+    profileProcessMap.delete(profileId)
+    console.log(`[BrowserLauncher] 关闭窗口成功: Profile ${profileId}`)
+    return true
+  } catch (err: any) {
+    console.error(`[BrowserLauncher] 关闭窗口失败: ${err.message}`)
+    // 无论成功失败，都从映射表中移除
+    profileProcessMap.delete(profileId)
+    return false
+  }
+}
+
+/**
+ * 关闭指定 Profile 的 Chrome 窗口（异步版本，用于 API 调用）
+ */
+export async function closeChrome(profileId: number): Promise<{ success: boolean; message?: string }> {
+  const info = profileProcessMap.get(profileId)
+  if (!info) {
+    return { success: false, message: '窗口未运行' }
+  }
+  
+  const success = closeProfile(profileId)
+  return {
+    success,
+    message: success ? '窗口已关闭' : '关闭窗口失败'
+  }
 }

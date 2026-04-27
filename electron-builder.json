@@ -3,18 +3,22 @@
   "appId": "com.ghostbrowse.app",
   "directories": {
     "output": "release",
-    "buildResources": "resources"
+    "buildResources": "build"
   },
   "files": [
     "dist/**/*",
     "dist-electron/**/*",
-    "resources/**/*",
     "package.json"
   ],
   "extraResources": [
     {
-      "from": "resources",
-      "to": "resources"
+      "from": "src/main/browser/extension/",
+      "to": "extension/",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "resources/",
+      "to": "resources/"
     }
   ],
   "win": {
@@ -31,7 +35,9 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "GhostBrowse"
+    "shortcutName": "GhostBrowse",
+    "installerIcon": "build/icon.ico",
+    "uninstallerIcon": "build/icon.ico"
   },
   "asar": true,
   "compression": "maximum"

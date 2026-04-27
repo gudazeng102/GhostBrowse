@@ -5,7 +5,7 @@
 
 import { Router, Request, Response } from 'express'
 import { getDatabase } from '../db'
-import { launchChrome } from '../../browser/launcher'
+import { launchChrome, registerChromeProcess, getRunningProfiles, closeChrome } from '../../browser/launcher'
 
 // 创建路由实例
 const router = Router()
@@ -66,6 +66,36 @@ interface ProfileDto {
 }
 
 // ==================== API 路由 ====================
+
+// ==================== Phase 1.4: 窗口运行状态接口（必须在 /:id 之前定义） ====================
+
+/**
+ * GET /api/v1/profiles/status
+ * 获取所有运行中的窗口 ID 列表
+ */
+router.get('/status', (req: Request, res: Response) => {
+  try {
+    // 获取运行中的 Profile ID 列表（自动清理已死亡进程）
+    const runningIds = getRunningProfiles()
+    
+    console.log(`[Profile API] 查询运行状态，运行中: ${runningIds.join(', ') || '无'}`)
+    
+    res.json({
+      code: 0,
+      data: {
+        runningIds
+      },
+      message: 'success'
+    })
+  } catch (err: any) {
+    console.error('[Profile API] 查询运行状态失败:', err)
+    res.status(500).json({
+      code: 500,
+      data: null,
+      message: err.message || '查询运行状态失败'
+    })
+  }
+})
 
 /**
  * GET /api/v1/profiles
@@ -501,6 +531,9 @@ router.post('/:id/launch', async (req: Request, res: Response) => {
     
     console.log(`[Profile API] 窗口启动成功，PID: ${result.pid}`)
     
+    // Phase 1.4: 启动成功后注册进程到映射表
+    registerChromeProcess(profile.id, result.pid, result.userDataDir)
+    
     res.json({
       code: 0,
       data: {
@@ -515,6 +548,60 @@ router.post('/:id/launch', async (req: Request, res: Response) => {
       code: 500,
       data: null,
       message: err.message || '启动窗口失败'
+    })
+  }
+})
+
+// ==================== Phase 1.4: 关闭窗口接口 ====================
+
+/**
+ * POST /api/v1/profiles/:id/close
+ * 关闭指定窗口的 Chrome 进程
+ */
+router.post('/:id/close', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const db = getDatabase()
+    
+    // 检查窗口是否存在
+    const existing = db.prepare('SELECT id FROM profiles WHERE id = ?').get(Number(id))
+    if (!existing) {
+      return res.status(404).json({
+        code: 404,
+        data: null,
+        message: '窗口不存在'
+      })
+    }
+    
+    console.log(`[Profile API] 关闭窗口: ID ${id}`)
+    
+    // 调用 launcher 关闭进程
+    const result = await closeChrome(Number(id))
+    
+    if (result.success) {
+      res.json({
+        code: 0,
+        data: {
+          success: true
+        },
+        message: '窗口已关闭'
+      })
+    } else {
+      res.json({
+        code: 0,
+        data: {
+          success: false,
+          message: result.message || '窗口未运行'
+        },
+        message: result.message || '窗口未运行'
+      })
+    }
+  } catch (err: any) {
+    console.error('[Profile API] 关闭窗口失败:', err)
+    res.status(500).json({
+      code: 500,
+      data: null,
+      message: err.message || '关闭窗口失败'
     })
   }
 })

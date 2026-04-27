@@ -120,3 +120,33 @@ export async function launchProfile(id: number): Promise<LaunchResult> {
   const response = await request.post<any>(`/profiles/${id}/launch`)
   return response.data.data
 }
+
+// ==================== Phase 1.4: 窗口运行状态 API ====================
+
+/** 窗口状态响应 */
+export interface ProfileStatus {
+  runningIds: number[]
+}
+
+/** 关闭窗口结果 */
+export interface CloseProfileResult {
+  success: boolean
+  message?: string
+}
+
+/**
+ * 获取所有运行中的窗口 ID 列表
+ */
+export async function getProfilesStatus(): Promise<ProfileStatus> {
+  const response = await request.get<any>('/profiles/status')
+  return response.data.data
+}
+
+/**
+ * 关闭窗口
+ * @param id 窗口 ID
+ */
+export async function closeProfile(id: number): Promise<CloseProfileResult> {
+  const response = await request.post<any>(`/profiles/${id}/close`)
+  return response.data.data
+}

@@ -32,7 +32,7 @@ function getDatabasePath(): string {
 /**
  * 获取 migrations.sql 文件路径
  * - 开发时：resources/migrations.sql（项目根目录）
- * - 打包后：resources/resources/migrations.sql（asar 内）或 外部 resources 目录
+ * - 打包后：process.resourcesPath/resources/migrations.sql
  */
 function getMigrationsPath(): string {
   const isDev = !app.isPackaged
@@ -41,11 +41,8 @@ function getMigrationsPath(): string {
     // 开发模式：resources 在项目根目录
     return path.join(process.cwd(), 'resources', 'migrations.sql')
   } else {
-    // 打包模式：resources 在 extraResources 目录
-    // app.getAppPath() 返回的是 app.asar 的路径
-    // extraResources 中的文件在 app.getAppPath()/../resources/
-    const resourcesPath = path.join(app.getAppPath(), '..', 'resources', 'migrations.sql')
-    return resourcesPath
+    // 打包模式：extraResources 在 process.resourcesPath
+    return path.join(process.resourcesPath, 'resources', 'migrations.sql')
   }
 }
 
