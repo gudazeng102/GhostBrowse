@@ -139,3 +139,19 @@ export async function getProxyChecks(id: number): Promise<ProxyCheckResult[]> {
   const response = await request.get<any>(`/proxies/${id}/checks`)
   return response.data.data || []
 }
+
+/**
+ * 直接检测代理（无需先保存到数据库）
+ * @param data 代理信息
+ * @param channel 检测渠道
+ */
+export async function checkProxyDirect(data: {
+  type: ProxyType
+  host: string
+  port: number
+  username?: string
+  password?: string
+}, channel: CheckChannel): Promise<Omit<ProxyCheckResult, 'id' | 'proxyId'>> {
+  const response = await request.post<any>('/proxies/check-direct', { ...data, channel })
+  return response.data.data
+}

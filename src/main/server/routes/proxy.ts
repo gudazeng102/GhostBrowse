@@ -24,7 +24,7 @@ interface CheckChannel {
 
 /** 支持的检测渠道列表 */
 const CHECK_CHANNELS: CheckChannel[] = [
-  { id: 'ip.sb', name: 'IP.SB', url: 'https://api.ip.sb/geoip' },
+  { id: 'ip.sb', name: 'IP.SB', url: 'http://api.ip.sb/geoip' },
   { id: 'ipinfo.io', name: 'IPInfo', url: 'https://ipinfo.io/json' },
   { id: 'ip-api.com', name: 'IP-API', url: 'http://ip-api.com/json/' }
 ]
@@ -441,8 +441,14 @@ router.post('/:id/check', async (req: Request, res: Response) => {
         axiosConfig.httpsAgent = agent
       }
       
-      // 5. 发起检测请求
-      const response = await axios(axiosConfig)
+      // 5. 发起检测请求（ip.sb 可能拒绝非浏览器 User-Agent）
+      const response = await axios({
+        ...axiosConfig,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          ...(axiosConfig.headers || {})
+        }
+      })
       latency = Date.now() - startTime
       status = 'success'
       
@@ -509,6 +515,120 @@ router.post('/:id/check', async (req: Request, res: Response) => {
       data: null,
       message: err.message || '检测失败'
     })
+  }
+})
+
+/**
+ * POST /api/v1/proxies/check-direct
+ * 直接从表单字段检测代理（无需先保存）
+ * 请求体: { "type": "http", "host": "...", "port": 80, "username": "...", "password": "...", "channel": "ip-api.com" }
+ */
+router.post('/check-direct', async (req: Request, res: Response) => {
+  try {
+    const { type, host, port, username, password, channel } = req.body as {
+      type: ProxyType
+      host: string
+      port: number
+      username?: string
+      password?: string
+      channel: string
+    }
+
+    console.log(`[Proxy Check Direct] 检测请求: host=${host}:${port}, channel=${channel}`)
+
+    // 1. 验证必填字段
+    if (!host || !host.trim()) {
+      return res.status(400).json({ code: 400, data: null, message: '请输入主机地址' })
+    }
+    if (!port || port < 1 || port > 65535) {
+      return res.status(400).json({ code: 400, data: null, message: '端口必须为 1-65535' })
+    }
+    if (!type || !['http', 'https', 'socks5'].includes(type)) {
+      return res.status(400).json({ code: 400, data: null, message: '类型必须是 http、https 或 socks5' })
+    }
+
+    // 2. 验证渠道
+    const channelConfig = CHECK_CHANNELS.find(c => c.id === channel)
+    if (!channelConfig) {
+      return res.status(400).json({ code: 400, data: null, message: '不支持的检测渠道' })
+    }
+
+    // 3. 执行检测
+    const startTime = Date.now()
+    let status: 'success' | 'fail' = 'fail'
+    let ip: string | null = null
+    let country: string | null = null
+    let city: string | null = null
+    let latency: number | null = null
+    let errorMsg: string | null = null
+
+    try {
+      const axiosConfig: any = {
+        method: 'GET',
+        url: channelConfig.url,
+        timeout: 10000
+      }
+
+      if (type === 'http' || type === 'https') {
+        axiosConfig.proxy = {
+          host: host.trim(),
+          port: port,
+          auth: username ? { username: username.trim(), password: password || '' } : undefined
+        }
+      } else {
+        // socks5 也用 HTTP CONNECT（兼容商业代理）
+        const proxyUrl = username
+          ? `http://${username}:${password || ''}@${host}:${port}`
+          : `http://${host}:${port}`
+        const agent = new (HttpProxyAgent as any)(proxyUrl)
+        axiosConfig.httpAgent = agent
+        axiosConfig.httpsAgent = agent
+      }
+
+      const response = await axios({
+        ...axiosConfig,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      })
+
+      latency = Date.now() - startTime
+      status = 'success'
+      const data = response.data
+
+      if (channel === 'ip.sb') {
+        ip = data.ip; country = data.country; city = data.city
+      } else if (channel === 'ipinfo.io') {
+        ip = data.ip; country = data.country; city = data.city
+      } else if (channel === 'ip-api.com') {
+        ip = data.query; country = data.country; city = data.city
+      }
+    } catch (err: any) {
+      status = 'fail'
+      latency = Date.now() - startTime
+      errorMsg = err.message || '连接失败'
+      console.error('[Proxy Check Direct] 检测失败:', errorMsg)
+    }
+
+    // 4. 返回结果（不写入数据库）
+    res.json({
+      code: 0,
+      data: {
+        channel,
+        status,
+        ip,
+        country,
+        city,
+        region: country && city ? `${country}-${city}` : (country || '-'),
+        latency,
+        error: errorMsg,
+        checkedAt: Date.now()
+      },
+      message: status === 'success' ? '检测成功' : '检测失败'
+    })
+  } catch (err: any) {
+    console.error('[Proxy API] check-direct 失败:', err)
+    res.status(500).json({ code: 500, data: null, message: err.message || '检测失败' })
   }
 })
 

@@ -138,17 +138,10 @@
 
       <!-- 下半部分：检测区域 -->
       <a-card title="代理检测" :bordered="false" style="margin-top: 16px;">
-        <template #extra>
-          <a-tag v-if="isEdit" color="green">✅ 已保存代理</a-tag>
-          <a-tag v-else color="orange">⚠️ 请先保存</a-tag>
-        </template>
-        
         <a-row :gutter="16" align="middle">
           <a-col :span="8">
             <a-form-item label="检测渠道">
               <a-select v-model:value="checkChannel" placeholder="选择检测渠道">
-                <a-select-option value="ip.sb">IP.SB</a-select-option>
-                <a-select-option value="ipinfo.io">IPInfo</a-select-option>
                 <a-select-option value="ip-api.com">IP-API</a-select-option>
               </a-select>
             </a-form-item>
@@ -159,7 +152,6 @@
                 type="primary" 
                 @click="handleCheckProxy"
                 :loading="checkLoading"
-                :disabled="!isEdit"
               >
                 🔍 检测当前代理
               </a-button>
@@ -209,7 +201,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { LeftOutlined } from '@ant-design/icons-vue'
 import type { FormInstance } from 'ant-design-vue'
-import { getProxyDetail, createProxy, updateProxy, checkProxy, getProxyChecks, type ProxyRecord, type ProxyDto, type CheckChannel, type ProxyCheckResult } from '../api/proxy'
+import { getProxyDetail, createProxy, updateProxy, checkProxy, getProxyChecks, checkProxyDirect, type ProxyRecord, type ProxyDto, type CheckChannel, type ProxyCheckResult } from '../api/proxy'
 
 const router = useRouter()
 const route = useRoute()
@@ -254,13 +246,11 @@ const rules = {
 
 /** 检测渠道选项 */
 const channelOptions = [
-  { value: 'ip.sb', label: 'IP.SB' },
-  { value: 'ipinfo.io', label: 'IPInfo' },
   { value: 'ip-api.com', label: 'IP-API' }
 ]
 
 /** 检测相关状态 */
-const checkChannel = ref<CheckChannel>('ip.sb')
+const checkChannel = ref<CheckChannel>('ip-api.com')
 const checkLoading = ref(false)
 const checkResults = ref<ProxyCheckResult[]>([])
 
@@ -303,7 +293,7 @@ function getChannelName(channelId: string): string {
   return channel ? channel.label : channelId
 }
 
-/** 加载检测历史 */
+/** 加载检测历史（仅编辑模式） */
 async function loadCheckHistory() {
   if (!editId.value) return
   
@@ -317,27 +307,64 @@ async function loadCheckHistory() {
 
 /** 检测代理 */
 async function handleCheckProxy() {
-  // 新建模式且未保存时，不能检测
-  if (!isEdit.value || !editId.value) {
-    message.warning('请先保存代理配置后再进行检测')
+  // 校验：host 和 port 是必填项，账号密码可选
+  if (!formState.host || !formState.host.trim()) {
+    message.warning('请输入主机地址后再点击检测')
+    return
+  }
+  if (!formState.port || formState.port < 1 || formState.port > 65535) {
+    message.warning('请输入有效的端口（1-65535）后再点击检测')
     return
   }
   
+  // 清空之前的检测结果
+  checkResults.value = []
+  
   checkLoading.value = true
   try {
-    const result = await checkProxy(editId.value, checkChannel.value)
-    
-    // 添加到结果列表（插入到最前面）
-    checkResults.value.unshift({
-      ...result,
-      checkedAtStr: new Date(result.checkedAt).toLocaleString('zh-CN')
-    })
-    
-    // 显示结果消息
-    if (result.status === 'success') {
-      message.success(`检测成功：${result.ip} - ${result.region}（${result.latency}ms）`)
-    } else {
-      message.error(`检测失败：${result.error || '连接超时'}`)
+    // 编辑模式：使用数据库已有的代理
+    if (isEdit.value && editId.value) {
+      const result = await checkProxy(editId.value, checkChannel.value)
+      checkResults.value.unshift({
+        ...result,
+        checkedAtStr: new Date(result.checkedAt).toLocaleString('zh-CN')
+      })
+      if (result.status === 'success') {
+        message.success(`检测成功：${result.ip} - ${result.region}（${result.latency}ms）`)
+      } else {
+        message.error(`检测失败：${result.error || '连接超时'}`)
+      }
+    } 
+    // 新建模式：使用表单字段直接检测
+    else {
+      const result = await checkProxyDirect({
+        type: formState.type,
+        host: formState.host.trim(),
+        port: formState.port,
+        username: formState.username?.trim() || undefined,
+        password: formState.password || undefined
+      }, checkChannel.value)
+      
+      checkResults.value.unshift({
+        id: Date.now(),
+        proxyId: 0,
+        channel: result.channel,
+        status: result.status,
+        ip: result.ip,
+        country: result.country,
+        city: result.city,
+        region: result.region,
+        latency: result.latency,
+        error: result.error,
+        checkedAt: result.checkedAt,
+        checkedAtStr: new Date(result.checkedAt).toLocaleString('zh-CN')
+      })
+      
+      if (result.status === 'success') {
+        message.success(`检测成功：${result.ip} - ${result.region}（${result.latency}ms）`)
+      } else {
+        message.error(`检测失败：${result.error || '连接超时'}`)
+      }
     }
   } catch (error: any) {
     console.error('检测代理失败:', error)
@@ -447,7 +474,7 @@ function parseProxyString(input: string): ParsedProxy | null {
     remaining = trimmed.slice(protocolMatch[0].length)
   }
   
-  // 去掉认证信息部分
+  // 去掉认证信息部分（URL 格式 user:pass@host:port）
   let hostPort = remaining
   let username: string | undefined
   let password: string | undefined
@@ -457,7 +484,6 @@ function parseProxyString(input: string): ParsedProxy | null {
     const authPart = remaining.slice(0, atIndex)
     hostPort = remaining.slice(atIndex + 1)
     
-    // 解析认证信息（URL 编码的可能包含 :）
     const colonIndex = authPart.indexOf(':')
     if (colonIndex !== -1) {
       username = decodeURIComponent(authPart.slice(0, colonIndex))
@@ -480,25 +506,46 @@ function parseProxyString(input: string): ParsedProxy | null {
     }
   }
   
-  // 普通格式: host:port（port 必须是数字且在合理范围内）
   const parts = hostPort.split(':')
+  
+  // 如果恰好有 4 部分，且最后一部分不是纯数字，则认为是 host:port:username:password 格式
+  if (parts.length === 4 && !/^\d+$/.test(parts[3])) {
+    return {
+      type,
+      host: parts[0],
+      port: parseInt(parts[1], 10),
+      username: parts[2],
+      password: parts[3]
+    }
+  }
+  
+  // 如果恰好有 3 部分，且最后一部分不是纯数字，则认为是 host:port:password 格式（无用户名）
+  if (parts.length === 3 && !/^\d+$/.test(parts[2])) {
+    return {
+      type,
+      host: parts[0],
+      port: parseInt(parts[1], 10),
+      password: parts[2]
+    }
+  }
+  
+  // 标准格式: host:port（最后一部分必须是纯数字且在有效范围内）
   if (parts.length >= 2) {
-    // 最后一个部分是端口
     const portStr = parts[parts.length - 1]
-    const port = parseInt(portStr, 10)
     
-    // 验证端口是数字且在有效范围内
-    if (!isNaN(port) && port >= 1 && port <= 65535) {
-      // host 是除了最后一个部分之外的所有部分
-      const host = parts.slice(0, -1).join(':')
-      
-      if (host) {
-        return {
-          type,
-          host,
-          port,
-          username,
-          password
+    // 验证端口是纯数字且在有效范围内
+    if (/^\d+$/.test(portStr)) {
+      const port = parseInt(portStr, 10)
+      if (port >= 1 && port <= 65535) {
+        const host = parts.slice(0, -1).join(':')
+        if (host) {
+          return {
+            type,
+            host,
+            port,
+            username,
+            password
+          }
         }
       }
     }
@@ -506,6 +553,7 @@ function parseProxyString(input: string): ParsedProxy | null {
   
   return null
 }
+
 
 /**
  * 处理主机地址粘贴事件
@@ -524,6 +572,7 @@ async function handleHostPaste(e: Event) {
   
   // 尝试解析
   const parsed = parseProxyString(pastedText)
+  console.log(parsed,'parsed');
   
   if (parsed) {
     // 阻止默认粘贴行为
