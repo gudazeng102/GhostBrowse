@@ -7,7 +7,8 @@
 import { Router, Request, Response } from 'express'
 import { getDatabase } from '../db'
 import axios from 'axios'
-import { SocksProxyAgent } from 'socks-proxy-agent'
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { HttpProxyAgent } = require('http-proxy-agent')
 
 // 创建路由实例
 const router = Router()
@@ -426,14 +427,16 @@ router.post('/:id/check', async (req: Request, res: Response) => {
           } : undefined
         }
       }
-      // SOCKS5 代理使用 socks-proxy-agent
+      // SOCKS5 代理：使用 http-proxy-agent（HTTP CONNECT 隧道）
+      // 很多商业代理（如 arxlabs）虽标记为 socks5，但底层是 HTTP CONNECT 隧道
+      // http-proxy-agent 能正确处理这类代理
       else if (proxy.type === 'socks5') {
-        // 构建 SOCKS5 URL: socks5://[username:password@]host:port
-        const socksUrl = proxy.username 
-          ? `socks5://${proxy.username}:${proxy.password || ''}@${proxy.host}:${proxy.port}`
-          : `socks5://${proxy.host}:${proxy.port}`
+        const proxyUrl = proxy.username
+          ? `http://${proxy.username}:${proxy.password || ''}@${proxy.host}:${proxy.port}`
+          : `http://${proxy.host}:${proxy.port}`
         
-        const agent = new SocksProxyAgent(socksUrl)
+        console.log(`[Proxy Check] SOCKS5 代理使用 HTTP CONNECT: ${proxy.host}:${proxy.port}`)
+        const agent = new (HttpProxyAgent as any)(proxyUrl)
         axiosConfig.httpAgent = agent
         axiosConfig.httpsAgent = agent
       }

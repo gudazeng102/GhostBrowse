@@ -22,7 +22,10 @@
     "cors": "^2.8.5",
     "electron": "^33.4.11",
     "express": "^4.21.1",
-    "socks-proxy-agent": "^8.0.5",
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^9.0.0",
+    "proxy-agent": "^8.0.1",
+    "socks-proxy-agent": "^7.0.0",
     "vue": "^3.5.12",
     "vue-router": "^4.4.5"
   },
