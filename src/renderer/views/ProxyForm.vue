@@ -597,7 +597,8 @@ async function handleHostPaste(e: Event) {
 onMounted(() => {
   if (isEdit.value) {
     loadProxyDetail()
-    loadCheckHistory() // 加载检测历史
+    // 清空检测结果列表，只有点击检测按钮后才显示
+    checkResults.value = []
   }
 })
 </script>
