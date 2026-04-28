@@ -33,7 +33,7 @@ interface ProfileRecord {
   proxy_id: number | null
   chrome_version: string
   os: string
-  webrtc_mode: 'forward' | 'replace' | 'disable'
+  webrtc_mode: 'forward' | 'replace' | 'real' | 'disable'
   timezone_mode: string
   geolocation_mode: string
   language_mode: string
@@ -53,7 +53,7 @@ interface ProfileDto {
   proxyId?: number
   chromeVersion?: string
   os?: string
-  webrtcMode?: 'forward' | 'replace' | 'disable'
+  webrtcMode?: 'forward' | 'replace' | 'real' | 'disable'
   timezoneMode?: string
   geolocationMode?: string
   languageMode?: string

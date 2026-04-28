@@ -18,13 +18,14 @@ CREATE TABLE IF NOT EXISTS proxies (
 );
 
 -- 指纹窗口配置表（Profile）：存储浏览器指纹配置
+-- Phase 1.6 修复：webrtc_mode CHECK 添加 'real' 选项
 CREATE TABLE IF NOT EXISTS profiles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
   proxy_id INTEGER REFERENCES proxies(id),
   chrome_version TEXT NOT NULL DEFAULT '128',
   os TEXT NOT NULL DEFAULT 'Windows',
-  webrtc_mode TEXT NOT NULL DEFAULT 'replace' CHECK(webrtc_mode IN ('forward','replace','disable')),
+  webrtc_mode TEXT NOT NULL DEFAULT 'replace' CHECK(webrtc_mode IN ('forward','replace','real','disable')),
   timezone_mode TEXT NOT NULL DEFAULT 'ip',
   geolocation_mode TEXT NOT NULL DEFAULT 'ip',
   language_mode TEXT NOT NULL DEFAULT 'ip',

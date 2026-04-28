@@ -79,6 +79,90 @@ export function initDatabase(): Database.Database {
 }
 
 /**
+ * 重建 profiles 表（修复 CHECK 约束等结构变更）
+ * SQLite 不支持 ALTER TABLE 修改 CHECK 约束，需要重建表
+ */
+function migrateProfilesTable(): void {
+  if (!db) return
+
+  try {
+    // 检查 profiles 表是否存在
+    const tableExists = db!.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='profiles'
+    `).get()
+
+    if (!tableExists) {
+      // 表还不存在，跳过（会在 runMigrations 中创建）
+      console.log('[DB] profiles 表尚不存在，跳过重建')
+      return
+    }
+
+    // 检查当前表的 webrtc_mode CHECK 约束是否包含 'real'
+    const tableInfo = db!.prepare("PRAGMA table_info(profiles)").all()
+    const hasCorrectCheck = db!.prepare(`
+      SELECT sql FROM sqlite_master WHERE type='table' AND name='profiles'
+    `).get() as { sql: string } | undefined
+
+    if (hasCorrectCheck && hasCorrectCheck.sql.includes("'real'")) {
+      // CHECK 约束已包含 'real'，无需重建
+      console.log('[DB] profiles 表结构已正确，跳过重建')
+      return
+    }
+
+    console.log('[DB] profiles 表 CHECK 约束需要更新，开始重建表...')
+
+    // 开始事务
+    db!.exec('BEGIN TRANSACTION')
+
+    // 1. 备份原表数据
+    db!.exec('CREATE TABLE profiles_backup AS SELECT * FROM profiles')
+
+    // 2. 删除原表
+    db!.exec('DROP TABLE profiles')
+
+    // 3. 重新创建表（使用最新的表结构）
+    const createSql = `
+      CREATE TABLE profiles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        proxy_id INTEGER REFERENCES proxies(id),
+        chrome_version TEXT NOT NULL DEFAULT '128',
+        os TEXT NOT NULL DEFAULT 'Windows',
+        webrtc_mode TEXT NOT NULL DEFAULT 'replace' CHECK(webrtc_mode IN ('forward','replace','real','disable')),
+        timezone_mode TEXT NOT NULL DEFAULT 'ip',
+        geolocation_mode TEXT NOT NULL DEFAULT 'ip',
+        language_mode TEXT NOT NULL DEFAULT 'ip',
+        ui_language TEXT NOT NULL DEFAULT 'zh-CN',
+        screen_resolution TEXT NOT NULL DEFAULT '1920x1080',
+        font TEXT NOT NULL DEFAULT 'default',
+        canvas_mode TEXT NOT NULL DEFAULT 'noise',
+        webgl_mode TEXT NOT NULL DEFAULT 'mock',
+        media_device_mode TEXT NOT NULL DEFAULT 'mock',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `
+    db!.exec(createSql)
+
+    // 4. 恢复数据
+    db!.exec(`
+      INSERT INTO profiles (id, title, proxy_id, chrome_version, os, webrtc_mode, timezone_mode, geolocation_mode, language_mode, ui_language, screen_resolution, font, canvas_mode, webgl_mode, media_device_mode, created_at, updated_at)
+      SELECT id, title, proxy_id, chrome_version, os, webrtc_mode, timezone_mode, geolocation_mode, language_mode, ui_language, screen_resolution, font, canvas_mode, webgl_mode, media_device_mode, created_at, updated_at FROM profiles_backup
+    `)
+
+    // 5. 删除备份表
+    db!.exec('DROP TABLE profiles_backup')
+
+    // 提交事务
+    db!.exec('COMMIT')
+    console.log('[DB] profiles 表重建完成')
+  } catch (err: any) {
+    db!.exec('ROLLBACK')
+    console.error('[DB] profiles 表重建失败:', err.message)
+  }
+}
+
+/**
  * 执行数据库迁移脚本
  */
 function runMigrations(): void {
@@ -127,6 +211,9 @@ function runMigrations(): void {
   }
 
   console.log('[DB] 数据库迁移完成，共执行 ' + statements.length + ' 条 SQL')
+
+  // 特殊处理：检查并重建 profiles 表（修复 CHECK 约束）
+  migrateProfilesTable()
 }
 
 /**

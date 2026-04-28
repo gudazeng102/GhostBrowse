@@ -203,24 +203,47 @@ export async function launchChrome(
   // 3. 生成指纹注入 Extension
   const extensionPath = generateExtension(profile, proxy)
   
-  // 4. 构建代理参数字符串
+   // 4. 构建代理参数字符串（Phase 1.6 修复：添加 URL encode、修正 scheme）
   let proxyServer = ''
+  
+  // === 调试日志 ===
+  console.log('[DEBUG] ====== Chrome 启动调试开始 ======')
+  console.log('[DEBUG] Profile ID:', profile.id, 'Title:', profile.title)
+  console.log('[DEBUG] Profile proxyId:', profile.proxyId)
+  console.log('[DEBUG] Proxy 对象:', JSON.stringify(proxy, null, 2))
+  // =================
+  
   if (proxy) {
-    if (proxy.type === 'socks5') {
-      // SOCKS5 代理
-      if (proxy.username && proxy.password) {
-        proxyServer = `socks5://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`
-      } else {
-        proxyServer = `socks5://${proxy.host}:${proxy.port}`
-      }
-    } else {
-      // HTTP/HTTPS 代理
-      if (proxy.username && proxy.password) {
-        proxyServer = `${proxy.type}://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`
-      } else {
-        proxyServer = `${proxy.type}://${proxy.host}:${proxy.port}`
-      }
+    // 用户名密码需要 URL encode，防止特殊字符（如 @、:、/）破坏 URL 结构
+    const encode = (str: string) => encodeURIComponent(str)
+    
+    // 构建认证信息部分
+    let auth = ''
+    if (proxy.username) {
+      const encodedUser = encode(proxy.username)
+      const encodedPass = proxy.password ? encode(proxy.password) : ''
+      auth = `${encodedUser}:${encodedPass}@`
     }
+    
+    let scheme: string
+    switch (proxy.type) {
+      case 'socks5':
+        // Chrome 的 --proxy-server 只识别 socks5（不能写成 socks 或 socks5h）
+        scheme = 'socks5'
+        break
+      case 'https':
+        // HTTPS 代理使用 https:// scheme
+        scheme = 'https'
+        break
+      case 'http':
+      default:
+        scheme = 'http'
+    }
+    
+    proxyServer = `${scheme}://${auth}${proxy.host}:${proxy.port}`
+    console.log(`[DEBUG] 代理参数构建: type=${proxy.type} -> scheme=${scheme} -> ${proxyServer}`)
+  } else {
+    console.log('[DEBUG] 无代理配置，proxyServer 为空')
   }
   
   // 5. 获取 User-Agent
@@ -247,6 +270,9 @@ export async function launchChrome(
     `--no-default-browser-check`,
     `--no-sandbox`,  // Electron 环境下需要
     `--disable-dev-shm-usage`,  // 避免共享内存问题
+    // 代理相关参数
+    `--ignore-certificate-errors`,  // 忽略 SSL 证书错误
+    `--proxy-bypass-list=*`,  // 不绕过任何代理
     // 加载指纹注入 Extension
     `--load-extension=${extensionPath}`,
     // 启动页面

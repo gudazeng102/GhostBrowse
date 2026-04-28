@@ -94,8 +94,25 @@
     }
   }
   
-  // ==================== 3. WebRTC - 三种模式 ====================
-  if (config.webrtc_mode === 'disable') {
+  // ==================== 3. WebRTC - 四种模式（与 AdsPower 保持一致） ====================
+  // 
+  // WebRTC 模式说明：
+  // - forward: 转发（Google STUN），隐蔽真实IP，适用于高安全性网站(Ebay、Discord)
+  // - replace: 替换为与代理相匹配的 WebRTC IP
+  // - real: 使用当前电脑的真实 WebRTC IP（不做任何处理）
+  // - disable: 网站将无法读取 WebRTC 参数
+  //
+  // Forward 模式原理：
+  // WebRTC 的 ICE 机制会使用 STUN/TURN 服务器收集网络候选地址。
+  // 恶意网站可以通过自托管 STUN 服务器获取用户的真实本地 IP。
+  // Forward 模式通过劫持 RTCPeerConnection，强制将所有 iceServers 替换为
+  // Google 公共 STUN 服务器，从而阻止自托管 STUN 探测真实 IP。
+  
+  // real 模式：不做任何处理，让网站看到真实的本地 IP
+  if (config.webrtc_mode === 'real') {
+    // 不劫持 RTCPeerConnection，保持原样
+    console.log('[GhostBrowse Extension] WebRTC real 模式: 不处理，使用真实IP');
+  } else if (config.webrtc_mode === 'disable') {
     // 完全禁用 WebRTC
     delete window.RTCPeerConnection;
     delete window.webkitRTCPeerConnection;
@@ -150,8 +167,68 @@
       // 如果有 onicecandidate，也需要包装
       const originalSet = Object.getOwnPropertyDescriptor(window.RTCPeerConnection.prototype, 'onicecandidate');
     }
+  } else if (config.webrtc_mode === 'forward') {
+    // Phase 1.6: Forward 模式 - 强制通过 Google 公共 STUN 服务器
+    // 
+    // 技术原理：
+    // 劫持 RTCPeerConnection 构造函数，强制替换 iceServers 配置
+    // 将所有 STUN 请求路由到 Google 公共服务器，防止自托管 STUN 探测真实 IP
+    // 
+    // Google STUN 服务器列表（全球分布，高可用性）：
+    // - stun.l.google.com:19302 (最常用)
+    // - stun1.l.google.com:19302
+    // - stun2.l.google.com:19302
+    // - stun3.l.google.com:19302
+    // - stun4.l.google.com:19302
+    
+    const OriginalRTCPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+    if (OriginalRTCPeerConnection) {
+      // 保存原始构造函数引用
+      const _OrigRTCPeerConnection = OriginalRTCPeerConnection;
+      
+      // 创建劫持版本的 RTCPeerConnection
+      window.RTCPeerConnection = function(config, ...rest) {
+        // Google 公共 STUN 服务器列表
+        const GOOGLE_STUN_SERVERS = [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' }
+        ];
+        
+        // 强制替换 iceServers，阻止自托管 STUN
+        const forwardConfig = {
+          ...config,
+          iceServers: GOOGLE_STUN_SERVERS,
+          // iceTransportPolicy: 'all'  // 使用所有候选类型
+        };
+        
+        console.log('[GhostBrowse Extension] WebRTC Forward 模式: 强制使用 Google STUN 服务器');
+        
+        // 使用劫持配置创建实例
+        return new _OrigRTCPeerConnection(forwardConfig, ...rest);
+      };
+      
+      // 复制原型方法和静态属性
+      window.RTCPeerConnection.prototype = _OrigRTCPeerConnection.prototype;
+      window.RTCPeerConnection.prototype.constructor = window.RTCPeerConnection;
+      
+      // 复制静态方法（如 generateCertificate, getDefaultIceServers 等）
+      Object.keys(_OrigRTCPeerConnection).forEach(key => {
+        try {
+          window.RTCPeerConnection[key] = _OrigRTCPeerConnection[key];
+        } catch (e) {
+          // 某些静态属性可能无法复制，忽略
+        }
+      });
+      
+      // 同时劫持 webkitRTCPeerConnection（兼容性）
+      if (window.webkitRTCPeerConnection) {
+        window.webkitRTCPeerConnection = window.RTCPeerConnection;
+      }
+    }
   }
-  // forward 模式不做任何修改，保持原有行为
   
   // ==================== 4. 时区 - 基于配置 ====================
   if (config.timezone_mode === 'ip' && config.timezone) {

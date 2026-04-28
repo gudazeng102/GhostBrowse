@@ -54,8 +54,13 @@ export interface CreateProxyRequest {
 
 /**
  * WebRTC 模式枚举
+ * 与 AdsPower 保持一致：
+ * - forward: 转发（Google STUN），隐蔽真实IP
+ * - replace: 替换为代理IP
+ * - real: 使用当前电脑的真实WebRTC IP
+ * - disable: 完全禁用WebRTC
  */
-export type WebRTCMode = 'forward' | 'replace' | 'disable'
+export type WebRTCMode = 'forward' | 'replace' | 'real' | 'disable'
 
 /**
  * 指纹配置模式枚举

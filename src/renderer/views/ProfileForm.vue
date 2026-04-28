@@ -122,8 +122,9 @@
           <a-col :span="6">
             <a-form-item label="WebRTC 防护" name="webrtcMode">
               <a-select v-model:value="formState.webrtcMode">
-                <a-select-option value="forward">使用真实IP</a-select-option>
+                <a-select-option value="forward">转发（Google STUN）</a-select-option>
                 <a-select-option value="replace">替换为代理IP</a-select-option>
+                <a-select-option value="real">使用真实IP</a-select-option>
                 <a-select-option value="disable">完全禁用</a-select-option>
               </a-select>
             </a-form-item>
@@ -140,9 +141,9 @@
           <a-col :span="6">
             <a-form-item label="WebGL 指纹" name="webglMode">
               <a-select v-model:value="formState.webglMode">
-                <a-select-option value="mock">模拟WebGL</a-select-option>
-                <a-select-option value="disable">禁用WebGL</a-select-option>
-                <a-select-option value="real">使用真实</a-select-option>
+                <a-select-option value="mock">模拟</a-select-option>
+                <a-select-option value="disable">禁用</a-select-option>
+                <a-select-option value="real">真实</a-select-option>
               </a-select>
             </a-form-item>
           </a-col>
