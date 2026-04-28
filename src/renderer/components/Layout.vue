@@ -6,6 +6,24 @@
         <span class="logo-icon">👻</span>
         <span class="logo-text">GhostBrowse</span>
       </div>
+
+      <!-- Phase 1.8: 右上角用户信息和退出登录 -->
+      <div class="user-area">
+        <a-dropdown>
+          <span class="user-trigger">
+            <UserOutlined />
+            <span class="username">{{ authStore.user?.display_name || authStore.user?.username }}</span>
+          </span>
+          <template #overlay>
+            <a-menu>
+              <a-menu-item key="logout" @click="handleLogout">
+                <LogoutOutlined />
+                <span>退出登录</span>
+              </a-menu-item>
+            </a-menu>
+          </template>
+        </a-dropdown>
+      </div>
     </a-layout-header>
 
     <a-layout>
@@ -46,6 +64,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { UserOutlined, LogoutOutlined } from '@ant-design/icons-vue'
+import { authStore } from '../stores/auth'
 
 const router = useRouter()
 const route = useRoute()
@@ -86,6 +106,11 @@ function handleMenuClick({ key }: { key: string }) {
     default:
       router.push('/')
   }
+}
+
+// Phase 1.8: 退出登录处理
+function handleLogout() {
+  authStore.logout()
 }
 </script>
 
@@ -129,5 +154,28 @@ function handleMenuClick({ key }: { key: string }) {
   background: #f0f2f5;
   min-height: calc(100vh - 64px);
   overflow-y: auto;
+}
+
+/* Phase 1.8: 用户区域样式 */
+.user-area {
+  margin-left: auto;
+  color: #fff;
+  cursor: pointer;
+}
+
+.user-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  color: #fff;
+}
+
+.user-trigger:hover {
+  opacity: 0.85;
+}
+
+.username {
+  font-size: 14px;
 }
 </style>

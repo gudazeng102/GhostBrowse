@@ -1,9 +1,20 @@
 <template>
-  <Layout />
+  <!-- Phase 1.8: 根据登录状态条件渲染 -->
+  <!-- 已登录：渲染 Layout（带侧边栏和顶部栏） -->
+  <!-- 未登录：全屏显示公共页面（登录/注册/忘记密码/重置密码） -->
+  <Layout v-if="authStore.isLoggedIn" />
+  <router-view v-else />
 </template>
 
 <script setup lang="ts">
+import { onMounted } from 'vue'
 import Layout from './components/Layout.vue'
+import { authStore } from './stores/auth'
+
+// Phase 1.8: 应用启动时初始化认证状态
+onMounted(() => {
+  authStore.init()
+})
 </script>
 
 <style>

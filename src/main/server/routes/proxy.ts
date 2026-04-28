@@ -491,7 +491,7 @@ router.post('/:id/check', async (req: Request, res: Response) => {
       Date.now()
     )
     
-    // 8. 返回检测结果
+      // 8. 返回检测结果（含 Socks5 认证支持标识）
     res.json({
       code: 0,
       data: {
@@ -504,7 +504,9 @@ router.post('/:id/check', async (req: Request, res: Response) => {
         region: country && city ? `${country}-${city}` : (country || '-'),
         latency,
         error: errorMsg,
-        checkedAt: Date.now()
+        checkedAt: Date.now(),
+        // Phase 1.7: Socks5 认证支持标识
+        socks5_auth_supported: proxy.type === 'socks5' && !!proxy.username ? true : undefined
       },
       message: status === 'success' ? '检测成功' : '检测失败'
     })

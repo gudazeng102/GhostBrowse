@@ -1,9 +1,13 @@
 /**
  * 窗口配置（Profile）路由
  * Phase 1.3: 实现窗口配置的 CRUD API + Chrome 启动
+ * Phase 1.7: 追加 Cookie 隔离验证接口
  */
 
 import { Router, Request, Response } from 'express'
+import { app } from 'electron'
+import * as path from 'path'
+import * as fs from 'fs'
 import { getDatabase } from '../db'
 import { launchChrome, registerChromeProcess, getRunningProfiles, closeChrome } from '../../browser/launcher'
 
@@ -602,6 +606,82 @@ router.post('/:id/close', async (req: Request, res: Response) => {
       code: 500,
       data: null,
       message: err.message || '关闭窗口失败'
+    })
+  }
+})
+
+// ==================== Phase 1.7: Cookie 隔离验证接口 ====================
+
+/**
+ * GET /api/v1/profiles/:id/isolation-check
+ * 验证窗口的数据隔离状态
+ */
+router.get('/:id/isolation-check', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const db = getDatabase()
+    
+    // 检查窗口是否存在
+    const existing = db.prepare('SELECT id FROM profiles WHERE id = ?').get(Number(id))
+    if (!existing) {
+      return res.status(404).json({
+        code: 404,
+        data: null,
+        message: '窗口不存在'
+      })
+    }
+    
+    // 构建 userDataDir 路径（与 launcher.ts 完全一致）
+    const userDataDir = path.join(
+      app.isPackaged ? app.getPath('userData') : process.cwd(),
+      'profiles',
+      String(id)
+    )
+    
+    // 检查目录是否存在
+    const dirExists = fs.existsSync(userDataDir)
+    
+    if (!dirExists) {
+      return res.json({
+        code: 0,
+        data: {
+          isolated: false,
+          userDataDir,
+          hasCookiesFile: false,
+          hasLocalStorage: false,
+          message: '数据目录尚未创建，首次启动窗口后将自动生成'
+        },
+        message: 'success'
+      })
+    }
+    
+    // 检查 Chrome 数据文件
+    const cookiesPath = path.join(userDataDir, 'Cookies')
+    const localStoragePath = path.join(userDataDir, 'Local Storage')
+    const networkPath = path.join(userDataDir, 'Network')
+    
+    const hasCookiesFile = fs.existsSync(cookiesPath)
+    const hasLocalStorage = fs.existsSync(localStoragePath) || fs.existsSync(networkPath)
+    
+    const isolated = hasCookiesFile || hasLocalStorage
+    
+    res.json({
+      code: 0,
+      data: {
+        isolated,
+        userDataDir,
+        hasCookiesFile,
+        hasLocalStorage,
+        message: isolated ? '数据隔离正常' : '目录存在，但尚未写入数据'
+      },
+      message: 'success'
+    })
+  } catch (err: any) {
+    console.error('[Profile API] 隔离检查失败:', err)
+    res.status(500).json({
+      code: 500,
+      data: null,
+      message: err.message || '隔离检查失败'
     })
   }
 })

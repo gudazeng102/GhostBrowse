@@ -22,11 +22,11 @@ const request: AxiosInstance = axios.create({
 // 请求拦截器
 request.interceptors.request.use(
   (config) => {
-    // TODO: Phase 2.0 添加 Token 认证
-    // const token = localStorage.getItem('token')
-    // if (token) {
-    //   config.headers.Authorization = `Bearer ${token}`
-    // }
+    // Phase 1.8: 自动携带 Token
+    const token = localStorage.getItem('token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
     
     console.log(`[Request] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`)
     return config
@@ -56,7 +56,10 @@ request.interceptors.response.use(
         break
       case 401:
         console.error('未授权，请登录')
-        // TODO: Phase 2.0 跳转登录页
+        // Phase 1.8: 401 自动跳转登录页并清理 Token
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        window.location.href = '/#/login'
         break
       case 403:
         console.error('拒绝访问')

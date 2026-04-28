@@ -169,26 +169,66 @@
     }
   } else if (config.webrtc_mode === 'forward') {
     // Phase 1.6: Forward 模式 - 强制通过 Google 公共 STUN 服务器
-    // 
-    // 技术原理：
-    // 劫持 RTCPeerConnection 构造函数，强制替换 iceServers 配置
-    // 将所有 STUN 请求路由到 Google 公共服务器，防止自托管 STUN 探测真实 IP
-    // 
-    // Google STUN 服务器列表（全球分布，高可用性）：
-    // - stun.l.google.com:19302 (最常用)
-    // - stun1.l.google.com:19302
-    // - stun2.l.google.com:19302
-    // - stun3.l.google.com:19302
-    // - stun4.l.google.com:19302
+    // Phase 1.7: 完善 Forward 模式 - 增加私有 IP 过滤
     
     const OriginalRTCPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+    const OriginalRTCIceCandidate = window.RTCIceCandidate;
+    
     if (OriginalRTCPeerConnection) {
-      // 保存原始构造函数引用
       const _OrigRTCPeerConnection = OriginalRTCPeerConnection;
+      const _OrigRTCIceCandidate = OriginalRTCIceCandidate;
       
-      // 创建劫持版本的 RTCPeerConnection
+      // ==================== 辅助函数：判断是否为私有 IP ====================
+      function isPrivateIP(ipString) {
+        if (!ipString) return false;
+        // 匹配私有 IP 段：192.168.x.x, 10.x.x.x, 172.16-31.x.x, 127.0.0.1
+        const privateIPRegex = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.)/;
+        return privateIPRegex.test(ipString);
+      }
+      
+      // ==================== 辅助函数：从 candidate 字符串中提取 IP ====================
+      function extractIPFromCandidate(candidate) {
+        if (!candidate) return null;
+        const parts = candidate.split(' ');
+        for (let i = 0; i < parts.length; i++) {
+          if (parts[i] === 'candidate') {
+            // candidate 格式：candidate:1 1 UDP 123 192.168.1.1 12345 typ host
+            // 找到 IP 通常在 candidate 后面几位
+            for (let j = i + 1; j < parts.length; j++) {
+              const part = parts[j];
+              // 跳过协议相关的值
+              if (['UDP', 'TCP', 'host', 'srflx', 'prflx', 'relay'].includes(part)) continue;
+              // 检查是否是有效 IP
+              if (/^(\d{1,3}\.){3}\d{1,3}$/.test(part) || /^([0-9a-f:]+)$/i.test(part)) {
+                return part;
+              }
+            }
+          }
+        }
+        return null;
+      }
+      
+      // ==================== 劫持 RTCIceCandidate 构造函数 ====================
+      // 如果网站直接构造 ICE candidate，阻止私有 IP
+      if (OriginalRTCIceCandidate) {
+        window.RTCIceCandidate = function(candidateInit) {
+          if (candidateInit && candidateInit.candidate) {
+            const ip = extractIPFromCandidate(candidateInit.candidate);
+            if (ip && isPrivateIP(ip)) {
+              // 构造一个空 candidate，不包含私有 IP
+              console.log('[GhostBrowse Extension] WebRTC Forward: 拦截私有 IP candidate', ip);
+              const safeCandidate = { ...candidateInit, candidate: '' };
+              return new _OrigRTCIceCandidate(safeCandidate);
+            }
+          }
+          return new _OrigRTCIceCandidate(candidateInit);
+        };
+        window.RTCIceCandidate.prototype = OriginalRTCIceCandidate.prototype;
+        window.RTCIceCandidate.prototype.constructor = window.RTCIceCandidate;
+      }
+      
+      // ==================== 劫持 RTCPeerConnection 构造函数 ====================
       window.RTCPeerConnection = function(config, ...rest) {
-        // Google 公共 STUN 服务器列表
         const GOOGLE_STUN_SERVERS = [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
@@ -197,33 +237,113 @@
           { urls: 'stun:stun4.l.google.com:19302' }
         ];
         
-        // 强制替换 iceServers，阻止自托管 STUN
         const forwardConfig = {
           ...config,
           iceServers: GOOGLE_STUN_SERVERS,
-          // iceTransportPolicy: 'all'  // 使用所有候选类型
+          iceTransportPolicy: 'all'
         };
         
-        console.log('[GhostBrowse Extension] WebRTC Forward 模式: 强制使用 Google STUN 服务器');
+        const pc = new _OrigRTCPeerConnection(forwardConfig, ...rest);
         
-        // 使用劫持配置创建实例
-        return new _OrigRTCPeerConnection(forwardConfig, ...rest);
+        // ==================== 劫持 addEventListener，过滤 icecandidate 事件 ====================
+        const originalAddEventListener = pc.addEventListener.bind(pc);
+        pc.addEventListener = function(type, listener, options) {
+          if (type === 'icecandidate') {
+            const wrappedListener = function(event) {
+              if (event.candidate) {
+                const ip = extractIPFromCandidate(event.candidate.candidate);
+                if (ip && isPrivateIP(ip)) {
+                  // 阻止包含私有 IP 的 candidate 向上传递
+                  console.log('[GhostBrowse Extension] WebRTC Forward: 过滤私有 IP candidate', ip);
+                  Object.defineProperty(event, 'candidate', {
+                    value: { candidate: '', sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex },
+                    writable: true,
+                    configurable: true
+                  });
+                }
+              }
+              // 继续调用原监听器，但已修改的 event 不会泄露私有 IP
+              return listener(event);
+            };
+            return originalAddEventListener(type, wrappedListener, options);
+          }
+          return originalAddEventListener(type, listener, options);
+        };
+        
+        // ==================== 劫持 onicecandidate 属性 ====================
+        const originalDescriptor = Object.getOwnPropertyDescriptor(_OrigRTCPeerConnection.prototype, 'onicecandidate');
+        if (originalDescriptor && originalDescriptor.set) {
+          Object.defineProperty(pc, 'onicecandidate', {
+            set: function(handler) {
+              if (handler) {
+                const wrappedHandler = function(event) {
+                  if (event.candidate) {
+                    const ip = extractIPFromCandidate(event.candidate.candidate);
+                    if (ip && isPrivateIP(ip)) {
+                      console.log('[GhostBrowse Extension] WebRTC Forward: onicecandidate 过滤私有 IP', ip);
+                      Object.defineProperty(event, 'candidate', {
+                        value: { candidate: '', sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex },
+                        writable: true,
+                        configurable: true
+                      });
+                    }
+                  }
+                  return handler(event);
+                };
+                return originalDescriptor.set.call(this, wrappedHandler);
+              }
+              return originalDescriptor.set.call(this, handler);
+            },
+            get: function() {
+              return originalDescriptor.get.call(this);
+            },
+            configurable: true
+          });
+        }
+        
+        // ==================== 劫持 createOffer/createAnswer，替换 SDP 中的私有 IP ====================
+        const originalCreateOffer = pc.createOffer.bind(pc);
+        pc.createOffer = function(...args) {
+          return originalCreateOffer(...args).then(sdp => {
+            // 替换 SDP 中的私有 IP
+            const filteredSdp = sdp.sdp.replace(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g, (match, ip) => {
+              if (isPrivateIP(ip)) {
+                console.log('[GhostBrowse Extension] WebRTC Forward: SDP 替换私有 IP', ip);
+                return '0.0.0.0';
+              }
+              return ip;
+            });
+            return { ...sdp, sdp: filteredSdp };
+          });
+        };
+        
+        const originalCreateAnswer = pc.createAnswer.bind(pc);
+        pc.createAnswer = function(...args) {
+          return originalCreateAnswer(...args).then(sdp => {
+            const filteredSdp = sdp.sdp.replace(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g, (match, ip) => {
+              if (isPrivateIP(ip)) {
+                console.log('[GhostBrowse Extension] WebRTC Forward: SDP 替换私有 IP', ip);
+                return '0.0.0.0';
+              }
+              return ip;
+            });
+            return { ...sdp, sdp: filteredSdp };
+          });
+        };
+        
+        console.log('[GhostBrowse Extension] WebRTC Forward 模式: 强制使用 Google STUN + 私有 IP 过滤');
+        return pc;
       };
       
-      // 复制原型方法和静态属性
       window.RTCPeerConnection.prototype = _OrigRTCPeerConnection.prototype;
       window.RTCPeerConnection.prototype.constructor = window.RTCPeerConnection;
       
-      // 复制静态方法（如 generateCertificate, getDefaultIceServers 等）
       Object.keys(_OrigRTCPeerConnection).forEach(key => {
         try {
           window.RTCPeerConnection[key] = _OrigRTCPeerConnection[key];
-        } catch (e) {
-          // 某些静态属性可能无法复制，忽略
-        }
+        } catch (e) {}
       });
       
-      // 同时劫持 webkitRTCPeerConnection（兼容性）
       if (window.webkitRTCPeerConnection) {
         window.webkitRTCPeerConnection = window.RTCPeerConnection;
       }

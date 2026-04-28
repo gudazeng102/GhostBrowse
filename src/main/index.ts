@@ -5,14 +5,15 @@
 
 import { app, BrowserWindow, Menu } from 'electron'
 import * as path from 'path'
+import * as fs from 'fs'
 import { startServer } from './server/app'
 import { closeDatabase } from './server/db'
 
 // 开发模式标识
-const isDev = !app.isPackaged
+const isDev = !app?.isPackaged
 
 // BrowserWindow 实例
-let mainWindow: BrowserWindow | null = null
+let mainWindow: any = null
 
 /**
  * 创建 Electron 主窗口
@@ -100,9 +101,38 @@ async function createWindow(): Promise<void> {
  * 应用程序入口
  */
 async function main(): Promise<void> {
+  // === Phase 1.7 打包后首次运行自检（开始）===
+  const userDataPath = app.getPath('userData')
+  const dbPath = path.join(userDataPath, 'ghostbrowse.db')
+  const profilesDir = path.join(userDataPath, 'profiles')
+
+  console.log('[GhostBrowse SelfCheck] ======================================')
+  console.log('[GhostBrowse SelfCheck] 应用版本:', app.getVersion())
+  console.log('[GhostBrowse SelfCheck] 打包模式:', app.isPackaged ? '生产环境' : '开发环境')
+  console.log('[GhostBrowse SelfCheck] UserData 路径:', userDataPath)
+  console.log('[GhostBrowse SelfCheck] 数据库路径:', dbPath)
+  console.log('[GhostBrowse SelfCheck] 数据库存在:', fs.existsSync(dbPath))
+
+  // Extension 路径检查
+  const extPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'extension')
+    : path.join(process.cwd(), 'src', 'main', 'browser', 'extension')
+  console.log('[GhostBrowse SelfCheck] Extension 路径:', extPath)
+  console.log('[GhostBrowse SelfCheck] Extension 存在:', fs.existsSync(extPath))
+  console.log('[GhostBrowse SelfCheck] manifest.json 存在:', fs.existsSync(path.join(extPath, 'manifest.json')))
+
+  // 自动创建 profiles 目录
+  if (!fs.existsSync(profilesDir)) {
+    fs.mkdirSync(profilesDir, { recursive: true })
+    console.log('[GhostBrowse SelfCheck] 已自动创建 profiles 目录:', profilesDir)
+  }
+
+  console.log('[GhostBrowse SelfCheck] ======================================')
+  // === Phase 1.7 打包后首次运行自检（结束）===
+
   console.log('===========================================')
   console.log('[GhostBrowse] Phase 1.0 启动中...')
-  console.log(`[GhostBrowse] 运行环境: ${isDev ? '开发模式' : '生产模式'}`)
+  console.log(`[GhostBrowse] 运行环境: ${isDev ? '开发模式' : '生产环境'}`)
   console.log(`[GhostBrowse] Electron 版本: ${process.versions.electron}`)
   console.log(`[GhostBrowse] Node 版本: ${process.versions.node}`)
   console.log(`[GhostBrowse] Chrome 版本: ${process.versions.chrome}`)

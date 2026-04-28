@@ -52,7 +52,23 @@ CREATE TABLE IF NOT EXISTS proxy_checks (
   checked_at INTEGER NOT NULL
 );
 
--- 创建索引以提升查询性能
+// 创建索引以提升查询性能
 CREATE INDEX IF NOT EXISTS idx_profiles_proxy_id ON profiles(proxy_id);
 CREATE INDEX IF NOT EXISTS idx_proxy_checks_proxy_id ON proxy_checks(proxy_id);
 CREATE INDEX IF NOT EXISTS idx_proxy_checks_checked_at ON proxy_checks(checked_at);
+
+-- =====================================================
+-- Phase 1.8 用户认证表
+-- =====================================================
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  display_name TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','disabled')),
+  reset_token TEXT,
+  reset_token_expires INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);

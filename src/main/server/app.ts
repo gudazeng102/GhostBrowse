@@ -13,6 +13,8 @@ import { initDatabase } from './db'
 // 导入路由模块
 import proxyRouter from './routes/proxy'
 import profileRouter from './routes/profile'
+import systemRouter from './routes/system'
+import authRouter from './routes/auth'
 
 // Express 应用实例
 let app: Express | null = null
@@ -85,6 +87,12 @@ export function createApp(): Express {
 
   // ==================== 窗口配置 API（Phase 1.3） ====================
   app.use('/api/v1/profiles', profileRouter)
+
+  // ==================== Phase 1.7: 系统健康检查 API ====================
+  app.use('/api/v1/system', systemRouter)
+
+  // ==================== Phase 1.8: 用户认证 API ====================
+  app.use('/api/v1/auth', authRouter)
 
   // ==================== 捕获所有路由，返回 index.html (SPA 支持) ====================
   app.get('*', (req: Request, res: Response) => {
