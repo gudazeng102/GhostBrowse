@@ -7,14 +7,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
 import Layout from './components/Layout.vue'
 import { authStore } from './stores/auth'
 
-// Phase 1.8: 应用启动时初始化认证状态
-onMounted(() => {
-  authStore.init()
-})
+// 认证状态已在 main.ts 中初始化，这里不需要重复调用
 </script>
 
 <style>

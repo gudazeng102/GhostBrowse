@@ -114,17 +114,28 @@ router.afterEach((to) => {
 // ==================== Phase 1.8: 全局路由守卫 ====================
 // - 未登录用户访问非公共路由 → 跳转登录页
 // - 已登录用户访问公共路由（登录/注册等）→ 跳转首页
-router.beforeEach((to, from, next) => {
-  // 等待 authStore 初始化完成后再进行路由判断
-  if (!authStore.token && to.meta.public !== true) {
-    // 未登录且访问需要登录的页面
-    next('/login')
-  } else if (authStore.token && to.meta.public === true) {
-    // 已登录但访问公共页面（如登录页），跳转首页
-    next('/')
-  } else {
-    next()
+router.beforeEach(async (to, from, next) => {
+  // 如果目标页面是公开页面
+  if (to.meta.public === true) {
+    if (authStore.isLoggedIn) {
+      // 已登录用户访问公开页面（如登录页），跳转首页
+      next('/')
+    } else {
+      // 未登录用户访问公开页面，允许访问
+      next()
+    }
+    return
   }
+
+  // 目标页面需要登录
+  if (!authStore.isLoggedIn) {
+    // 未登录，跳转登录页
+    next('/login')
+    return
+  }
+
+  // 已登录用户访问受保护页面，允许访问
+  next()
 })
 
 export default router

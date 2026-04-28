@@ -19,29 +19,36 @@ export interface User {
 export const authStore = reactive({
   // Token（从 localStorage 恢复）
   token: localStorage.getItem('token') || '',
-  // 当前用户信息
-  user: null as User | null,
-  // 是否已登录
-  isLoggedIn: false,
+  // 当前用户信息（从 localStorage 恢复）
+  user: JSON.parse(localStorage.getItem('user') || 'null') as User | null,
+  // 是否已登录（从 localStorage 恢复）
+  isLoggedIn: !!localStorage.getItem('token'),
 
   /**
    * 初始化认证状态
-   * 应用启动时调用，恢复登录状态
+   * 应用启动时调用，验证已登录用户的 Token 是否有效
    */
   async init() {
-    if (this.token) {
-      try {
-        const res: any = await getMe()
-        if (res.code === 200 && res.data) {
-          this.user = res.data as User
-          this.isLoggedIn = true
-          localStorage.setItem('user', JSON.stringify(res.data))
-        } else {
-          this.logout()
-        }
-      } catch {
+    // 如果没有 Token，直接跳过
+    if (!this.token) {
+      return
+    }
+
+    // 尝试验证 Token 是否有效
+    try {
+      const res: any = await getMe()
+      if (res.data?.code === 200 && res.data?.data) {
+        // Token 有效，更新用户信息
+        this.user = res.data.data as User
+        this.isLoggedIn = true
+        localStorage.setItem('user', JSON.stringify(res.data.data))
+      } else {
+        // Token 无效，清除登录状态
         this.logout()
       }
+    } catch {
+      // 验证失败，清除登录状态
+      this.logout()
     }
   },
 

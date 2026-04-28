@@ -139,9 +139,8 @@ async function handleSubmit() {
     const res: any = await register(form)
     // axios 响应结构：res.data 才是 API 返回的 body
     if (res.data?.code === 200 && res.data?.data) {
-      authStore.setAuth(res.data.data.token, res.data.data.user)
-      message.success('注册成功')
-      router.push('/')
+      message.success('注册成功，请登录')
+      router.push('/login')
     } else {
       message.error(res.data?.message || res.message || '注册失败')
     }
