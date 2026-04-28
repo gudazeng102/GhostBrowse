@@ -13,6 +13,9 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { app } from 'electron'
+import * as http from 'http'
+import * as net from 'net'
+import * as tls from 'tls'
 
 // ==================== 类型定义 ====================
 
@@ -61,37 +64,123 @@ const CHROME_USER_AGENTS: Record<string, string> = {
   '134': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36'
 }
 
+// ==================== 本地代理转发器（解决 HTTPS over TLS 代理）====================
+
+/**
+ * 创建本地 HTTP 代理服务器
+ * Chrome -> 本地 HTTP (127.0.0.1:随机端口) -> TLS -> 远程 HTTPS 代理 -> 目标
+ */
+function createLocalProxy(proxy: Proxy): { url: string; server: http.Server } {
+  const localPort = 30000 + Math.floor(Math.random() * 10000)
+  
+  const server = http.createServer()
+  
+  server.on('request', (req, res) => {
+    // HTTP 请求：直接转发到远程代理
+    const reqUrl = req.url || '/'
+    const options = {
+      hostname: proxy.host,
+      port: proxy.port,
+      path: reqUrl,
+      method: req.method,
+      headers: { ...req.headers, host: new URL(reqUrl).host },
+      rejectUnauthorized: false,
+      agent: false
+    } as any
+    
+    const proxyReq = http.request(options, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers)
+      proxyRes.pipe(res)
+    })
+    
+    proxyReq.on('error', (err) => {
+      console.error('[LocalProxy] HTTP 错误:', err.message)
+      res.writeHead(502)
+      res.end('Proxy Error: ' + err.message)
+    })
+    
+    req.pipe(proxyReq)
+  })
+  
+  server.on('connect', (req, clientSocket, head) => {
+    // HTTPS 请求：建立 CONNECT 隧道
+    const reqUrl = req.url || ''
+    const urlParts = reqUrl.split(':')
+    const hostname = urlParts[0]
+    const port = parseInt(urlParts[1]) || 443
+    
+    // 直接用 TCP 连接远程代理，发送 HTTP CONNECT 请求
+    const netSocket = net.connect({
+      host: proxy.host,
+      port: proxy.port
+    }, () => {
+      // 构建 CONNECT 请求，带认证
+      let connectReq = `CONNECT ${hostname}:${port} HTTP/1.1\r\n`
+        + `Host: ${proxy.host}:${proxy.port}\r\n`
+      
+      if (proxy.username) {
+        const auth = Buffer.from(`${proxy.username}:${proxy.password || ''}`).toString('base64')
+        connectReq += `Proxy-Authorization: Basic ${auth}\r\n`
+      }
+      connectReq += `\r\n`
+      
+      netSocket.write(connectReq)
+      
+      // 等待代理响应
+      netSocket.once('data', (data) => {
+        const response = data.toString()
+        if (response.includes('200')) {
+          clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+          netSocket.pipe(clientSocket)
+          clientSocket.pipe(netSocket)
+        } else {
+          console.error('[LocalProxy] CONNECT 被拒绝:', response)
+          clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n')
+          clientSocket.end()
+          netSocket.end()
+        }
+      })
+    })
+    
+    netSocket.on('error', (err) => {
+      console.error('[LocalProxy] 连接错误:', err.message)
+      try {
+        clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n')
+        clientSocket.end()
+      } catch {}
+    })
+  })
+  
+  server.listen(localPort, '127.0.0.1')
+  console.log(`[LocalProxy] 启动: http://127.0.0.1:${localPort} -> ${proxy.host}:${proxy.port}`)
+  
+  return {
+    url: `http://127.0.0.1:${localPort}`,
+    server
+  }
+}
+
 /** Chrome Extension 模板目录 
  * 开发模式: 使用 src/main/browser/extension
  * 打包模式: 使用 extraResources 下的 extension 目录
  */
 function getExtensionTemplateDir(): string {
-  // 检查是否打包
   if (app.isPackaged) {
-    // 打包模式：从 extraResources 目录读取（electron-builder.json 中配置了 extraResources）
     return path.join(process.resourcesPath, 'extension')
   } else {
-    // 开发模式：从源代码目录读取
     return path.join(process.cwd(), 'src', 'main', 'browser', 'extension')
   }
 }
 
 // ==================== Chrome 路径查找 ====================
 
-/**
- * 查找系统 Chrome 路径
- * 优先查找 Chrome，其次 Edge
- */
 function findChromePath(): string | null {
   const candidates = [
-    // Chrome
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
     path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    // Edge
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-    // Chromium
     path.join(os.homedir(), 'AppData', 'Local', 'Chromium', 'Application', 'chrome.exe'),
   ]
   
@@ -107,35 +196,22 @@ function findChromePath(): string | null {
 
 // ==================== Extension 动态生成 ====================
 
-/**
- * 动态生成指纹注入 Extension 到临时目录
- * 
- * @param profile Profile 配置
- * @param proxy Proxy 配置（可选）
- * @returns 临时 Extension 目录路径
- */
 function generateExtension(profile: Profile, proxy: Proxy | null): string {
-  // 临时目录路径
   const tempDir = path.join(os.tmpdir(), `ghostbrowse-ext-${profile.id}`)
   
-  // 如果目录已存在，先删除
   if (fs.existsSync(tempDir)) {
     fs.rmSync(tempDir, { recursive: true, force: true })
   }
   
-  // 创建目录
   fs.mkdirSync(tempDir, { recursive: true })
   
-  // 读取 manifest 模板
   const manifestPath = path.join(getExtensionTemplateDir(), 'manifest.json')
   let manifestContent = fs.readFileSync(manifestPath, 'utf-8')
   fs.writeFileSync(path.join(tempDir, 'manifest.json'), manifestContent)
   
-  // 读取 content-script 模板并替换配置
   const contentScriptPath = path.join(getExtensionTemplateDir(), 'content-script.js')
   let contentScript = fs.readFileSync(contentScriptPath, 'utf-8')
   
-  // 构建配置对象
   const config = {
     profile_id: profile.id,
     canvas_mode: profile.canvasMode || 'noise',
@@ -146,18 +222,13 @@ function generateExtension(profile: Profile, proxy: Proxy | null): string {
     media_device_mode: profile.mediaDeviceMode || 'mock',
     screen_resolution: profile.screenResolution || '1920x1080',
     ui_language: profile.uiLanguage || 'zh-CN',
-    // 后续根据代理 IP 查时区，Phase 1.3 简化使用固定值
     timezone: 'Asia/Shanghai',
     latitude: 39.9042,
     longitude: 116.4074,
-    // WebRTC 替换模式使用的 IP
     proxy_ip: proxy?.host || null
   }
   
-  // 替换 {{CONFIG}} 占位符
   contentScript = contentScript.replace('{{CONFIG}}', JSON.stringify(config))
-  
-  // 写入 content-script.js
   fs.writeFileSync(path.join(tempDir, 'content-script.js'), contentScript)
   
   console.log(`[BrowserLauncher] Extension 生成到: ${tempDir}`)
@@ -167,13 +238,6 @@ function generateExtension(profile: Profile, proxy: Proxy | null): string {
 
 // ==================== 主启动函数 ====================
 
-/**
- * 启动 Chrome 浏览器
- * 
- * @param profile Profile 配置
- * @param proxy Proxy 配置（可选）
- * @returns 启动结果，包含 PID 和用户数据目录
- */
 export async function launchChrome(
   profile: Profile,
   proxy: Proxy | null
@@ -181,45 +245,57 @@ export async function launchChrome(
   console.log('[BrowserLauncher] 开始启动 Chrome...')
   console.log(`[BrowserLauncher] 窗口: ${profile.title} (ID: ${profile.id})`)
   
-  // 1. 查找 Chrome 路径
   const chromePath = findChromePath()
   if (!chromePath) {
     throw new Error('未找到 Chrome 浏览器，请安装 Google Chrome 或 Microsoft Edge')
   }
   
-  // 2. 构建用户数据目录（每个窗口独立）
   const userDataDir = path.join(
     app.isPackaged ? app.getPath('userData') : process.cwd(),
     'profiles',
     String(profile.id)
   )
   
-  // 确保目录存在
   if (!fs.existsSync(userDataDir)) {
     fs.mkdirSync(userDataDir, { recursive: true })
   }
   console.log(`[BrowserLauncher] 用户数据目录: ${userDataDir}`)
   
-  // 3. 生成指纹注入 Extension
   const extensionPath = generateExtension(profile, proxy)
   
-  // 4. 构建代理参数字符串
+  // 4. 构建代理参数（检测是否需要本地转发）
   let proxyServer = ''
+  let localProxyServer: http.Server | null = null
+  
   if (proxy) {
-    if (proxy.type === 'socks5') {
-      // SOCKS5 代理
-      if (proxy.username && proxy.password) {
-        proxyServer = `socks5://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`
-      } else {
-        proxyServer = `socks5://${proxy.host}:${proxy.port}`
-      }
+    // 检测是否需要 TLS 转发（端口 443 或类型为 https）
+    const needsTlsForward = proxy.port === 443 || proxy.type === 'https'
+    
+    if (needsTlsForward) {
+      // 创建本地 HTTP 转发代理
+      const localProxy = createLocalProxy(proxy)
+      localProxyServer = localProxy.server
+      proxyServer = localProxy.url
+      console.log(`[BrowserLauncher] 使用本地转发: ${proxyServer}`)
     } else {
-      // HTTP/HTTPS 代理
-      if (proxy.username && proxy.password) {
-        proxyServer = `${proxy.type}://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`
-      } else {
-        proxyServer = `${proxy.type}://${proxy.host}:${proxy.port}`
+      // 明文代理，直接连接
+      const encode = (str: string | null) => str ? encodeURIComponent(str) : ''
+      const user = encode(proxy.username)
+      const pass = encode(proxy.password)
+      const auth = proxy.username ? `${user}:${pass}@` : ''
+      
+      let scheme: string
+      switch (proxy.type) {
+        case 'socks5':
+          scheme = 'socks5'
+          break
+        case 'http':
+        case 'https':
+        default:
+          scheme = 'http'
       }
+      
+      proxyServer = `${scheme}://${auth}${proxy.host}:${proxy.port}`
     }
   }
   
@@ -236,20 +312,14 @@ export async function launchChrome(
     `--lang=${profile.uiLanguage || 'zh-CN'}`,
     `--user-agent=${userAgent}`,
     `--window-size=${screenWidth},${screenHeight}`,
-    // 禁用自动化特征
     `--disable-blink-features=AutomationControlled`,
-    // 禁用同源隔离（允许 Extension 正常工作）
     `--disable-features=IsolateOrigins,site-per-process`,
-    // 指纹保护相关
     `--enable-features=ChromeExtensionsOnChromeURLs`,
-    // 基本启动参数
     `--no-first-run`,
     `--no-default-browser-check`,
-    `--no-sandbox`,  // Electron 环境下需要
-    `--disable-dev-shm-usage`,  // 避免共享内存问题
-    // 加载指纹注入 Extension
+    `--no-sandbox`,
+    `--disable-dev-shm-usage`,
     `--load-extension=${extensionPath}`,
-    // 启动页面
     `ip.sb`
   ]
   
@@ -265,28 +335,29 @@ export async function launchChrome(
   return new Promise((resolve, reject) => {
     try {
       const chromeProcess = spawn(chromePath, args, {
-        detached: false,  // Electron 退出时跟随关闭
-        stdio: ['ignore', 'pipe', 'pipe'],  // 忽略 stdin，捕获 stdout/stderr
+        detached: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
         env: {
           ...process.env,
-          // 确保 Electron 环境变量存在
           ELECTRON_RUN_AS_NODE: '0'
         }
       })
       
-      // 记录 PID
       const pid = chromeProcess.pid ?? -1
       console.log(`[BrowserLauncher] Chrome 进程已启动，PID: ${pid}`)
       
-      // 监听进程错误
       chromeProcess.on('error', (err) => {
         console.error(`[BrowserLauncher] Chrome 进程错误: ${err.message}`)
         reject(err)
       })
       
-      // 监听进程退出
       chromeProcess.on('exit', (code, signal) => {
         console.log(`[BrowserLauncher] Chrome 进程退出，code: ${code}, signal: ${signal}`)
+        // 关闭本地代理
+        if (localProxyServer) {
+          localProxyServer.close()
+          console.log('[LocalProxy] 已关闭')
+        }
         // 清理临时 Extension 目录
         try {
           if (fs.existsSync(extensionPath)) {
@@ -297,7 +368,6 @@ export async function launchChrome(
         }
       })
       
-      // 处理输出日志（可选，便于调试）
       chromeProcess.stdout?.on('data', (data) => {
         const log = data.toString().trim()
         if (log) {
@@ -312,7 +382,6 @@ export async function launchChrome(
         }
       })
       
-      // 返回成功结果
       resolve({
         pid,
         userDataDir
@@ -324,48 +393,32 @@ export async function launchChrome(
   })
 }
 
-// ==================== 进程映射（Phase 1.4 使用） ====================
+// ==================== 进程映射 ====================
 
-/** Profile ID -> Chrome 进程信息映射 */
 const profileProcessMap = new Map<number, { pid: number; userDataDir: string; startTime: number }>()
 
-/**
- * 注册 Chrome 进程
- */
 export function registerChromeProcess(profileId: number, pid: number, userDataDir: string): void {
   profileProcessMap.set(profileId, { pid, userDataDir, startTime: Date.now() })
   console.log(`[BrowserLauncher] 注册进程: Profile ${profileId} -> PID ${pid}`)
 }
 
-/**
- * 获取 Chrome 进程 PID
- */
 export function getChromeProcessPid(profileId: number): number {
   return profileProcessMap.get(profileId)?.pid ?? -1
 }
 
-/**
- * 注销 Chrome 进程
- */
 export function unregisterChromeProcess(profileId: number): void {
   profileProcessMap.delete(profileId)
   console.log(`[BrowserLauncher] 注销进程: Profile ${profileId}`)
 }
 
-/**
- * 获取所有运行中的 Profile ID 列表
- * 自动清理已死亡的进程
- */
 export function getRunningProfiles(): number[] {
   const result: number[] = []
   
   for (const [profileId, info] of profileProcessMap.entries()) {
     try {
-      // 信号 0 用于检测进程是否存在
       process.kill(info.pid, 0)
       result.push(profileId)
     } catch {
-      // 进程已死亡，从映射表中移除
       console.log(`[BrowserLauncher] 进程已死亡，自动清理: Profile ${profileId} -> PID ${info.pid}`)
       profileProcessMap.delete(profileId)
     }
@@ -374,9 +427,6 @@ export function getRunningProfiles(): number[] {
   return result
 }
 
-/**
- * 检查指定 Profile 是否正在运行
- */
 export function isProfileRunning(profileId: number): boolean {
   const info = profileProcessMap.get(profileId)
   if (!info) return false
@@ -385,16 +435,11 @@ export function isProfileRunning(profileId: number): boolean {
     process.kill(info.pid, 0)
     return true
   } catch {
-    // 进程已死亡，自动清理
     profileProcessMap.delete(profileId)
     return false
   }
 }
 
-/**
- * 关闭指定 Profile 的 Chrome 窗口
- * 使用 SIGTERM 优雅终止，如果失败则使用 SIGKILL 强制终止
- */
 export function closeProfile(profileId: number): boolean {
   const info = profileProcessMap.get(profileId)
   if (!info) {
@@ -405,14 +450,11 @@ export function closeProfile(profileId: number): boolean {
   console.log(`[BrowserLauncher] 关闭窗口: Profile ${profileId} -> PID ${info.pid}`)
   
   try {
-    // 先尝试优雅终止（SIGTERM）
     process.kill(info.pid, 'SIGTERM')
     
-    // 延迟后检查是否已终止
     setTimeout(() => {
       try {
         process.kill(info.pid, 0)
-        // 进程仍存在，使用强制终止
         console.log(`[BrowserLauncher] SIGTERM 失败，使用 SIGKILL: PID ${info.pid}`)
         process.kill(info.pid, 'SIGKILL')
       } catch {
@@ -420,21 +462,16 @@ export function closeProfile(profileId: number): boolean {
       }
     }, 1000)
     
-    // 从映射表中移除
     profileProcessMap.delete(profileId)
     console.log(`[BrowserLauncher] 关闭窗口成功: Profile ${profileId}`)
     return true
   } catch (err: any) {
     console.error(`[BrowserLauncher] 关闭窗口失败: ${err.message}`)
-    // 无论成功失败，都从映射表中移除
     profileProcessMap.delete(profileId)
     return false
   }
 }
 
-/**
- * 关闭指定 Profile 的 Chrome 窗口（异步版本，用于 API 调用）
- */
 export async function closeChrome(profileId: number): Promise<{ success: boolean; message?: string }> {
   const info = profileProcessMap.get(profileId)
   if (!info) {
