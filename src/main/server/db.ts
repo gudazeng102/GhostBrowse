@@ -217,6 +217,9 @@ function runMigrations(): void {
 
   // Phase 1.9: 多账号数据隔离 - 添加 user_id 字段
   migrateUserIdColumns()
+
+  // Phase 2.0: 指纹检测 - 创建 fingerprint_checks 表
+  createFingerprintChecksTable()
 }
 
 /**
@@ -296,6 +299,47 @@ export function getDatabase(): Database.Database {
     throw new Error('数据库未初始化，请先调用 initDatabase()')
   }
   return db
+}
+
+/**
+ * Phase 2.0: 指纹检测 - 创建 fingerprint_checks 表
+ */
+function createFingerprintChecksTable(): void {
+  if (!db) return
+
+  try {
+    const sql = `
+      CREATE TABLE IF NOT EXISTS fingerprint_checks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER NOT NULL REFERENCES profiles(id),
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        proxy_id INTEGER REFERENCES proxies(id),
+
+        -- 代理检测结果
+        proxy_status TEXT CHECK(proxy_status IN ('success','fail','no_proxy')),
+        proxy_ip TEXT,
+        proxy_country TEXT,
+        proxy_city TEXT,
+        proxy_latency INTEGER,
+
+        -- 指纹纯洁度评分
+        purity_score INTEGER NOT NULL DEFAULT 0,
+        purity_level TEXT NOT NULL DEFAULT 'unknown' CHECK(purity_level IN ('excellent','good','fair','poor','unknown')),
+
+        -- 指纹配置快照（JSON 字符串存储）
+        fingerprint_snapshot TEXT,
+
+        -- 风险提示（JSON 字符串存储，数组格式）
+        risk_warnings TEXT,
+
+        checked_at INTEGER NOT NULL
+      )
+    `
+    db!.prepare(sql).run()
+    console.log('[DB] fingerprint_checks 表创建成功')
+  } catch (err: any) {
+    console.error('[DB] fingerprint_checks 表创建失败:', err.message)
+  }
 }
 
 /**

@@ -113,11 +113,30 @@
                   删除
                 </a-button>
               </a-popconfirm>
+
+              <!-- Phase 2.0: 检测指纹按钮 -->
+              <a-button 
+                type="link" 
+                size="small"
+                :loading="checkingId === record.id"
+                @click="handleFingerprintCheck(record)"
+              >
+                <SafetyOutlined />
+                检测指纹
+              </a-button>
             </a-space>
           </template>
         </template>
       </a-table>
     </a-card>
+
+    <!-- Phase 2.0: 指纹检测弹窗 -->
+    <FingerprintCheckModal
+      v-model:visible="fingerprintModalVisible"
+      :result="fingerprintResult"
+      :loading="checkingId !== null"
+      @checkAgain="handleCheckAgain"
+    />
   </div>
 </template>
 
@@ -125,9 +144,49 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
+import { SafetyOutlined } from '@ant-design/icons-vue'
 import { getProfileList, deleteProfile, launchProfile, getProfilesStatus, closeProfile, type ProfileRecord } from '../api/profile'
+import { checkFingerprint } from '../api/fingerprint'
+import FingerprintCheckModal from '../components/FingerprintCheckModal.vue'
+import type { FingerprintCheckResult } from '../../types'
 
 const router = useRouter()
+
+// ==================== Phase 2.0: 指纹检测相关状态和函数 ====================
+
+const fingerprintModalVisible = ref(false)
+const fingerprintResult = ref<FingerprintCheckResult | null>(null)
+const checkingId = ref<number | null>(null)
+
+async function handleFingerprintCheck(profile: any) {
+  checkingId.value = profile.id
+  try {
+    const res: any = await checkFingerprint(profile.id)
+    // axios 返回的数据结构：res.data 才是 API 响应体
+    if (res.data?.code === 200 && res.data?.data) {
+      fingerprintResult.value = res.data.data
+      fingerprintModalVisible.value = true
+    } else {
+      message.error(res.data?.message || res.message || '检测失败')
+    }
+  } catch (err: any) {
+    console.error('[ProfileList] 指纹检测失败:', err)
+    message.error(err.response?.data?.message || err.message || '检测请求失败')
+  } finally {
+    checkingId.value = null
+  }
+}
+
+function handleCheckAgain() {
+  if (fingerprintResult.value) {
+    const profileId = fingerprintResult.value.profile.id
+    const profile = profileList.value.find(p => p.id === profileId)
+    if (profile) {
+      fingerprintModalVisible.value = false
+      handleFingerprintCheck(profile)
+    }
+  }
+}
 
 // 表格列定义
 const columns = [

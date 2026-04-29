@@ -15,6 +15,7 @@ import proxyRouter from './routes/proxy'
 import profileRouter from './routes/profile'
 import systemRouter from './routes/system'
 import authRouter from './routes/auth'
+import fingerprintRouter from './routes/fingerprint'
 
 // Express 应用实例
 let app: Express | null = null
@@ -93,6 +94,9 @@ export function createApp(): Express {
 
   // ==================== Phase 1.8: 用户认证 API ====================
   app.use('/api/v1/auth', authRouter)
+
+  // ==================== Phase 2.0: 指纹检测 API ====================
+  app.use('/api/v1/fingerprint', fingerprintRouter)
 
   // ==================== 捕获所有路由，返回 index.html (SPA 支持) ====================
   app.get('*', (req: Request, res: Response) => {
