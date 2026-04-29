@@ -337,11 +337,20 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
       return res.status(500).json({ code: 500, message: '发送验证码失败，请稍后重试' })
     }
 
+    // 4. 生成重置令牌并存储（有效期 15 分钟）
+    const resetToken = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2)
+    const resetTokenExpires = Date.now() + 15 * 60 * 1000
+    db.prepare(`
+      UPDATE users SET reset_token = ?, reset_token_expires = ?, updated_at = ?
+      WHERE email = ?
+    `).run(resetToken, resetTokenExpires, Date.now(), email)
+
     console.log(`[Auth] 忘记密码验证码已发送: ${email}`)
 
     res.json({
       code: 200,
-      message: '如果该邮箱已注册，验证码已发送到邮箱'
+      message: '如果该邮箱已注册，验证码已发送到邮箱',
+      data: { resetToken }
     })
   } catch (err: any) {
     console.error('[Auth] 忘记密码失败:', err)
@@ -381,6 +390,13 @@ router.post('/reset-password', (req: Request, res: Response) => {
 
     // 4. 验证码校验（通过邮箱查找用户）
     // 注意：reset_password 验证码校验需要知道邮箱，这里通过 token 中的信息获取
+    console.log(`[ResetPassword] 收到 token: "${body.token.trim()}"`)
+    console.log(`[ResetPassword] 当前时间戳: ${Date.now()}`)
+    
+    // 先检查 token 是否存在于数据库
+    const tokenCheck = db.prepare('SELECT id, email, reset_token, reset_token_expires FROM users WHERE reset_token = ?').get(body.token.trim()) as any
+    console.log(`[ResetPassword] Token 查询结果:`, tokenCheck)
+    
     const user = db.prepare(
       'SELECT * FROM users WHERE reset_token = ? AND reset_token_expires > ?'
     ).get(body.token.trim(), Date.now()) as UserRecord | undefined
