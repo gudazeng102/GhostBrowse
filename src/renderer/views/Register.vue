@@ -1,4 +1,4 @@
- <template>
+<template>
   <div class="auth-page">
     <a-card class="auth-card" :bordered="false">
       <div class="auth-header">
@@ -13,19 +13,6 @@
         @finish="handleSubmit"
         layout="vertical"
       >
-        <a-form-item name="username" label="用户名">
-          <a-input
-            v-model:value="form.username"
-            placeholder="3-20个字符，字母、数字、下划线"
-            size="large"
-            allow-clear
-          >
-            <template #prefix>
-              <UserOutlined />
-            </template>
-          </a-input>
-        </a-form-item>
-
         <a-form-item name="email" label="邮箱">
           <a-input
             v-model:value="form.email"
@@ -37,6 +24,30 @@
               <MailOutlined />
             </template>
           </a-input>
+        </a-form-item>
+
+        <a-form-item name="code" label="验证码">
+          <div class="code-input-wrapper">
+            <a-input
+              v-model:value="form.code"
+              placeholder="请输入6位验证码"
+              size="large"
+              :maxlength="6"
+              class="code-input"
+            >
+              <template #prefix>
+                <SafetyOutlined />
+              </template>
+            </a-input>
+            <a-button
+              size="large"
+              :disabled="codeCountdown > 0"
+              @click="handleSendCode"
+              class="send-code-btn"
+            >
+              {{ codeCountdown > 0 ? `${codeCountdown}s后重发` : '发送验证码' }}
+            </a-button>
+          </div>
         </a-form-item>
 
         <a-form-item name="password" label="密码">
@@ -85,19 +96,18 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons-vue'
+import { MailOutlined, LockOutlined, SafetyOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
-import { register } from '../api/auth'
-import { authStore } from '../stores/auth'
+import { register, sendCode } from '../api/auth'
 
 const router = useRouter()
 
 // 表单数据
 const form = reactive({
-  username: '',
   email: '',
+  code: '',
   password: '',
   confirmPassword: ''
 })
@@ -105,16 +115,91 @@ const form = reactive({
 // 加载状态
 const loading = ref(false)
 
+// 验证码倒计时
+const CODE_COUNTDOWN_KEY = 'ghostbrowse_register_code_countdown'
+const CODE_COUNTDOWN_DURATION = 60 // 60秒
+let countdownInterval: number | null = null
+const codeCountdown = ref(0)
+
+// 初始化倒计时状态
+onMounted(() => {
+  const savedEndTime = sessionStorage.getItem(CODE_COUNTDOWN_KEY)
+  if (savedEndTime) {
+    const remaining = Math.max(0, Math.ceil((parseInt(savedEndTime) - Date.now()) / 1000))
+    if (remaining > 0) {
+      codeCountdown.value = remaining
+      startCountdown(remaining)
+    } else {
+      sessionStorage.removeItem(CODE_COUNTDOWN_KEY)
+    }
+  }
+})
+
+// 清理定时器
+onBeforeUnmount(() => {
+  if (countdownInterval) {
+    clearInterval(countdownInterval)
+    countdownInterval = null
+  }
+})
+
+// 开始倒计时
+function startCountdown(seconds: number) {
+  codeCountdown.value = seconds
+  const endTime = Date.now() + seconds * 1000
+  sessionStorage.setItem(CODE_COUNTDOWN_KEY, endTime.toString())
+
+  if (countdownInterval) {
+    clearInterval(countdownInterval)
+  }
+
+  countdownInterval = window.setInterval(() => {
+    const remaining = Math.max(0, Math.ceil((parseInt(sessionStorage.getItem(CODE_COUNTDOWN_KEY) || '0') - Date.now()) / 1000))
+    codeCountdown.value = remaining
+    if (remaining <= 0) {
+      if (countdownInterval) {
+        clearInterval(countdownInterval)
+        countdownInterval = null
+      }
+      sessionStorage.removeItem(CODE_COUNTDOWN_KEY)
+    }
+  }, 1000)
+}
+
+// 发送验证码
+async function handleSendCode() {
+  // 邮箱格式校验
+  if (!form.email?.trim()) {
+    message.error('请输入邮箱')
+    return
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+    message.error('邮箱格式不正确')
+    return
+  }
+
+  try {
+    const res: any = await sendCode({ email: form.email, purpose: 'register' })
+    if (res.data?.code === 200) {
+      message.success('验证码已发送到邮箱')
+      startCountdown(CODE_COUNTDOWN_DURATION)
+    } else {
+      message.error(res.data?.message || res.message || '发送验证码失败')
+    }
+  } catch (err: any) {
+    message.error(err.response?.data?.message || err.message || '发送验证码失败')
+  }
+}
+
 // 表单校验规则
 const rules = {
-  username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 20, message: '长度 3-20 字符', trigger: 'blur' },
-    { pattern: /^[a-zA-Z0-9_]+$/, message: '只允许字母、数字、下划线', trigger: 'blur' }
-  ],
   email: [
     { required: true, message: '请输入邮箱', trigger: 'blur' },
     { pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: '邮箱格式不正确', trigger: 'blur' }
+  ],
+  code: [
+    { required: true, message: '请输入验证码', trigger: 'blur' },
+    { len: 6, message: '验证码为6位', trigger: 'blur' }
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
@@ -137,7 +222,6 @@ async function handleSubmit() {
   loading.value = true
   try {
     const res: any = await register(form)
-    // axios 响应结构：res.data 才是 API 返回的 body
     if (res.data?.code === 200 && res.data?.data) {
       message.success('注册成功，请登录')
       router.push('/login')
@@ -146,7 +230,7 @@ async function handleSubmit() {
     }
   } catch (err: any) {
     if (err.response?.status === 409) {
-      message.error('用户名或邮箱已被注册')
+      message.error('该邮箱已被注册')
     } else {
       message.error(err.response?.data?.message || err.message || '注册失败')
     }
@@ -166,7 +250,7 @@ async function handleSubmit() {
 }
 
 .auth-card {
-  width: 400px;
+  width: 420px;
   border-radius: 8px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
@@ -207,5 +291,19 @@ async function handleSubmit() {
 
 .auth-footer a:hover {
   text-decoration: underline;
+}
+
+.code-input-wrapper {
+  display: flex;
+  gap: 8px;
+}
+
+.code-input {
+  flex: 1;
+}
+
+.send-code-btn {
+  flex-shrink: 0;
+  min-width: 120px;
 }
 </style>

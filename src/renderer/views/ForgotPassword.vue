@@ -13,19 +13,6 @@
         @finish="handleSubmit"
         layout="vertical"
       >
-        <a-form-item name="username" label="用户名">
-          <a-input
-            v-model:value="form.username"
-            placeholder="请输入用户名"
-            size="large"
-            allow-clear
-          >
-            <template #prefix>
-              <UserOutlined />
-            </template>
-          </a-input>
-        </a-form-item>
-
         <a-form-item name="email" label="注册邮箱">
           <a-input
             v-model:value="form.email"
@@ -47,7 +34,7 @@
             block
             :loading="loading"
           >
-            获取重置令牌
+            发送验证码
           </a-button>
         </a-form-item>
       </a-form>
@@ -58,67 +45,79 @@
       </div>
     </a-card>
 
-    <!-- Phase 1.8: 令牌显示弹窗 -->
+    <!-- 验证码输入弹窗 -->
     <a-modal
       v-model:open="modalVisible"
-      title="重置令牌已生成"
+      title="输入验证码"
       :footer="null"
-      width="500px"
+      width="400px"
+      :closable="false"
+      :maskClosable="false"
     >
-      <div class="token-display">
-        <a-alert
-          message="令牌有效期 1 小时，请妥善保存或立即使用"
-          type="info"
-          show-icon
-          style="margin-bottom: 16px"
-        />
+      <a-form
+        :model="resetForm"
+        :rules="resetRules"
+        @finish="handleResetSubmit"
+        layout="vertical"
+      >
+        <a-form-item name="code" label="验证码">
+          <a-input
+            v-model:value="resetForm.code"
+            placeholder="请输入6位验证码"
+            size="large"
+            :maxlength="6"
+          >
+            <template #prefix>
+              <SafetyOutlined />
+            </template>
+          </a-input>
+        </a-form-item>
 
-        <div class="token-section">
-          <div class="token-label">重置令牌</div>
-          <div class="token-value">
-            <code>{{ resetToken }}</code>
-            <a-button
-              type="text"
-              size="small"
-              @click="copyToken"
-            >
-              复制
-            </a-button>
-          </div>
-        </div>
+        <a-form-item name="newPassword" label="新密码">
+          <a-input-password
+            v-model:value="resetForm.newPassword"
+            placeholder="6-32个字符"
+            size="large"
+          >
+            <template #prefix>
+              <LockOutlined />
+            </template>
+          </a-input-password>
+        </a-form-item>
 
-        <div class="token-section">
-          <div class="token-label">重置链接</div>
-          <div class="token-link">
-            <code>{{ resetLink }}</code>
-          </div>
-        </div>
+        <a-form-item name="confirmPassword" label="确认密码">
+          <a-input-password
+            v-model:value="resetForm.confirmPassword"
+            placeholder="请再次输入密码"
+            size="large"
+          >
+            <template #prefix>
+              <LockOutlined />
+            </template>
+          </a-input-password>
+        </a-form-item>
 
-        <div class="token-actions">
-          <a-button type="primary" @click="goToReset">
-            前往重置
+        <a-form-item>
+          <a-button type="primary" html-type="submit" size="large" block :loading="resetLoading">
+            重置密码
           </a-button>
-          <a-button @click="modalVisible = false">
-            稍后
-          </a-button>
-        </div>
-      </div>
+        </a-form-item>
+      </a-form>
     </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, computed } from 'vue'
+import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { UserOutlined, MailOutlined } from '@ant-design/icons-vue'
+import { MailOutlined, LockOutlined, SafetyOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
-import { forgotPassword } from '../api/auth'
+import { forgotPassword, resetPassword } from '../api/auth'
 
 const router = useRouter()
 
 // 表单数据
 const form = reactive({
-  username: '',
   email: ''
 })
 
@@ -128,22 +127,46 @@ const loading = ref(false)
 // 弹窗状态
 const modalVisible = ref(false)
 
-// 重置令牌
-const resetToken = ref('')
-
-// 重置链接
-const resetLink = computed(() => {
-  return `${window.location.origin}/#/reset-password?token=${resetToken.value}`
+// 重置表单数据
+const resetForm = reactive({
+  code: '',
+  newPassword: '',
+  confirmPassword: ''
 })
+
+// 重置加载状态
+const resetLoading = ref(false)
+
+// 存储验证通过的邮箱
+let verifiedEmail = ''
 
 // 表单校验规则
 const rules = {
-  username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' }
-  ],
   email: [
     { required: true, message: '请输入邮箱', trigger: 'blur' },
     { pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: '邮箱格式不正确', trigger: 'blur' }
+  ]
+}
+
+// 重置表单校验规则
+const resetRules = {
+  code: [
+    { required: true, message: '请输入验证码', trigger: 'blur' },
+    { len: 6, message: '验证码为6位', trigger: 'blur' }
+  ],
+  newPassword: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    { min: 6, max: 32, message: '长度 6-32 字符', trigger: 'blur' }
+  ],
+  confirmPassword: [
+    { required: true, message: '请确认密码', trigger: 'blur' },
+    {
+      validator: (_rule: any, value: string) => {
+        if (value !== resetForm.newPassword) return Promise.reject('两次密码不一致')
+        return Promise.resolve()
+      },
+      trigger: 'blur'
+    }
   ]
 }
 
@@ -151,38 +174,44 @@ const rules = {
 async function handleSubmit() {
   loading.value = true
   try {
-    const res: any = await forgotPassword(form)
-    if (res.data?.code === 200 && res.data?.data) {
-      resetToken.value = res.data.data.resetToken
+    const res: any = await forgotPassword({ email: form.email })
+    if (res.data?.code === 200) {
+      verifiedEmail = form.email
       modalVisible.value = true
     } else {
-      message.error(res.data?.message || res.message || '获取令牌失败')
+      message.error(res.data?.message || res.message || '操作失败')
     }
   } catch (err: any) {
-    if (err.response?.status === 404) {
-      message.error('用户不存在或信息不匹配')
-    } else {
-      message.error(err.response?.data?.message || err.message || '获取令牌失败')
-    }
+    message.error(err.response?.data?.message || err.message || '操作失败')
   } finally {
     loading.value = false
   }
 }
 
-// 复制令牌
-async function copyToken() {
+// 重置密码提交
+async function handleResetSubmit() {
+  resetLoading.value = true
   try {
-    await navigator.clipboard.writeText(resetToken.value)
-    message.success('令牌已复制到剪贴板')
-  } catch {
-    message.error('复制失败，请手动复制')
+    // 生成一个随机 token 用于重置
+    const token = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2)
+    const res: any = await resetPassword({
+      token,
+      newPassword: resetForm.newPassword,
+      confirmPassword: resetForm.confirmPassword,
+      code: resetForm.code
+    })
+    if (res.data?.code === 200) {
+      message.success('密码重置成功，请使用新密码登录')
+      modalVisible.value = false
+      router.push('/login')
+    } else {
+      message.error(res.data?.message || res.message || '重置失败')
+    }
+  } catch (err: any) {
+    message.error(err.response?.data?.message || err.message || '重置失败')
+  } finally {
+    resetLoading.value = false
   }
-}
-
-// 前往重置页面
-function goToReset() {
-  modalVisible.value = false
-  router.push(`/reset-password?token=${resetToken.value}`)
 }
 </script>
 
@@ -237,55 +266,5 @@ function goToReset() {
 
 .auth-footer a:hover {
   text-decoration: underline;
-}
-
-/* 令牌显示弹窗样式 */
-.token-display {
-  padding: 8px 0;
-}
-
-.token-section {
-  margin-bottom: 16px;
-}
-
-.token-label {
-  font-size: 14px;
-  color: #8c8c8c;
-  margin-bottom: 8px;
-}
-
-.token-value {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px;
-  background: #f5f5f5;
-  border-radius: 4px;
-}
-
-.token-value code {
-  flex: 1;
-  font-family: monospace;
-  word-break: break-all;
-}
-
-.token-link {
-  padding: 12px;
-  background: #f5f5f5;
-  border-radius: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.token-link code {
-  font-family: monospace;
-  word-break: break-all;
-}
-
-.token-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  margin-top: 24px;
 }
 </style>

@@ -13,15 +13,15 @@
         @finish="handleSubmit"
         layout="vertical"
       >
-        <a-form-item name="username" label="用户名">
+        <a-form-item name="email" label="邮箱">
           <a-input
-            v-model:value="form.username"
-            placeholder="请输入用户名"
+            v-model:value="form.email"
+            placeholder="请输入邮箱地址"
             size="large"
             allow-clear
           >
             <template #prefix>
-              <UserOutlined />
+              <MailOutlined />
             </template>
           </a-input>
         </a-form-item>
@@ -65,7 +65,7 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Form } from 'ant-design-vue'
-import { UserOutlined, LockOutlined } from '@ant-design/icons-vue'
+import { MailOutlined, LockOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { login } from '../api/auth'
 import { authStore } from '../stores/auth'
@@ -74,7 +74,7 @@ const router = useRouter()
 
 // 表单数据
 const form = reactive({
-  username: '',
+  email: '',
   password: ''
 })
 
@@ -83,8 +83,9 @@ const loading = ref(false)
 
 // 表单校验规则
 const rules = {
-  username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' }
+  email: [
+    { required: true, message: '请输入邮箱', trigger: 'blur' },
+    { pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: '邮箱格式不正确', trigger: 'blur' }
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' }

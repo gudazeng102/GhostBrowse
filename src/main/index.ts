@@ -3,8 +3,12 @@
  * Phase 1.0: 启动 Express 服务器，创建 BrowserWindow
  */
 
-import { app, BrowserWindow, Menu } from 'electron'
+// 加载环境变量配置（使用 path 前先导入）
 import * as path from 'path'
+import * as dotenv from 'dotenv'
+dotenv.config({ path: path.join(process.cwd(), '.env') })
+
+import { app, BrowserWindow, Menu } from 'electron'
 import * as fs from 'fs'
 import { startServer } from './server/app'
 import { closeDatabase } from './server/db'

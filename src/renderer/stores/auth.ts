@@ -9,7 +9,7 @@ import { getMe } from '../api/auth'
 /** 用户信息接口 */
 export interface User {
   id: number
-  username: string
+  username: string | null
   email: string
   display_name: string
   status?: string
