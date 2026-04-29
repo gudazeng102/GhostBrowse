@@ -17,7 +17,7 @@
     <!-- Right Split: Login Form -->
     <div class="right-split">
       <div class="bg-glow"></div>
-      
+
       <a-card class="auth-card glass-card" :bordered="false">
         <div class="auth-header">
           <div class="logo-wrapper">
@@ -40,7 +40,26 @@
             </template>
             <div class="input-wrapper">
               <MailOutlined class="input-icon" />
+              <!-- 多个邮箱时使用下拉选择框 -->
+              <a-select
+                v-if="savedEmails.length > 1"
+                v-model:value="form.email"
+                placeholder="选择或输入邮箱"
+                size="large"
+                show-search
+                allow-clear
+                :filter-option="filterOption"
+                class="custom-input email-select"
+                dropdownClassName="email-dropdown"
+                @change="handleEmailChange"
+              >
+                <a-select-option v-for="email in savedEmails" :key="email" :value="email">
+                  {{ email }}
+                </a-select-option>
+              </a-select>
+              <!-- 单个或没有邮箱时使用普通输入框 -->
               <a-input
+                v-else
                 v-model:value="form.email"
                 placeholder="输入您的邮箱"
                 size="large"
@@ -73,7 +92,7 @@
 
           <div class="form-options">
             <label class="remember-label">
-              <a-checkbox class="custom-checkbox">记住我</a-checkbox>
+              <a-checkbox v-model:checked="rememberMe" class="custom-checkbox">记住我</a-checkbox>
             </label>
             <router-link to="/forgot-password" class="forgot-link">忘记密码？</router-link>
           </div>
@@ -103,7 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { MailOutlined, LockOutlined, EyeOutlined, EyeInvisibleOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
@@ -113,6 +132,53 @@ import bgUrl from '@/assets/icons/img/login-background.png'
 
 const router = useRouter()
 const showPassword = ref(false)
+const rememberMe = ref(false)
+const savedEmails = ref<string[]>([])
+
+// 从本地存储加载已保存的邮箱列表
+function loadSavedEmails(): string[] {
+  try {
+    const stored = localStorage.getItem('ghostbrowse_saved_emails')
+    return stored ? JSON.parse(stored) : []
+  } catch {
+    return []
+  }
+}
+
+// 保存邮箱到本地存储（去重，保持最新在前）
+function saveEmailToStorage(email: string): void {
+  if (!email) return
+  const emails = loadSavedEmails()
+  const filtered = emails.filter(e => e !== email)
+  filtered.unshift(email)
+  const trimmed = filtered.slice(0, 10)
+  localStorage.setItem('ghostbrowse_saved_emails', JSON.stringify(trimmed))
+}
+
+// 下拉框搜索过滤
+function filterOption(input: string, option: any): boolean {
+  return option.value.toLowerCase().includes(input.toLowerCase())
+}
+
+// 邮箱选择变化时同步到 form
+function handleEmailChange(value: string): void {
+  form.email = value
+}
+
+// 初始化加载
+onMounted(() => {
+  savedEmails.value = loadSavedEmails()
+  if (savedEmails.value.length === 1) {
+    form.email = savedEmails.value[0]
+  }
+  const storedRemember = localStorage.getItem('ghostbrowse_remember_me')
+  rememberMe.value = storedRemember === 'true'
+})
+
+// 监听记住我状态变化
+watch(rememberMe, (val) => {
+  localStorage.setItem('ghostbrowse_remember_me', val ? 'true' : 'false')
+})
 
 const form = reactive({
   email: '',
@@ -136,6 +202,9 @@ async function handleSubmit() {
   try {
     const res: any = await login(form)
     if (res.data?.code === 200 && res.data?.data) {
+      if (rememberMe.value && form.email) {
+        saveEmailToStorage(form.email)
+      }
       authStore.setAuth(res.data.data.token, res.data.data.user)
       message.success('登录成功')
       router.push('/')
@@ -359,7 +428,12 @@ async function handleSubmit() {
   font-size: 20px;
   z-index: 2;
   pointer-events: none;
-  margin-right: 10px;
+}
+
+/* 修复：给 custom-input 补上 padding-left，只影响本页面 */
+.custom-input :deep(.ant-input) {
+  padding-left: 48px !important;
+  padding-right: 16px !important;
 }
 
 /* 清除按钮 */
@@ -375,7 +449,6 @@ async function handleSubmit() {
 /* 密码框 */
 .custom-password :deep(.ant-input) {
   padding-right: 48px !important;
- 
 }
 
 .visibility-btn {
@@ -401,6 +474,86 @@ async function handleSubmit() {
 .visibility-btn .material-icon {
   font-size: 20px;
 }
+
+/* ====== 邮箱下拉选择框（scoped 只影响本页面） ====== */
+/* ====== 邮箱下拉选择框（scoped 只影响本页面） ====== */
+.email-select {
+  width: 100%;
+}
+
+/* 外层容器 */
+.email-select :deep(.ant-select-selector) {
+  background-color: #171f33 !important;
+  border: 1px solid #424754 !important;
+  border-radius: 8px !important;
+  padding-left: 48px !important;  /* 给图标留空间 */
+  padding-right: 32px !important;
+  height: 48px !important;
+  display: flex !important;
+  align-items: center !important;
+  transition: all 0.2s ease !important;
+}
+
+.email-select :deep(.ant-select-selector:hover) {
+  border-color: #8c909f !important;
+}
+
+.email-select :deep(.ant-select-focused .ant-select-selector) {
+  border-color: #adc6ff !important;
+  box-shadow: 0 0 0 1px #adc6ff !important;
+}
+
+/* 搜索区域：清除默认 margin，确保从 padding 边界开始 */
+.email-select :deep(.ant-select-selection-search) {
+  margin-left: 30 !important;
+  padding-left: 60 !important;
+  left: 45px !important;
+}
+
+/* 搜索输入框 */
+.email-select :deep(.ant-select-selection-search-input) {
+  color: #dae2fd !important;
+  font-size: 16px !important;
+  height: 46px !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+/* 选中的项：清除默认 margin/padding */
+.email-select :deep(.ant-select-selection-item) {
+  color: #dae2fd !important;
+  font-size: 16px !important;
+  line-height: 46px !important;
+  padding-left: 0 !important;
+  margin-left: 0 !important;
+}
+
+/* placeholder */
+.email-select :deep(.ant-select-selection-placeholder) {
+  color: #8c909f !important;
+  font-size: 16px !important;
+  line-height: 46px !important;
+  padding-left: 0 !important;
+  margin-left: 0 !important;
+}
+
+/* 下拉箭头 */
+.email-select :deep(.ant-select-arrow) {
+  color: #424754 !important;
+  right: 12px !important;
+}
+
+/* 清除按钮 */
+.email-select :deep(.ant-select-clear) {
+  color: #424754 !important;
+  right: 32px !important;
+  background: transparent !important;
+}
+
+.email-select :deep(.ant-select-clear:hover) {
+  color: #c2c6d6 !important;
+}
+
 
 /* ====== 选项区域 ====== */
 .form-options {
@@ -512,9 +665,9 @@ async function handleSubmit() {
 }
 </style>
 
-<!-- 全局样式：覆盖 Ant Design 组件默认样式 -->
+<!-- 全局样式：只覆盖本页面的 portal 渲染元素（下拉菜单） -->
 <style>
-/* ====== 所有 input 基础样式（包括非 affix-wrapper 的独立 input） ====== */
+/* ====== 页面 input 基础样式 ====== */
 .auth-page .ant-input {
   background-color: #171f33 !important;
   border: 1px solid #424754 !important;
@@ -526,12 +679,10 @@ async function handleSubmit() {
   font-size: 16px !important;
   box-shadow: none !important;
   transition: all 0.2s ease !important;
-  
 }
 
 .auth-page .ant-input::placeholder {
   color: #8c909f !important;
-  padding: 10px;
 }
 
 .auth-page .ant-input:focus {
@@ -549,13 +700,11 @@ async function handleSubmit() {
   display: flex !important;
   align-items: center !important;
   transition: all 0.2s ease !important;
-
 }
 
 .auth-page .ant-input-affix-wrapper-focused {
   border-color: #adc6ff !important;
   box-shadow: 0 0 0 1px #adc6ff !important;
-   
 }
 
 .auth-page .ant-input-affix-wrapper:hover {
@@ -613,5 +762,39 @@ async function handleSubmit() {
 
 .auth-page .submit-btn.ant-btn-loading {
   opacity: 0.8 !important;
+}
+
+/* ====== 仅本页面的下拉菜单样式（email-dropdown 类名限定） ====== */
+.email-dropdown {
+  background-color: #171f33 !important;
+  border: 1px solid #424754 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5) !important;
+}
+
+.email-dropdown .ant-select-item {
+  color: #dae2fd !important;
+  font-size: 14px !important;
+  padding: 10px 16px !important;
+  transition: all 0.2s ease !important;
+}
+
+.email-dropdown .ant-select-item-option-active {
+  background-color: rgba(173, 198, 255, 0.1) !important;
+}
+
+.email-dropdown .ant-select-item-option-selected {
+  background-color: rgba(77, 142, 255, 0.2) !important;
+  color: #adc6ff !important;
+  font-weight: 500 !important;
+}
+
+.email-dropdown .ant-select-item-option-disabled {
+  color: #8c909f !important;
+}
+
+.email-dropdown .ant-select-empty {
+  color: #8c909f !important;
+  padding: 16px !important;
 }
 </style>

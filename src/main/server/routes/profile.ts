@@ -9,10 +9,14 @@ import { app } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 import { getDatabase } from '../db'
+import { authMiddleware, AuthRequest } from '../middleware/auth'
 import { launchChrome, registerChromeProcess, getRunningProfiles, closeChrome } from '../../browser/launcher'
 
 // 创建路由实例
 const router = Router()
+
+// Phase 1.9: 所有窗口路由都需要登录
+router.use(authMiddleware)
 
 // ==================== 类型定义 ====================
 
@@ -104,12 +108,14 @@ router.get('/status', (req: Request, res: Response) => {
 /**
  * GET /api/v1/profiles
  * 获取窗口列表，支持关联代理信息
+ * Phase 1.9: 按 user_id 过滤
  */
-router.get('/', (req: Request, res: Response) => {
+router.get('/', (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user!.userId
     const db = getDatabase()
     
-    // JOIN proxies 表获取代理信息
+    // JOIN proxies 表获取代理信息，按 user_id 过滤
     const sql = `
       SELECT 
         p.id, p.title, p.proxy_id, p.chrome_version, p.os,
@@ -121,10 +127,11 @@ router.get('/', (req: Request, res: Response) => {
         pr.host as pr_host, pr.port as pr_port, pr.username as pr_username
       FROM profiles p
       LEFT JOIN proxies pr ON p.proxy_id = pr.id
+      WHERE p.user_id = ?
       ORDER BY p.id DESC
     `
     
-    const rows = db.prepare(sql).all() as any[]
+    const rows = db.prepare(sql).all(userId) as any[]
     
     // 格式化返回数据，关联代理信息
     const list = rows.map(row => ({
@@ -173,9 +180,11 @@ router.get('/', (req: Request, res: Response) => {
 /**
  * GET /api/v1/profiles/:id
  * 获取窗口详情
+ * Phase 1.9: 验证窗口归属（AND user_id = ?）
  */
-router.get('/:id', (req: Request, res: Response) => {
+router.get('/:id', (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user!.userId
     const { id } = req.params
     const db = getDatabase()
     
@@ -191,10 +200,10 @@ router.get('/:id', (req: Request, res: Response) => {
         pr.password as pr_password
       FROM profiles p
       LEFT JOIN proxies pr ON p.proxy_id = pr.id
-      WHERE p.id = ?
+      WHERE p.id = ? AND p.user_id = ?
     `
     
-    const row = db.prepare(sql).get(Number(id)) as any
+    const row = db.prepare(sql).get(Number(id), userId) as any
     
     if (!row) {
       return res.status(404).json({
@@ -250,9 +259,11 @@ router.get('/:id', (req: Request, res: Response) => {
 /**
  * POST /api/v1/profiles
  * 创建窗口配置
+ * Phase 1.9: 写入时设置 user_id
  */
-router.post('/', (req: Request, res: Response) => {
+router.post('/', (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user!.userId
     const body = req.body as ProfileDto
     const db = getDatabase()
     
@@ -265,9 +276,9 @@ router.post('/', (req: Request, res: Response) => {
       })
     }
     
-    // 如果指定了代理ID，检查代理是否存在
+    // 如果指定了代理ID，检查代理是否存在且属于当前用户
     if (body.proxyId) {
-      const proxy = db.prepare('SELECT id FROM proxies WHERE id = ?').get(body.proxyId)
+      const proxy = db.prepare('SELECT id FROM proxies WHERE id = ? AND user_id = ?').get(body.proxyId, userId)
       if (!proxy) {
         return res.status(400).json({
           code: 400,
@@ -284,13 +295,13 @@ router.post('/', (req: Request, res: Response) => {
         webrtc_mode, timezone_mode, geolocation_mode,
         language_mode, ui_language, screen_resolution,
         font, canvas_mode, webgl_mode, media_device_mode,
-        created_at, updated_at
+        user_id, created_at, updated_at
       ) VALUES (
         @title, @proxy_id, @chrome_version, @os,
         @webrtc_mode, @timezone_mode, @geolocation_mode,
         @language_mode, @ui_language, @screen_resolution,
         @font, @canvas_mode, @webgl_mode, @media_device_mode,
-        @created_at, @updated_at
+        @user_id, @created_at, @updated_at
       )
     `).run({
       title: body.title.trim(),
@@ -307,6 +318,7 @@ router.post('/', (req: Request, res: Response) => {
       canvas_mode: body.canvasMode || 'noise',
       webgl_mode: body.webglMode || 'mock',
       media_device_mode: body.mediaDeviceMode || 'mock',
+      user_id: userId,
       created_at: now,
       updated_at: now
     })

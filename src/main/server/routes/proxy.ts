@@ -2,16 +2,21 @@
  * 代理管理路由
  * Phase 1.1: 实现代理的 CRUD API
  * Phase 1.2: 追加代理检测功能
+ * Phase 1.9: 多账号数据隔离 - 所有接口需要登录，查询时过滤 user_id
  */
 
 import { Router, Request, Response } from 'express'
 import { getDatabase } from '../db'
+import { authMiddleware, AuthRequest } from '../middleware/auth'
 import axios from 'axios'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { HttpProxyAgent } = require('http-proxy-agent')
 
 // 创建路由实例
 const router = Router()
+
+// Phase 1.9: 所有代理路由都需要登录
+router.use(authMiddleware)
 
 // ==================== 检测渠道配置 ====================
 
@@ -64,19 +69,21 @@ interface ProxyDto {
 /**
  * GET /api/v1/proxies
  * 获取代理列表，支持模糊搜索
+ * Phase 1.9: 按 user_id 过滤
  */
-router.get('/', (req: Request, res: Response) => {
+router.get('/', (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user!.userId
     const { keyword } = req.query as { keyword?: string }
     const db = getDatabase()
     
-    let sql = 'SELECT id, name, type, host, port, username, password, remark, created_at, updated_at FROM proxies'
-    let params: string[] = []
+    let sql = 'SELECT id, name, type, host, port, username, password, remark, user_id, created_at, updated_at FROM proxies WHERE user_id = ?'
+    const params: any[] = [userId]
     
     if (keyword && keyword.trim()) {
-      sql += ' WHERE name LIKE ? OR host LIKE ? OR remark LIKE ?'
+      sql += ' AND (name LIKE ? OR host LIKE ? OR remark LIKE ?)'
       const kw = `%${keyword.trim()}%`
-      params = [kw, kw, kw]
+      params.push(kw, kw, kw)
     }
     
     sql += ' ORDER BY id DESC'
@@ -101,15 +108,17 @@ router.get('/', (req: Request, res: Response) => {
 /**
  * GET /api/v1/proxies/:id
  * 获取代理详情
+ * Phase 1.9: 验证代理归属（AND user_id = ?）
  */
-router.get('/:id', (req: Request, res: Response) => {
+router.get('/:id', (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user!.userId
     const { id } = req.params
     const db = getDatabase()
     const proxy = db.prepare(`
-      SELECT id, name, type, host, port, username, password, remark, created_at, updated_at
-      FROM proxies WHERE id = ?
-    `).get(Number(id)) as ProxyRecord | undefined
+      SELECT id, name, type, host, port, username, password, remark, user_id, created_at, updated_at
+      FROM proxies WHERE id = ? AND user_id = ?
+    `).get(Number(id), userId) as ProxyRecord | undefined
     
     if (!proxy) {
       return res.status(404).json({
@@ -137,9 +146,11 @@ router.get('/:id', (req: Request, res: Response) => {
 /**
  * POST /api/v1/proxies
  * 创建代理
+ * Phase 1.9: 写入时设置 user_id
  */
-router.post('/', (req: Request, res: Response) => {
+router.post('/', (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user!.userId
     const body = req.body as ProxyDto
     
     // 参数校验
@@ -178,8 +189,8 @@ router.post('/', (req: Request, res: Response) => {
     const db = getDatabase()
     const now = Date.now()
     const result = db.prepare(`
-      INSERT INTO proxies (name, type, host, port, username, password, remark, created_at, updated_at)
-      VALUES (@name, @type, @host, @port, @username, @password, @remark, @created_at, @updated_at)
+      INSERT INTO proxies (name, type, host, port, username, password, remark, user_id, created_at, updated_at)
+      VALUES (@name, @type, @host, @port, @username, @password, @remark, @user_id, @created_at, @updated_at)
     `).run({
       name: body.name.trim(),
       type: body.type,
@@ -188,6 +199,7 @@ router.post('/', (req: Request, res: Response) => {
       username: body.username?.trim() || null,
       password: body.password || null,
       remark: body.remark?.trim() || null,
+      user_id: userId,
       created_at: now,
       updated_at: now
     })
@@ -212,18 +224,19 @@ router.post('/', (req: Request, res: Response) => {
 /**
  * PUT /api/v1/proxies/:id
  * 更新代理
+ * Phase 1.9: 验证代理归属（AND user_id = ?）
  */
-router.put('/:id', (req: Request, res: Response) => {
+router.put('/:id', (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user!.userId
     const { id } = req.params
     const body = req.body as ProxyDto
     const db = getDatabase()
     
-    // 检查代理是否存在
+    // 检查代理是否存在且属于当前用户
     const existing = db.prepare(`
-      SELECT id, name, type, host, port, username, password, remark, created_at, updated_at
-      FROM proxies WHERE id = ?
-    `).get(Number(id)) as ProxyRecord | undefined
+      SELECT id FROM proxies WHERE id = ? AND user_id = ?
+    `).get(Number(id), userId)
     
     if (!existing) {
       return res.status(404).json({
@@ -270,9 +283,10 @@ router.put('/:id', (req: Request, res: Response) => {
       UPDATE proxies
       SET name = @name, type = @type, host = @host, port = @port,
           username = @username, password = @password, remark = @remark, updated_at = @updated_at
-      WHERE id = @id
+      WHERE id = @id AND user_id = @user_id
     `).run({
       id: Number(id),
+      user_id: userId,
       name: body.name.trim(),
       type: body.type,
       host: body.host.trim(),
@@ -303,17 +317,18 @@ router.put('/:id', (req: Request, res: Response) => {
 /**
  * DELETE /api/v1/proxies/:id
  * 删除代理
+ * Phase 1.9: 验证代理归属（AND user_id = ?）
  */
-router.delete('/:id', (req: Request, res: Response) => {
+router.delete('/:id', (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user!.userId
     const { id } = req.params
     const db = getDatabase()
     
-    // 检查代理是否存在
+    // 检查代理是否存在且属于当前用户
     const existing = db.prepare(`
-      SELECT id, name, type, host, port, username, password, remark, created_at, updated_at
-      FROM proxies WHERE id = ?
-    `).get(Number(id)) as ProxyRecord | undefined
+      SELECT id FROM proxies WHERE id = ? AND user_id = ?
+    `).get(Number(id), userId)
     
     if (!existing) {
       return res.status(404).json({
@@ -323,13 +338,13 @@ router.delete('/:id', (req: Request, res: Response) => {
       })
     }
     
-    // 【Bug 修复】删除代理前，需要处理所有关联数据
-    // 1. proxy_checks 表的 proxy_id 是 NOT NULL，必须先删除记录
+    // 删除代理前，需要处理所有关联数据
+    // 1. proxy_checks 表的记录删除（通过 proxy_id 关联）
     db.prepare(`DELETE FROM proxy_checks WHERE proxy_id = ?`).run(Number(id))
     // 2. profiles 表的 proxy_id 设为 NULL（允许为空）
     db.prepare(`UPDATE profiles SET proxy_id = NULL WHERE proxy_id = ?`).run(Number(id))
     
-    const result = db.prepare(`DELETE FROM proxies WHERE id = ?`).run(Number(id))
+    const result = db.prepare(`DELETE FROM proxies WHERE id = ? AND user_id = ?`).run(Number(id), userId)
     
     res.json({
       code: 0,
@@ -353,17 +368,18 @@ router.delete('/:id', (req: Request, res: Response) => {
 /**
  * POST /api/v1/proxies/:id/check
  * 检测代理连通性
+ * Phase 1.9: 验证代理归属
  * 
  * 请求体: { "channel": "ip.sb" }
  * 渠道支持: ip.sb, ipinfo.io, ip-api.com
  */
-router.post('/:id/check', async (req: Request, res: Response) => {
+router.post('/:id/check', async (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user!.userId
     const { id } = req.params
     const { channel } = req.body as { channel: string }
     
     console.log(`[Proxy Check] 检测请求: proxyId=${id}, channel=${channel}`)
-    console.log(`[Proxy Check] 请求体:`, JSON.stringify(req.body))
     
     // 1. 验证渠道
     const channelConfig = CHECK_CHANNELS.find(c => c.id === channel)
@@ -375,12 +391,12 @@ router.post('/:id/check', async (req: Request, res: Response) => {
       })
     }
     
-    // 2. 查询代理配置
+    // 2. 查询代理配置（验证归属）
     const db = getDatabase()
     const proxy = db.prepare(`
-      SELECT id, name, type, host, port, username, password
-      FROM proxies WHERE id = ?
-    `).get(Number(id)) as ProxyRecord | undefined
+      SELECT id, name, type, host, port, username, password, user_id
+      FROM proxies WHERE id = ? AND user_id = ?
+    `).get(Number(id), userId) as ProxyRecord | undefined
     
     console.log(`[Proxy Check] 从数据库加载代理:`, {
       id: proxy?.id,
@@ -684,14 +700,16 @@ router.post('/batch-delete', (req: Request, res: Response) => {
 /**
  * GET /api/v1/proxies/:id/checks
  * 获取代理检测历史记录（最近 10 条）
+ * Phase 1.9: 验证代理归属
  */
-router.get('/:id/checks', (req: Request, res: Response) => {
+router.get('/:id/checks', (req: AuthRequest, res: Response) => {
   try {
+    const userId = req.user!.userId
     const { id } = req.params
     const db = getDatabase()
     
-    // 检查代理是否存在
-    const proxy = db.prepare(`SELECT id FROM proxies WHERE id = ?`).get(Number(id))
+    // 检查代理是否存在且属于当前用户
+    const proxy = db.prepare(`SELECT id FROM proxies WHERE id = ? AND user_id = ?`).get(Number(id), userId)
     if (!proxy) {
       return res.status(404).json({
         code: 404,

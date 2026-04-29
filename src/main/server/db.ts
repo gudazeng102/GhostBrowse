@@ -214,6 +214,78 @@ function runMigrations(): void {
 
   // 特殊处理：检查并重建 profiles 表（修复 CHECK 约束）
   migrateProfilesTable()
+
+  // Phase 1.9: 多账号数据隔离 - 添加 user_id 字段
+  migrateUserIdColumns()
+}
+
+/**
+ * Phase 1.9: 多账号数据隔离 - 为现有表添加 user_id 字段
+ * 将 proxies、profiles、proxy_checks 三张表增加 user_id 字段
+ */
+function migrateUserIdColumns(): void {
+  if (!db) return
+
+  const tables = ['proxies', 'profiles', 'proxy_checks']
+  for (const table of tables) {
+    try {
+      const columns = db!.prepare(`PRAGMA table_info(${table})`).all() as any[]
+      const hasUserId = columns.some(col => col.name === 'user_id')
+      if (!hasUserId) {
+        db!.prepare(`ALTER TABLE ${table} ADD COLUMN user_id INTEGER`).run()
+        console.log(`[DB Migrate] 已为 ${table} 表添加 user_id 字段`)
+      } else {
+        console.log(`[DB Migrate] ${table} 表已有 user_id 字段，跳过`)
+      }
+    } catch (err: any) {
+      console.error(`[DB Migrate] 为 ${table} 表添加 user_id 字段失败:`, err.message)
+    }
+  }
+
+  // 数据迁移：将已有数据归属到指定账号
+  migrateExistingDataToUser()
+}
+
+/**
+ * Phase 1.9: 数据迁移 - 将已有数据归属到指定账号
+ * 只有在用户已存在时才执行迁移
+ */
+function migrateExistingDataToUser(): void {
+  if (!db) return
+
+  const targetEmail = '1031185308@qq.com'
+  const user = db.prepare('SELECT id FROM users WHERE email = ?').get(targetEmail) as { id: number } | undefined
+
+  if (!user) {
+    console.log(`[DB Migrate] 用户 ${targetEmail} 尚未注册，跳过数据迁移。已有数据保持未归属状态。`)
+    return
+  }
+
+  const userId = user.id
+
+  // 迁移代理数据
+  try {
+    const proxyResult = db.prepare('UPDATE proxies SET user_id = ? WHERE user_id IS NULL').run(userId)
+    console.log(`[DB Migrate] 已迁移 ${proxyResult.changes} 条代理记录到用户 ${targetEmail} (ID: ${userId})`)
+  } catch (err: any) {
+    console.error(`[DB Migrate] 迁移代理数据失败:`, err.message)
+  }
+
+  // 迁移窗口数据
+  try {
+    const profileResult = db.prepare('UPDATE profiles SET user_id = ? WHERE user_id IS NULL').run(userId)
+    console.log(`[DB Migrate] 已迁移 ${profileResult.changes} 条窗口记录到用户 ${targetEmail} (ID: ${userId})`)
+  } catch (err: any) {
+    console.error(`[DB Migrate] 迁移窗口数据失败:`, err.message)
+  }
+
+  // 迁移检测记录（直接归属到同一用户）
+  try {
+    const checkResult = db.prepare('UPDATE proxy_checks SET user_id = ? WHERE user_id IS NULL').run(userId)
+    console.log(`[DB Migrate] 已迁移 ${checkResult.changes} 条检测记录到用户 ${targetEmail} (ID: ${userId})`)
+  } catch (err: any) {
+    console.error(`[DB Migrate] 迁移检测记录失败:`, err.message)
+  }
 }
 
 /**
