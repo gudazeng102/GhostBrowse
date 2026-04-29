@@ -261,22 +261,27 @@ router.post('/login', (req: Request, res: Response) => {
     const db = getDatabase()
     const email = body.email.trim().toLowerCase()
 
-    // 2. 查询用户（按邮箱）
+    // 2. 查询用户是否存在
     const user = db.prepare(
-      'SELECT * FROM users WHERE email = ? AND status = ?'
-    ).get(email, 'active') as UserRecord | undefined
+      'SELECT * FROM users WHERE email = ?'
+    ).get(email) as UserRecord | undefined
 
     if (!user) {
-      return res.status(401).json({ code: 401, message: '邮箱或密码错误' })
+      return res.status(404).json({ code: 404, message: '该账号尚未注册' })
     }
 
-    // 3. 密码验证
+    // 3. 检查账号状态
+    if (user.status !== 'active') {
+      return res.status(403).json({ code: 403, message: '账号已被禁用' })
+    }
+
+    // 4. 密码验证
     const passwordOk = bcrypt.compareSync(body.password, user.password_hash)
     if (!passwordOk) {
       return res.status(401).json({ code: 401, message: '邮箱或密码错误' })
     }
 
-    // 4. 生成 Token
+    // 5. 生成 Token
     const token = generateToken(user.id, user.email)
 
     console.log(`[Auth] 用户登录成功: ${user.email} (ID: ${user.id})`)
@@ -321,11 +326,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     ).get(email) as UserRecord | undefined
 
     if (!user) {
-      // 为防止邮箱枚举攻击，统一返回成功
-      return res.json({
-        code: 200,
-        message: '如果该邮箱已注册，验证码已发送到邮箱'
-      })
+      return res.status(404).json({ code: 404, message: '该邮箱并未注册' })
     }
 
     // 3. 生成6位验证码并发送

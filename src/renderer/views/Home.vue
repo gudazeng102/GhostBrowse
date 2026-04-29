@@ -122,7 +122,7 @@ async function refreshStatus() {
       version.value = data.version
       environment.value = data.environment
       apiResponseJson.value = JSON.stringify(response.data, null, 2)
-      message.success('状态刷新成功')
+      // message.success('状态刷新成功')
     } else {
       message.error(msg || '获取状态失败')
     }
