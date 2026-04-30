@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 CREATE TABLE IF NOT EXISTS proxy_checks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   proxy_id INTEGER NOT NULL REFERENCES proxies(id),
+  user_id INTEGER,
   channel TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('success','fail')),
   ip TEXT,

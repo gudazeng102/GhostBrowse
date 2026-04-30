@@ -223,6 +223,9 @@ function runMigrations(): void {
 
   // Phase 2.1: 窗口启动页面自定义 - 添加 startup_url 字段
   migrateStartupUrlColumn()
+
+  // Phase 2.2: Cookie 管理 - 创建 cookie_backups 表
+  createCookieBackupsTable()
 }
 
 /**
@@ -362,6 +365,32 @@ function migrateStartupUrlColumn(): void {
     }
   } catch (err: any) {
     console.error('[DB Migrate] 为 profiles 表添加 startup_url 字段失败:', err.message)
+  }
+}
+
+/**
+ * Phase 2.2: Cookie 管理 - 创建 cookie_backups 表
+ */
+function createCookieBackupsTable(): void {
+  if (!db) return
+
+  try {
+    const sql = `
+      CREATE TABLE IF NOT EXISTS cookie_backups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        backup_type TEXT NOT NULL DEFAULT 'auto' CHECK(backup_type IN ('auto','manual')),
+        backup_path TEXT NOT NULL,
+        cookie_count INTEGER DEFAULT 0,
+        size_bytes INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL
+      )
+    `
+    db!.prepare(sql).run()
+    console.log('[DB] cookie_backups 表创建成功')
+  } catch (err: any) {
+    console.error('[DB] cookie_backups 表创建失败:', err.message)
   }
 }
 

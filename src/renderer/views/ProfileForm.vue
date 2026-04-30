@@ -286,6 +286,37 @@
         </div>
       </a-card>
 
+      <!-- Phase 2.2: 浏览数据卡片（仅编辑模式下显示） -->
+      <a-card v-if="isEdit" title="🍪 浏览数据" style="margin-bottom: 16px;">
+        <a-descriptions :column="2" bordered size="small">
+          <a-descriptions-item label="Cookie 数量">
+            <a-tag color="blue">{{ cookieStatus?.cookieCount || 0 }}</a-tag> 条
+          </a-descriptions-item>
+          <a-descriptions-item label="识别平台">
+            <a-tag v-for="p in (cookieStatus?.platforms || [])" :key="p" color="processing">{{ p }}</a-tag>
+            <span v-if="!(cookieStatus?.platforms?.length)" style="color: #999;">—</span>
+          </a-descriptions-item>
+          <a-descriptions-item label="备份数量">
+            <a-tag color="orange">{{ backupCount }}</a-tag> 个
+          </a-descriptions-item>
+          <a-descriptions-item label="数据大小">
+            {{ formatBytes(cookieStatus?.totalSizeBytes || 0) }}
+          </a-descriptions-item>
+        </a-descriptions>
+        <a-space style="margin-top: 12px;">
+          <a-button type="primary" @click="handleExportCookie" :disabled="isRunning" :loading="exportLoading">
+            <ExportOutlined /> 导出 Cookie
+          </a-button>
+          <a-button @click="handleOpenCookieManager" :disabled="isRunning">
+            <DatabaseOutlined /> 管理浏览数据
+          </a-button>
+          <a-button danger @click="handleClearCookie" :disabled="isRunning" :loading="clearLoading">
+            <DeleteOutlined /> 清理缓存
+          </a-button>
+        </a-space>
+        <a-alert v-if="isRunning" type="warning" show-icon style="margin-top: 8px;" message="窗口正在运行中，浏览数据操作需先关闭窗口" />
+      </a-card>
+
       <!-- 按钮区域 -->
       <div class="form-actions">
         <a-space>
@@ -297,6 +328,15 @@
         </a-space>
       </div>
     </a-form>
+
+    <!-- Phase 2.2: Cookie 管理弹窗 -->
+    <CookieManagerModal
+      v-if="editId"
+      v-model:visible="cookieModalVisible"
+      :profileId="editId"
+      :profileTitle="cookieModalProfileTitle"
+      :isRunning="isRunning"
+    />
   </div>
 </template>
 
@@ -308,6 +348,9 @@ import { LeftOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
 import type { FormInstance } from 'ant-design-vue'
 import { getProxyList, type ProxyRecord } from '../api/proxy'
 import { getProfileDetail, createProfile, updateProfile, type ProfileDto, type ProfileRecord, type WebRtcMode } from '../api/profile'
+import { getCookieStatus, getCookieBackups, exportCookies, clearCookies, type CookieStatus } from '../api/cookie'
+import CookieManagerModal from '../components/CookieManagerModal.vue'
+import { ExportOutlined, DatabaseOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -437,6 +480,90 @@ function fillUrl(url: string) {
 // Phase 2.1: 获取网站 Favicon URL（使用 Clearbit Logo API）
 function getFaviconUrl(domain: string): string {
   return `https://logo.clearbit.com/${domain}`
+}
+
+// ==================== Phase 2.2: Cookie 管理相关状态和函数 ====================
+
+// Cookie 状态
+const cookieStatus = ref<CookieStatus | null>(null)
+const backupCount = ref(0)
+const isRunning = ref(false) // 从父组件或外部传入
+const exportLoading = ref(false)
+const clearLoading = ref(false)
+
+// Cookie 管理弹窗
+const cookieModalVisible = ref(false)
+const cookieModalProfileTitle = ref('')
+
+// 格式化字节
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+// 加载 Cookie 数据
+async function loadCookieData() {
+  if (!isEdit.value || !editId.value) return
+  try {
+    const res: any = await getCookieStatus(editId.value)
+    if (res.data?.code === 200) {
+      cookieStatus.value = res.data.data
+    }
+    const backupRes: any = await getCookieBackups(editId.value)
+    if (backupRes.data?.code === 200) {
+      backupCount.value = backupRes.data.data?.length || 0
+    }
+  } catch (e) {
+    console.error('加载 Cookie 数据失败:', e)
+  }
+}
+
+// 导出 Cookie
+async function handleExportCookie() {
+  if (!editId.value) return
+  exportLoading.value = true
+  try {
+    const res: any = await exportCookies(editId.value)
+    if (res.data?.code === 200) {
+      message.success(`导出成功：${res.data.data.cookieCount} 条 Cookie`)
+      loadCookieData()
+    } else {
+      message.error(res.data?.message || '导出失败')
+    }
+  } catch (err: any) {
+    message.error(err.response?.data?.message || '导出失败')
+  } finally {
+    exportLoading.value = false
+  }
+}
+
+// 打开 Cookie 管理弹窗
+function handleOpenCookieManager() {
+  if (!editId.value) return
+  cookieModalProfileTitle.value = formState.title
+  cookieModalVisible.value = true
+}
+
+// 清理缓存
+async function handleClearCookie() {
+  if (!editId.value) return
+  clearLoading.value = true
+  try {
+    const res: any = await clearCookies(editId.value, 'all')
+    if (res.data?.code === 200) {
+      message.success('清理完成')
+      loadCookieData()
+    } else {
+      message.error(res.data?.message || '清理失败')
+    }
+  } catch (err: any) {
+    message.error(err.response?.data?.message || '清理失败')
+  } finally {
+    clearLoading.value = false
+  }
 }
 
 onMounted(async () => {

@@ -8,6 +8,7 @@ import { Router, Request, Response } from 'express'
 import { app } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
+import Database from 'better-sqlite3'
 import { getDatabase } from '../db'
 import { authMiddleware, AuthRequest } from '../middleware/auth'
 import { launchChrome, registerChromeProcess, getRunningProfiles, closeChrome } from '../../browser/launcher'
@@ -460,6 +461,23 @@ router.delete('/:id', (req: Request, res: Response) => {
       })
     }
     
+    // Phase 2.2: 删除前先清理关联数据（避免外键约束失败）
+    try {
+      // 删除关联的 fingerprint_checks 记录
+      db.prepare('DELETE FROM fingerprint_checks WHERE profile_id = ?').run(Number(id))
+    } catch (e) {
+      // 忽略错误（表可能不存在）
+      console.warn('[Profile API] 删除 fingerprint_checks 关联记录失败:', e)
+    }
+    
+    try {
+      // 删除关联的 cookie_backups 记录
+      db.prepare('DELETE FROM cookie_backups WHERE profile_id = ?').run(Number(id))
+    } catch (e) {
+      // 忽略错误（表可能不存在）
+      console.warn('[Profile API] 删除 cookie_backups 关联记录失败:', e)
+    }
+    
     const result = db.prepare('DELETE FROM profiles WHERE id = ?').run(Number(id))
     
     res.json({
@@ -582,7 +600,7 @@ router.post('/:id/launch', async (req: Request, res: Response) => {
  * POST /api/v1/profiles/:id/close
  * 关闭指定窗口的 Chrome 进程
  */
-router.post('/:id/close', async (req: Request, res: Response) => {
+router.post('/:id/close', async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params
     const db = getDatabase()
@@ -601,6 +619,53 @@ router.post('/:id/close', async (req: Request, res: Response) => {
     
     // 调用 launcher 关闭进程
     const result = await closeChrome(Number(id))
+    
+    // === Phase 2.2: 窗口关闭成功后自动备份 Cookie（开始）===
+    if (result.success) {
+      try {
+        // 确保 cookie_backups 表存在（兼容旧数据库）
+        const { ensureCookieBackupsTable } = require('./cookie')
+        ensureCookieBackupsTable()
+        
+        const profileDataDir = path.join(
+          app.isPackaged ? app.getPath('userData') : process.cwd(),
+          'profiles',
+          String(id)
+        )
+        const cookiesFile = path.join(profileDataDir, 'Default', 'Cookies')
+        
+        if (fs.existsSync(cookiesFile)) {
+          const backupDir = path.join(app.getPath('userData'), 'backups', String(id))
+          if (!fs.existsSync(backupDir)) {
+            fs.mkdirSync(backupDir, { recursive: true })
+          }
+          
+          const backupPath = path.join(backupDir, `${Date.now()}_cookies.sqlite`)
+          fs.copyFileSync(cookiesFile, backupPath)
+          
+          // 统计 Cookie 数量
+          let cookieCount = 0
+          try {
+            const cookieDb = new Database(cookiesFile, { readonly: true })
+            const count = cookieDb.prepare('SELECT COUNT(*) as count FROM cookies').get() as { count: number }
+            cookieCount = count.count
+            cookieDb.close()
+          } catch (e) {
+            console.error('[AutoBackup] 统计 Cookie 数量失败:', e)
+          }
+          
+          const stats = fs.statSync(cookiesFile)
+          db.prepare(
+            'INSERT INTO cookie_backups (profile_id, user_id, backup_type, backup_path, cookie_count, size_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          ).run(Number(id), req.user?.userId || 0, 'auto', backupPath, cookieCount, stats.size, Date.now())
+          
+          console.log(`[AutoBackup] 窗口 ${id} 自动备份完成: ${cookieCount} 条 Cookie`)
+        }
+      } catch (e) {
+        console.error('[AutoBackup] 窗口', id, '自动备份失败:', e)
+      }
+    }
+    // === Phase 2.2: 窗口关闭成功后自动备份 Cookie（结束）===
     
     if (result.success) {
       res.json({
@@ -705,5 +770,9 @@ router.get('/:id/isolation-check', (req: Request, res: Response) => {
     })
   }
 })
+
+// ==================== Phase 2.2: 挂载 Cookie 管理子路由 ====================
+import cookieRouter from './cookie'
+router.use('/:id/cookies', cookieRouter)
 
 export default router

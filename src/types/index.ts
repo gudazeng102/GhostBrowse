@@ -138,3 +138,36 @@ export interface FingerprintCheckRecord {
   riskWarnings: string[]
   checkedAt: number
 }
+
+// ==================== Phase 2.2: Cookie 管理类型 ====================
+
+/** Cookie 状态信息 */
+export interface CookieStatus {
+  cookieCount: number
+  domains: string[]
+  domainCount: number
+  platforms: string[]
+  cookiesFileExists: boolean
+  localStorageExists: boolean
+  sessionStorageExists: boolean
+  indexedDBExists: boolean
+  cacheExists: boolean
+  totalSizeBytes: number
+}
+
+/** Cookie 备份记录 */
+export interface CookieBackup {
+  id: number
+  profileId: number
+  backupType: 'auto' | 'manual'
+  backupPath: string
+  cookieCount: number
+  sizeBytes: number
+  createdAt: number
+}
+
+/** 清理缓存结果 */
+export interface ClearCookieResult {
+  mode: string
+  clearedItems: string[]
+}

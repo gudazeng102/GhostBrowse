@@ -124,6 +124,32 @@
                 <SafetyOutlined />
                 检测指纹
               </a-button>
+
+              <!-- Phase 2.2: 浏览数据下拉菜单 -->
+              <a-dropdown>
+                <a-button type="link" size="small">
+                  <DatabaseOutlined />
+                  浏览数据
+                  <DownOutlined />
+                </a-button>
+                <template #overlay>
+                  <a-menu>
+                    <a-menu-item @click="handleOpenCookieManager(record)">
+                      <FileTextOutlined />
+                      管理 Cookie / 缓存
+                    </a-menu-item>
+                    <a-menu-divider />
+                    <a-menu-item @click="handleQuickExport(record)" :disabled="isRunning(record.id)">
+                      <ExportOutlined />
+                      快速导出 Cookie
+                    </a-menu-item>
+                    <a-menu-item @click="handleQuickClear(record)" :disabled="isRunning(record.id)" danger>
+                      <DeleteOutlined />
+                      快速清理缓存
+                    </a-menu-item>
+                  </a-menu>
+                </template>
+              </a-dropdown>
             </a-space>
           </template>
         </template>
@@ -137,6 +163,14 @@
       :loading="checkingId !== null"
       @checkAgain="handleCheckAgain"
     />
+
+    <!-- Phase 2.2: Cookie 管理弹窗 -->
+    <CookieManagerModal
+      v-model:visible="cookieModalVisible"
+      :profileId="cookieModalProfileId"
+      :profileTitle="cookieModalProfileTitle"
+      :isRunning="isRunning(cookieModalProfileId)"
+    />
   </div>
 </template>
 
@@ -144,10 +178,12 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { SafetyOutlined } from '@ant-design/icons-vue'
+import { SafetyOutlined, DatabaseOutlined, DownOutlined, ExportOutlined, DeleteOutlined, FileTextOutlined } from '@ant-design/icons-vue'
 import { getProfileList, deleteProfile, launchProfile, getProfilesStatus, closeProfile, type ProfileRecord } from '../api/profile'
 import { checkFingerprint } from '../api/fingerprint'
+import { exportCookies, clearCookies } from '../api/cookie'
 import FingerprintCheckModal from '../components/FingerprintCheckModal.vue'
+import CookieManagerModal from '../components/CookieManagerModal.vue'
 import type { FingerprintCheckResult } from '../../types'
 
 const router = useRouter()
@@ -186,6 +222,63 @@ function handleCheckAgain() {
       handleFingerprintCheck(profile)
     }
   }
+}
+
+// ==================== Phase 2.2: Cookie 管理相关状态和函数 ====================
+
+const cookieModalVisible = ref(false)
+const cookieModalProfileId = ref(0)
+const cookieModalProfileTitle = ref('')
+
+function handleOpenCookieManager(profile: any) {
+  cookieModalProfileId.value = profile.id
+  cookieModalProfileTitle.value = profile.title
+  cookieModalVisible.value = true
+}
+
+// 快速导出 Cookie
+async function handleQuickExport(profile: any) {
+  if (isRunning(profile.id)) {
+    message.warning('窗口正在运行中，请先关闭后再导出')
+    return
+  }
+  try {
+    const res: any = await exportCookies(profile.id)
+    if (res.data?.code === 200) {
+      message.success(`导出成功：${res.data.data.cookieCount} 条 Cookie`)
+    } else {
+      message.error(res.data?.message || '导出失败')
+    }
+  } catch (err: any) {
+    message.error(err.response?.data?.message || '导出失败')
+  }
+}
+
+// 快速清理缓存
+async function handleQuickClear(profile: any) {
+  if (isRunning(profile.id)) {
+    message.warning('窗口正在运行中，请先关闭后再清理')
+    return
+  }
+  Modal.confirm({
+    title: '确认清理缓存？',
+    content: '此操作将清空该窗口的所有 Cookies 和缓存数据，不可撤销。建议先导出备份。',
+    okText: '确认清理',
+    okType: 'danger',
+    cancelText: '取消',
+    async onOk() {
+      try {
+        const res: any = await clearCookies(profile.id, 'all')
+        if (res.data?.code === 200) {
+          message.success('清理完成')
+        } else {
+          message.error(res.data?.message || '清理失败')
+        }
+      } catch (err: any) {
+        message.error(err.response?.data?.message || '清理失败')
+      }
+    }
+  })
 }
 
 // 表格列定义
