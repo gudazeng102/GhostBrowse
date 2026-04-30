@@ -12,7 +12,7 @@ import { spawn, ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
-import { app } from 'electron'
+import { app, screen } from 'electron'
 import * as http from 'http'
 import * as net from 'net'
 import * as tls from 'tls'
@@ -306,22 +306,57 @@ export async function launchChrome(
   const resolution = profile.screenResolution || '1920x1080'
   const [screenWidth, screenHeight] = resolution.split('x').map(Number)
   
+  // Phase 2.2: 智能窗口布局逻辑
+  // 获取当前显示器分辨率（工作区尺寸，不包含任务栏）
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const displayWidth = primaryDisplay.workAreaSize.width
+  const displayHeight = primaryDisplay.workAreaSize.height
+  
+  // 计算窗口应该的尺寸和位置
+  let windowWidth = screenWidth
+  let windowHeight = screenHeight
+  let positionX = 0
+  let positionY = 0
+  let shouldMaximize = false
+  
+  // 判断是否需要最大化：预设分辨率 >= 屏幕分辨率（宽高同时满足）
+  if (screenWidth >= displayWidth && screenHeight >= displayHeight) {
+    shouldMaximize = true
+    console.log(`[BrowserLauncher] 窗口布局: 最大化模式 (${screenWidth}x${screenHeight} >= ${displayWidth}x${displayHeight})`)
+  } else {
+    // 计算居中位置：窗口在屏幕正中央
+    positionX = Math.floor((displayWidth - screenWidth) / 2)
+    positionY = Math.floor((displayHeight - screenHeight) / 2)
+    console.log(`[BrowserLauncher] 窗口布局: 居中模式 (${screenWidth}x${screenHeight} at ${positionX},${positionY} on ${displayWidth}x${displayHeight})`)
+  }
+  
   // 7. 构建 Chrome 启动参数
+  // Phase 2.1: 启动页面使用用户自定义 URL，默认 Google
+  const startupUrl = (profile as any).startupUrl || 'https://www.google.com'
+  
   const args: string[] = [
     `--user-data-dir=${userDataDir}`,
     `--lang=${profile.uiLanguage || 'zh-CN'}`,
     `--user-agent=${userAgent}`,
-    `--window-size=${screenWidth},${screenHeight}`,
-    `--disable-blink-features=AutomationControlled`,
+    `--window-size=${windowWidth},${windowHeight}`,
+    `--window-position=${positionX},${positionY}`,
+    // Phase 2.2: 移除 --disable-blink-features，改用 Extension + test-type 开关隐藏警告
+    // `--disable-blink-features=AutomationControlled`, // 已移除，避免黄条警告
+    `--test-type`,
     `--disable-features=IsolateOrigins,site-per-process`,
     `--enable-features=ChromeExtensionsOnChromeURLs`,
     `--no-first-run`,
     `--no-default-browser-check`,
-    `--no-sandbox`,
     `--disable-dev-shm-usage`,
+    `--disable-extensions-except=${extensionPath}`,
     `--load-extension=${extensionPath}`,
-    `ip.sb`
+    startupUrl
   ]
+  
+  // 如果需要最大化，添加 start-maximized 参数
+  if (shouldMaximize) {
+    args.push(`--start-maximized`)
+  }
   
   // 如果有代理，添加代理参数
   if (proxyServer) {

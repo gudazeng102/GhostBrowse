@@ -38,6 +38,7 @@ export interface ProfileRecord {
   mediaDeviceMode: string
   createdAt: number
   updatedAt: number
+  startupUrl?: string
   proxy: ProxyInfo | null
 }
 
@@ -57,6 +58,7 @@ export interface ProfileDto {
   canvasMode?: string
   webglMode?: string
   mediaDeviceMode?: string
+  startupUrl?: string
 }
 
 /** Chrome 启动结果 */

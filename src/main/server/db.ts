@@ -220,6 +220,9 @@ function runMigrations(): void {
 
   // Phase 2.0: 指纹检测 - 创建 fingerprint_checks 表
   createFingerprintChecksTable()
+
+  // Phase 2.1: 窗口启动页面自定义 - 添加 startup_url 字段
+  migrateStartupUrlColumn()
 }
 
 /**
@@ -339,6 +342,26 @@ function createFingerprintChecksTable(): void {
     console.log('[DB] fingerprint_checks 表创建成功')
   } catch (err: any) {
     console.error('[DB] fingerprint_checks 表创建失败:', err.message)
+  }
+}
+
+/**
+ * Phase 2.1: 窗口启动页面自定义 - 为 profiles 表添加 startup_url 字段
+ */
+function migrateStartupUrlColumn(): void {
+  if (!db) return
+
+  try {
+    const columns = db!.prepare('PRAGMA table_info(profiles)').all() as any[]
+    const hasStartupUrl = columns.some(col => col.name === 'startup_url')
+    if (!hasStartupUrl) {
+      db!.prepare('ALTER TABLE profiles ADD COLUMN startup_url TEXT').run()
+      console.log('[DB Migrate] 已为 profiles 表添加 startup_url 字段')
+    } else {
+      console.log('[DB Migrate] profiles 表已有 startup_url 字段，跳过')
+    }
+  } catch (err: any) {
+    console.error('[DB Migrate] 为 profiles 表添加 startup_url 字段失败:', err.message)
   }
 }
 

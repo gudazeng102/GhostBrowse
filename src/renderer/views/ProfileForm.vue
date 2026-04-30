@@ -16,7 +16,15 @@
       class="profile-form"
     >
       <!-- 基本信息卡片 -->
-      <a-card title="基本信息" :bordered="false" style="margin-bottom: 16px;">
+      <a-card :bordered="false" style="margin-bottom: 16px;">
+        <template #title>
+          <span>
+            📋 基本信息
+            <a-tooltip title="设置窗口名称和绑定的代理。窗口标题用于标识不同窗口，方便管理；代理可帮助隐藏真实 IP 位置。">
+              <QuestionCircleOutlined style="margin-left: 6px; color: #999; cursor: help;" />
+            </a-tooltip>
+          </span>
+        </template>
         <a-row :gutter="16">
           <a-col :span="12">
             <a-form-item label="窗口标题" name="title">
@@ -44,7 +52,15 @@
       </a-card>
 
       <!-- 浏览器指纹卡片 -->
-      <a-card title="🖥️ 浏览器指纹" :bordered="false" style="margin-bottom: 16px;">
+      <a-card :bordered="false" style="margin-bottom: 16px;">
+        <template #title>
+          <span>
+            🖥️ 浏览器指纹
+            <a-tooltip title="模拟不同浏览器的指纹特征，包括版本、操作系统、语言等，使每个窗口看起来像真实用户，降低被检测风险。">
+              <QuestionCircleOutlined style="margin-left: 6px; color: #999; cursor: help;" />
+            </a-tooltip>
+          </span>
+        </template>
         <a-row :gutter="16">
           <a-col :span="8">
             <a-form-item label="Chrome 版本" name="chromeVersion">
@@ -117,7 +133,15 @@
       </a-card>
 
       <!-- 高级指纹卡片 -->
-      <a-card title="🔒 高级指纹保护" :bordered="false" style="margin-bottom: 16px;">
+      <a-card :bordered="false" style="margin-bottom: 16px;">
+        <template #title>
+          <span>
+            🔒 高级指纹保护
+            <a-tooltip title="增强防护：Canvas、WebGL、媒体设备等高级指纹可隐藏真实硬件信息，防止被网站追踪识别。">
+              <QuestionCircleOutlined style="margin-left: 6px; color: #999; cursor: help;" />
+            </a-tooltip>
+          </span>
+        </template>
         <a-row :gutter="16">
           <a-col :span="6">
             <a-form-item label="WebRTC 防护" name="webrtcMode">
@@ -180,6 +204,88 @@
         </a-row>
       </a-card>
 
+      <!-- Phase 2.1: 启动页面设置 -->
+      <a-card :bordered="false" style="margin-bottom: 16px;">
+        <template #title>
+          <span>
+            🌐 启动页面
+            <a-tooltip title="设置窗口启动后自动打开的网页地址。留空则默认打开 Google 搜索。支持任意有效网址，方便快速进入目标平台（如 Facebook、Amazon 后台等），提升工作效率。">
+              <QuestionCircleOutlined style="margin-left: 6px; color: #999; cursor: help;" />
+            </a-tooltip>
+          </span>
+        </template>
+        <a-form-item name="startupUrl">
+          <a-input
+            v-model:value="formState.startupUrl"
+            placeholder="请输入启动后自动打开的网址，例如 https://www.facebook.com，您也可以点击下方平台logo自动输入"
+            allow-clear
+          />
+        </a-form-item>
+        <!-- 快速填充平台 Logo 区域 -->
+        <div class="platform-logos">
+          <a-tooltip title="Facebook" @click="fillUrl('https://www.facebook.com')">
+            <div class="platform-logo">
+              <span class="platform-text" style="color:#1877F2;font-weight:bold;">f</span>
+            </div>
+          </a-tooltip>
+          <a-tooltip title="YouTube" @click="fillUrl('https://www.youtube.com')">
+            <div class="platform-logo">
+              <span class="platform-text" style="color:#FF0000;font-weight:bold;">▶</span>
+            </div>
+          </a-tooltip>
+          <a-tooltip title="Instagram" @click="fillUrl('https://www.instagram.com')">
+            <div class="platform-logo">
+              <span class="platform-text">📷</span>
+            </div>
+          </a-tooltip>
+          <a-tooltip title="X (Twitter)" @click="fillUrl('https://x.com')">
+            <div class="platform-logo">
+              <span class="platform-text" style="color:#000;font-weight:bold;">X</span>
+            </div>
+          </a-tooltip>
+          <a-tooltip title="LinkedIn" @click="fillUrl('https://www.linkedin.com')">
+            <div class="platform-logo">
+              <span class="platform-text" style="color:#0A66C2;font-weight:bold;font-size:12px;">in</span>
+            </div>
+          </a-tooltip>
+          <a-tooltip title="TikTok" @click="fillUrl('https://www.tiktok.com')">
+            <div class="platform-logo">
+              <span class="platform-text">♪</span>
+            </div>
+          </a-tooltip>
+          <a-tooltip title="Pinterest" @click="fillUrl('https://www.pinterest.com')">
+            <div class="platform-logo">
+              <span class="platform-text" style="color:#E60023;font-weight:bold;font-size:14px;">P</span>
+            </div>
+          </a-tooltip>
+          <a-tooltip title="Reddit" @click="fillUrl('https://www.reddit.com')">
+            <div class="platform-logo">
+              <span class="platform-text" style="color:#FF4500;font-weight:bold;font-size:14px;">r</span>
+            </div>
+          </a-tooltip>
+          <a-tooltip title="WhatsApp" @click="fillUrl('https://web.whatsapp.com')">
+            <div class="platform-logo">
+              <span class="platform-text" style="color:#25D366;font-weight:bold;">✉</span>
+            </div>
+          </a-tooltip>
+          <a-tooltip title="Telegram" @click="fillUrl('https://web.telegram.org')">
+            <div class="platform-logo">
+              <span class="platform-text" style="color:#0088CC;font-weight:bold;font-size:14px;">✈</span>
+            </div>
+          </a-tooltip>
+          <a-tooltip title="Amazon" @click="fillUrl('https://www.amazon.com')">
+            <div class="platform-logo">
+              <span class="platform-text" style="color:#FF9900;font-weight:bold;font-size:12px;">🛒</span>
+            </div>
+          </a-tooltip>
+          <a-tooltip title="eBay" @click="fillUrl('https://www.ebay.com')">
+            <div class="platform-logo">
+              <span class="platform-text" style="color:#E53238;font-weight:bold;font-size:14px;">e</span>
+            </div>
+          </a-tooltip>
+        </div>
+      </a-card>
+
       <!-- 按钮区域 -->
       <div class="form-actions">
         <a-space>
@@ -198,7 +304,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { LeftOutlined } from '@ant-design/icons-vue'
+import { LeftOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
 import type { FormInstance } from 'ant-design-vue'
 import { getProxyList, type ProxyRecord } from '../api/proxy'
 import { getProfileDetail, createProfile, updateProfile, type ProfileDto, type ProfileRecord, type WebRtcMode } from '../api/profile'
@@ -232,7 +338,8 @@ const formState: any = reactive({
   font: 'Microsoft YaHei,Arial',
   canvasMode: 'noise',
   webglMode: 'mock',
-  mediaDeviceMode: 'mock'
+  mediaDeviceMode: 'mock',
+  startupUrl: ''
 })
 
 // 表单校验规则
@@ -272,6 +379,8 @@ async function loadProfileDetail() {
     formState.canvasMode = data.canvasMode
     formState.webglMode = data.webglMode
     formState.mediaDeviceMode = data.mediaDeviceMode
+    // Phase 2.1: 启动页面回显
+    formState.startupUrl = data.startupUrl || ''
   } catch (error) {
     console.error('加载窗口详情失败:', error)
     message.error('加载窗口详情失败')
@@ -320,6 +429,16 @@ function handleCancel() {
   handleBack()
 }
 
+// Phase 2.1: 快速填充启动页面 URL
+function fillUrl(url: string) {
+  formState.startupUrl = url
+}
+
+// Phase 2.1: 获取网站 Favicon URL（使用 Clearbit Logo API）
+function getFaviconUrl(domain: string): string {
+  return `https://logo.clearbit.com/${domain}`
+}
+
 onMounted(async () => {
   await loadProxyList()
   if (isEdit.value) {
@@ -355,5 +474,49 @@ onMounted(async () => {
   display: flex;
   justify-content: flex-start;
   padding-top: 8px;
+}
+
+/* Phase 2.1: 快速填充平台 Logo 样式 */
+.platform-logos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.platform-logo {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid #e8e8e8;
+}
+
+.platform-logo:hover {
+  background: #1890ff;
+  border-color: #1890ff;
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.3);
+}
+
+.platform-logo:hover .platform-icon {
+  color: #fff;
+}
+
+.platform-icon {
+  font-size: 16px;
+  font-weight: bold;
+  color: #666;
+}
+
+.platform-img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
 }
 </style>

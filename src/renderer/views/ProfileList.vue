@@ -194,7 +194,7 @@ const columns = [
     title: 'ID',
     dataIndex: 'id',
     key: 'id',
-    width: 80
+    width: 40
   },
   {
     title: '状态',
@@ -214,18 +214,7 @@ const columns = [
     key: 'chromeVersion',
     width: 120
   },
-  {
-    title: 'WebRTC模式',
-    dataIndex: 'webrtcMode',
-    key: 'webrtcMode',
-    width: 120
-  },
-  {
-    title: '分辨率',
-    dataIndex: 'screenResolution',
-    key: 'screenResolution',
-    width: 120
-  },
+ 
   {
     title: '代理',
     key: 'proxy',

@@ -36,6 +36,7 @@ export interface Profile {
   canvasMode: string
   webglMode: string
   mediaDeviceMode: string
+  startupUrl?: string
   createdAt?: number
   updatedAt?: number
   proxy?: Proxy | null

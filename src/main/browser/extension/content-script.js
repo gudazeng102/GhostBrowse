@@ -21,6 +21,28 @@
   // 获取配置（运行时由 launcher.ts 替换）
   const config = {{CONFIG}};
   
+  // ==================== 0. WebDriver 反检测（替代 --disable-blink-features） ====================
+  Object.defineProperty(navigator, 'webdriver', {
+    get: () => undefined,
+    configurable: true
+  });
+  
+  // 清理 chrome 对象上的自动化痕迹
+  if (window.chrome) {
+    Object.defineProperty(window.chrome, 'runtime', {
+      get: () => undefined,
+      configurable: true
+    });
+  }
+  
+  // 覆盖 Permissions API 中的 query 行为
+  const originalQuery = window.navigator.permissions.query;
+  window.navigator.permissions.query = (parameters) => (
+    parameters.name === 'notifications' 
+      ? Promise.resolve({ state: Notification.permission }) 
+      : originalQuery(parameters)
+  );
+  
   // ==================== 1. Canvas 指纹 - 添加噪声 ====================
   if (config.canvas_mode === 'noise') {
     const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
