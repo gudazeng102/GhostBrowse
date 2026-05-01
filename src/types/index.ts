@@ -171,3 +171,26 @@ export interface ClearCookieResult {
   mode: string
   clearedItems: string[]
 }
+
+// ==================== Phase 2.3: 指纹配置智能跟随代理IP类型 ====================
+
+/** 国家 → 指纹配置映射 */
+export interface GeoFingerprintConfig {
+  language: string
+  font: string
+  timezone: string
+  resolution: string
+  webrtc: string
+}
+
+/** 智能配置结果 */
+export interface SmartConfigResult {
+  country: string
+  ui_language: string
+  font: string
+  screen_resolution: string
+  timezone_mode: string
+  geolocation_mode: string
+  language_mode: string
+  webrtc_mode: string
+}

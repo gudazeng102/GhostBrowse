@@ -17,39 +17,30 @@ let db: Database.Database | null = null
  * - 打包后：%APPDATA%/GhostBrowse/ghostbrowse.db
  */
 function getDatabasePath(): string {
-  // 开发模式（package.json 中 main 字段指向 src/main/index.ts）
   const isDev = !app.isPackaged
   
   if (isDev) {
-    // 开发模式：数据库放在项目根目录
     return path.join(process.cwd(), 'ghostbrowse.db')
   } else {
-    // 打包模式：数据库放在用户数据目录
     return path.join(app.getPath('userData'), 'ghostbrowse.db')
   }
 }
 
 /**
  * 获取 migrations.sql 文件路径
- * - 开发时：resources/migrations.sql（项目根目录）
- * - 打包后：process.resourcesPath/resources/migrations.sql
  */
 function getMigrationsPath(): string {
   const isDev = !app.isPackaged
   
   if (isDev) {
-    // 开发模式：resources 在项目根目录
     return path.join(process.cwd(), 'resources', 'migrations.sql')
   } else {
-    // 打包模式：extraResources 在 process.resourcesPath
     return path.join(process.resourcesPath, 'resources', 'migrations.sql')
   }
 }
 
 /**
  * 初始化数据库连接
- * - 打开/创建数据库文件
- * - 执行 migrations.sql 创建表结构
  */
 export function initDatabase(): Database.Database {
   if (db) {
@@ -59,19 +50,13 @@ export function initDatabase(): Database.Database {
   const dbPath = getDatabasePath()
   console.log(`[DB] 数据库路径: ${dbPath}`)
 
-  // 确保目录存在
   const dbDir = path.dirname(dbPath)
   if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true })
   }
 
-  // 创建数据库连接（better-sqlite3 是同步 API）
   db = new Database(dbPath)
-  
-  // 启用外键约束
   db.pragma('foreign_keys = ON')
-
-  // 执行数据库迁移
   runMigrations()
 
   console.log('[DB] 数据库初始化完成')
@@ -80,47 +65,35 @@ export function initDatabase(): Database.Database {
 
 /**
  * 重建 profiles 表（修复 CHECK 约束等结构变更）
- * SQLite 不支持 ALTER TABLE 修改 CHECK 约束，需要重建表
  */
 function migrateProfilesTable(): void {
   if (!db) return
 
   try {
-    // 检查 profiles 表是否存在
     const tableExists = db!.prepare(`
       SELECT name FROM sqlite_master WHERE type='table' AND name='profiles'
     `).get()
 
     if (!tableExists) {
-      // 表还不存在，跳过（会在 runMigrations 中创建）
       console.log('[DB] profiles 表尚不存在，跳过重建')
       return
     }
 
-    // 检查当前表的 webrtc_mode CHECK 约束是否包含 'real'
-    const tableInfo = db!.prepare("PRAGMA table_info(profiles)").all()
     const hasCorrectCheck = db!.prepare(`
       SELECT sql FROM sqlite_master WHERE type='table' AND name='profiles'
     `).get() as { sql: string } | undefined
 
     if (hasCorrectCheck && hasCorrectCheck.sql.includes("'real'")) {
-      // CHECK 约束已包含 'real'，无需重建
       console.log('[DB] profiles 表结构已正确，跳过重建')
       return
     }
 
     console.log('[DB] profiles 表 CHECK 约束需要更新，开始重建表...')
 
-    // 开始事务
     db!.exec('BEGIN TRANSACTION')
-
-    // 1. 备份原表数据
     db!.exec('CREATE TABLE profiles_backup AS SELECT * FROM profiles')
-
-    // 2. 删除原表
     db!.exec('DROP TABLE profiles')
 
-    // 3. 重新创建表（使用最新的表结构）
     const createSql = `
       CREATE TABLE profiles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,16 +117,12 @@ function migrateProfilesTable(): void {
     `
     db!.exec(createSql)
 
-    // 4. 恢复数据
     db!.exec(`
       INSERT INTO profiles (id, title, proxy_id, chrome_version, os, webrtc_mode, timezone_mode, geolocation_mode, language_mode, ui_language, screen_resolution, font, canvas_mode, webgl_mode, media_device_mode, created_at, updated_at)
       SELECT id, title, proxy_id, chrome_version, os, webrtc_mode, timezone_mode, geolocation_mode, language_mode, ui_language, screen_resolution, font, canvas_mode, webgl_mode, media_device_mode, created_at, updated_at FROM profiles_backup
     `)
 
-    // 5. 删除备份表
     db!.exec('DROP TABLE profiles_backup')
-
-    // 提交事务
     db!.exec('COMMIT')
     console.log('[DB] profiles 表重建完成')
   } catch (err: any) {
@@ -176,61 +145,43 @@ function runMigrations(): void {
     throw new Error(`迁移脚本不存在: ${migrationsPath}`)
   }
 
-  // 读取 SQL 文件
   const sql = fs.readFileSync(migrationsPath, 'utf-8')
 
-  // 分割并执行每条 SQL 语句
-  // 使用正则表达式匹配完整的 CREATE TABLE 和 CREATE INDEX 语句
   const createTableRegex = /CREATE\s+TABLE\s+.*?;/gis
   const createIndexRegex = /CREATE\s+INDEX\s+.*?;/gis
   
   const statements: string[] = []
   
-  // 提取所有 CREATE TABLE 语句
   let match
   while ((match = createTableRegex.exec(sql)) !== null) {
     statements.push(match[0])
   }
   
-  // 提取所有 CREATE INDEX 语句
-  createIndexRegex.lastIndex = 0 // 重置正则状态
+  createIndexRegex.lastIndex = 0
   while ((match = createIndexRegex.exec(sql)) !== null) {
     statements.push(match[0])
   }
 
-  // 直接执行每个语句
   for (const statement of statements) {
     try {
       db!.exec(statement)
       console.log(`[DB] SQL 执行成功`)
     } catch (err: any) {
-      console.error(`[DB] SQL 执行失败`)
-      console.error(`[DB] 错误详情: ${err.message}`)
-      // 继续执行下一个语句
+      console.error(`[DB] SQL 执行失败: ${err.message}`)
     }
   }
 
   console.log('[DB] 数据库迁移完成，共执行 ' + statements.length + ' 条 SQL')
 
-  // 特殊处理：检查并重建 profiles 表（修复 CHECK 约束）
   migrateProfilesTable()
-
-  // Phase 1.9: 多账号数据隔离 - 添加 user_id 字段
   migrateUserIdColumns()
-
-  // Phase 2.0: 指纹检测 - 创建 fingerprint_checks 表
   createFingerprintChecksTable()
-
-  // Phase 2.1: 窗口启动页面自定义 - 添加 startup_url 字段
   migrateStartupUrlColumn()
-
-  // Phase 2.2: Cookie 管理 - 创建 cookie_backups 表
   createCookieBackupsTable()
 }
 
 /**
  * Phase 1.9: 多账号数据隔离 - 为现有表添加 user_id 字段
- * 将 proxies、profiles、proxy_checks 三张表增加 user_id 字段
  */
 function migrateUserIdColumns(): void {
   if (!db) return
@@ -251,13 +202,11 @@ function migrateUserIdColumns(): void {
     }
   }
 
-  // 数据迁移：将已有数据归属到指定账号
   migrateExistingDataToUser()
 }
 
 /**
  * Phase 1.9: 数据迁移 - 将已有数据归属到指定账号
- * 只有在用户已存在时才执行迁移
  */
 function migrateExistingDataToUser(): void {
   if (!db) return
@@ -272,7 +221,6 @@ function migrateExistingDataToUser(): void {
 
   const userId = user.id
 
-  // 迁移代理数据
   try {
     const proxyResult = db.prepare('UPDATE proxies SET user_id = ? WHERE user_id IS NULL').run(userId)
     console.log(`[DB Migrate] 已迁移 ${proxyResult.changes} 条代理记录到用户 ${targetEmail} (ID: ${userId})`)
@@ -280,7 +228,6 @@ function migrateExistingDataToUser(): void {
     console.error(`[DB Migrate] 迁移代理数据失败:`, err.message)
   }
 
-  // 迁移窗口数据
   try {
     const profileResult = db.prepare('UPDATE profiles SET user_id = ? WHERE user_id IS NULL').run(userId)
     console.log(`[DB Migrate] 已迁移 ${profileResult.changes} 条窗口记录到用户 ${targetEmail} (ID: ${userId})`)
@@ -288,7 +235,6 @@ function migrateExistingDataToUser(): void {
     console.error(`[DB Migrate] 迁移窗口数据失败:`, err.message)
   }
 
-  // 迁移检测记录（直接归属到同一用户）
   try {
     const checkResult = db.prepare('UPDATE proxy_checks SET user_id = ? WHERE user_id IS NULL').run(userId)
     console.log(`[DB Migrate] 已迁移 ${checkResult.changes} 条检测记录到用户 ${targetEmail} (ID: ${userId})`)
@@ -320,24 +266,15 @@ function createFingerprintChecksTable(): void {
         profile_id INTEGER NOT NULL REFERENCES profiles(id),
         user_id INTEGER NOT NULL REFERENCES users(id),
         proxy_id INTEGER REFERENCES proxies(id),
-
-        -- 代理检测结果
         proxy_status TEXT CHECK(proxy_status IN ('success','fail','no_proxy')),
         proxy_ip TEXT,
         proxy_country TEXT,
         proxy_city TEXT,
         proxy_latency INTEGER,
-
-        -- 指纹纯洁度评分
         purity_score INTEGER NOT NULL DEFAULT 0,
         purity_level TEXT NOT NULL DEFAULT 'unknown' CHECK(purity_level IN ('excellent','good','fair','poor','unknown')),
-
-        -- 指纹配置快照（JSON 字符串存储）
         fingerprint_snapshot TEXT,
-
-        -- 风险提示（JSON 字符串存储，数组格式）
         risk_warnings TEXT,
-
         checked_at INTEGER NOT NULL
       )
     `
@@ -393,6 +330,17 @@ function createCookieBackupsTable(): void {
     console.error('[DB] cookie_backups 表创建失败:', err.message)
   }
 }
+
+/**
+ * Phase 2.3: 指纹配置智能跟随代理IP - 字段支持 'auto' 值
+ * 
+ * 注意：以下三个字段在 Phase 2.3 中支持存储 'auto' 字符串值
+ * - ui_language: 支持 'auto' 表示跟随代理IP国家自动设置语言
+ * - font: 支持 'auto' 表示跟随代理IP国家自动设置字体
+ * - screen_resolution: 支持 'auto' 表示跟随代理IP国家自动设置分辨率
+ * 
+ * 数据库存储 'auto' 字符串，启动时由后端解析为实际值
+ */
 
 /**
  * 关闭数据库连接

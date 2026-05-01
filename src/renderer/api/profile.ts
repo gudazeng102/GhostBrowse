@@ -81,6 +81,15 @@ export async function getProfileList(): Promise<ProfileRecord[]> {
  * 获取窗口详情
  * @param id 窗口 ID
  */
+/**
+ * 智能配置窗口指纹
+ * @param id 窗口 ID
+ */
+export async function smartConfigProfile(id: number): Promise<any> {
+  const response = await request.post<any>(`/profiles/${id}/smart-config`)
+  return response.data
+}
+
 export async function getProfileDetail(id: number): Promise<ProfileRecord> {
   const response = await request.get<any>(`/profiles/${id}`)
   return response.data.data

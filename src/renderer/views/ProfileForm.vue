@@ -1,4 +1,4 @@
-<template>
+                                  <template>
   <div class="profile-form-container">
     <!-- 优化3：页面标题区增加返回按钮 -->
     <div class="page-header">
@@ -7,6 +7,21 @@
       </a-button>
       <h1 class="page-title">{{ isEdit ? '✏️ 编辑窗口' : '➕ 新建窗口' }}</h1>
     </div>
+
+    <!-- Phase 2.3: 智能配置提示卡片 -->
+    <a-card size="small" style="margin-bottom: 16px; background: #f6ffed; border-color: #b7eb8f;">
+      <a-space align="center">
+        <BulbOutlined style="color: #52c41a; font-size: 18px;" />
+        <span style="color: #389e0d;">根据当前绑定的代理IP，一键匹配最佳指纹配置</span>
+        <a-button 
+          type="primary" 
+          :loading="smartConfigLoading" 
+          @click="handleSmartConfig"
+        >
+          🎯 智能配置
+        </a-button>
+      </a-space>
+    </a-card>
 
     <a-form
       ref="formRef"
@@ -87,11 +102,20 @@
           <a-col :span="8">
             <a-form-item label="界面语言" name="uiLanguage">
               <a-select v-model:value="formState.uiLanguage">
+                <a-select-option value="auto">🌐 跟随代理IP</a-select-option>
                 <a-select-option value="zh-CN">简体中文</a-select-option>
                 <a-select-option value="zh-TW">繁体中文</a-select-option>
-                <a-select-option value="en-US">English</a-select-option>
+                <a-select-option value="en-US">English (US)</a-select-option>
+                <a-select-option value="en-GB">English (UK)</a-select-option>
+                <a-select-option value="de-DE">Deutsch</a-select-option>
                 <a-select-option value="ja-JP">日本語</a-select-option>
                 <a-select-option value="ko-KR">한국어</a-select-option>
+                <a-select-option value="fr-FR">Français</a-select-option>
+                <a-select-option value="es-ES">Español</a-select-option>
+                <a-select-option value="ru-RU">Русский</a-select-option>
+                <a-select-option value="pt-BR">Português (BR)</a-select-option>
+                <a-select-option value="it-IT">Italiano</a-select-option>
+                <a-select-option value="nl-NL">Nederlands</a-select-option>
               </a-select>
             </a-form-item>
           </a-col>
@@ -101,30 +125,37 @@
           <a-col :span="8">
             <a-form-item label="屏幕分辨率" name="screenResolution">
               <a-select v-model:value="formState.screenResolution">
-                <a-select-option value="1920x1080">1920×1080</a-select-option>
-                <a-select-option value="1366x768">1366×768</a-select-option>
-                <a-select-option value="1536x864">1536×864</a-select-option>
-                <a-select-option value="2560x1440">2560×1440</a-select-option>
-                <a-select-option value="3840x2160">3840×2160</a-select-option>
-                <a-select-option value="1280x720">1280×720</a-select-option>
+                <a-select-option value="auto">🌐 跟随代理IP</a-select-option>
+                <a-select-option value="1920x1080">1920 × 1080</a-select-option>
+                <a-select-option value="1366x768">1366 × 768</a-select-option>
+                <a-select-option value="1536x864">1536 × 864</a-select-option>
+                <a-select-option value="1280x720">1280 × 720</a-select-option>
+                <a-select-option value="2560x1440">2560 × 1440</a-select-option>
+                <a-select-option value="3840x2160">3840 × 2160</a-select-option>
               </a-select>
             </a-form-item>
           </a-col>
           <a-col :span="8">
             <a-form-item label="字体" name="font">
               <a-select v-model:value="formState.font">
-                <a-select-option value="Microsoft YaHei">微软雅黑</a-select-option>
-                <a-select-option value="SimSun">宋体</a-select-option>
+                <a-select-option value="auto">🌐 跟随代理IP</a-select-option>
+                <a-select-option value="default">系统默认</a-select-option>
                 <a-select-option value="Arial">Arial</a-select-option>
+                <a-select-option value="Microsoft YaHei">微软雅黑</a-select-option>
+                <a-select-option value="Microsoft JhengHei">微软正黑体</a-select-option>
+                <a-select-option value="Meiryo">Meiryo (メイリオ)</a-select-option>
+                <a-select-option value="Malgun Gothic">Malgun Gothic (맑은 고딕)</a-select-option>
                 <a-select-option value="Times New Roman">Times New Roman</a-select-option>
+                <a-select-option value="Helvetica">Helvetica</a-select-option>
+                <a-select-option value="Segoe UI">Segoe UI</a-select-option>
               </a-select>
             </a-form-item>
           </a-col>
           <a-col :span="8">
             <a-form-item label="语言模式" name="languageMode">
               <a-select v-model:value="formState.languageMode">
+                <a-select-option value="ip">跟随代理IP</a-select-option>
                 <a-select-option value="mask">模拟浏览器</a-select-option>
-                <a-select-option value="timezone">使用代理时区</a-select-option>
                 <a-select-option value="custom">自定义</a-select-option>
               </a-select>
             </a-form-item>
@@ -350,7 +381,127 @@ import { getProxyList, type ProxyRecord } from '../api/proxy'
 import { getProfileDetail, createProfile, updateProfile, type ProfileDto, type ProfileRecord, type WebRtcMode } from '../api/profile'
 import { getCookieStatus, getCookieBackups, exportCookies, clearCookies, type CookieStatus } from '../api/cookie'
 import CookieManagerModal from '../components/CookieManagerModal.vue'
-import { ExportOutlined, DatabaseOutlined, DeleteOutlined } from '@ant-design/icons-vue'
+import { ExportOutlined, DatabaseOutlined, DeleteOutlined, BulbOutlined } from '@ant-design/icons-vue'
+import { smartConfigProfile } from '../api/profile'
+
+// Phase 2.3: 智能配置相关状态和函数
+const smartConfigLoading = ref(false)
+
+// 前端本地国家→指纹配置映射（纯前端版本，用于新建模式）
+const GEO_CONFIG_MAP: Record<string, any> = {
+  'US': { language: 'en-US', font: 'Arial', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'GB': { language: 'en-GB', font: 'Arial', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'DE': { language: 'de-DE', font: 'Arial', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'FR': { language: 'fr-FR', font: 'Arial', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'JP': { language: 'ja-JP', font: 'Meiryo', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1366x768', webrtc: 'replace' },
+  'KR': { language: 'ko-KR', font: 'Malgun Gothic', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'CN': { language: 'zh-CN', font: 'Microsoft YaHei', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'TW': { language: 'zh-TW', font: 'Microsoft JhengHei', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'HK': { language: 'zh-TW', font: 'Microsoft JhengHei', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'SG': { language: 'en-SG', font: 'Arial', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'AU': { language: 'en-AU', font: 'Arial', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'CA': { language: 'en-CA', font: 'Arial', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'RU': { language: 'ru-RU', font: 'Arial', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'BR': { language: 'pt-BR', font: 'Arial', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' },
+  'IN': { language: 'en-IN', font: 'Arial', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1366x768', webrtc: 'replace' },
+}
+
+const DEFAULT_CONFIG = { language: 'en-US', font: 'Arial', timezone: 'ip', geolocation: 'ip', languageMode: 'ip', resolution: '1920x1080', webrtc: 'replace' }
+
+// 根据代理名称/Host 推测国家（纯前端简化版）
+function guessCountryByProxy(proxy: any): string | null {
+  const name = (proxy.name || '').toLowerCase()
+  const host = (proxy.host || '').toLowerCase()
+  const combined = name + ' ' + host
+  
+  // 简单关键词匹配
+  if (combined.includes('us') || combined.includes('usa') || combined.includes('美国')) return 'US'
+  if (combined.includes('uk') || combined.includes('gb') || combined.includes('英国')) return 'GB'
+  if (combined.includes('de') || combined.includes('德国')) return 'DE'
+  if (combined.includes('fr') || combined.includes('法国')) return 'FR'
+  if (combined.includes('jp') || combined.includes('日本')) return 'JP'
+  if (combined.includes('kr') || combined.includes('韩国') || combined.includes('南韩')) return 'KR'
+  if (combined.includes('cn') || combined.includes('中国')) return 'CN'
+  if (combined.includes('tw') || combined.includes('台湾')) return 'TW'
+  if (combined.includes('hk') || combined.includes('香港')) return 'HK'
+  if (combined.includes('sg') || combined.includes('新加坡')) return 'SG'
+  if (combined.includes('au') || combined.includes('澳大利亚')) return 'AU'
+  if (combined.includes('ca') || combined.includes('加拿大')) return 'CA'
+  if (combined.includes('ru') || combined.includes('俄罗斯') || combined.includes('俄国')) return 'RU'
+  if (combined.includes('br') || combined.includes('巴西')) return 'BR'
+  if (combined.includes('in') || combined.includes('印度')) return 'IN'
+  
+  return null
+}
+
+async function handleSmartConfig() {
+  // 编辑模式：调用后端接口获取智能配置
+  if (isEdit.value && editId.value) {
+    if (!formState.proxyId) {
+      message.warning('请先绑定代理，再使用智能配置')
+      return
+    }
+    
+    smartConfigLoading.value = true
+    try {
+      const res: any = await smartConfigProfile(editId.value)
+      if (res.code === 200 && res.data) {
+        const config = res.data
+        formState.uiLanguage = config.ui_language || 'auto'
+        formState.font = config.font ? config.font.split(',') : ['auto']
+        formState.screenResolution = config.screen_resolution || 'auto'
+        formState.timezoneMode = config.timezone_mode || 'ip'
+        formState.geolocationMode = config.geolocation_mode || 'ip'
+        formState.languageMode = config.language_mode || 'ip'
+        formState.webrtcMode = config.webrtc_mode || 'replace'
+        
+        message.success(`智能配置完成：已匹配 ${config.country} 地区指纹`)
+      } else {
+        message.error(res.message || '智能配置失败')
+      }
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '智能配置请求失败')
+    } finally {
+      smartConfigLoading.value = false
+    }
+    return
+  }
+  
+  // 新建模式：纯前端智能配置（根据代理名称/Host 推测国家）
+  if (!formState.proxyId) {
+    message.warning('请先选择绑定代理，再使用智能配置')
+    return
+  }
+  
+  // 找到选中的代理
+  const proxy = proxyList.value.find(p => p.id === formState.proxyId)
+  if (!proxy) {
+    message.error('未找到选中的代理信息')
+    return
+  }
+  
+  // 推测国家
+  const countryCode = guessCountryByProxy(proxy)
+  const config = countryCode ? (GEO_CONFIG_MAP[countryCode] || DEFAULT_CONFIG) : DEFAULT_CONFIG
+  
+  // 直接回填表单（使用实际值，不是 auto）
+  formState.uiLanguage = config.language
+  formState.font = [config.font]
+  formState.screenResolution = config.resolution
+  formState.timezoneMode = config.timezone
+  formState.geolocationMode = config.geolocation
+  formState.languageMode = config.languageMode
+  formState.webrtcMode = config.webrtc
+  
+  const countryNames: Record<string, string> = {
+    'US': '美国', 'GB': '英国', 'DE': '德国', 'FR': '法国',
+    'JP': '日本', 'KR': '韩国', 'CN': '中国', 'TW': '台湾',
+    'HK': '香港', 'SG': '新加坡', 'AU': '澳大利亚', 'CA': '加拿大',
+    'RU': '俄罗斯', 'BR': '巴西', 'IN': '印度'
+  }
+  
+  message.success(`智能配置完成：已根据代理 "${proxy.name}" 匹配 ${countryNames[countryCode || ''] || '默认'} 地区指纹`)
+}
 
 const router = useRouter()
 const route = useRoute()

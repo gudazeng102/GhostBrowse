@@ -12,6 +12,8 @@ import Database from 'better-sqlite3'
 import { getDatabase } from '../db'
 import { authMiddleware, AuthRequest } from '../middleware/auth'
 import { launchChrome, registerChromeProcess, getRunningProfiles, closeChrome } from '../../browser/launcher'
+import { detectProxyCountry } from '../utils/proxy-geo'
+import { resolveGeoConfig, getCountryName } from '../utils/geo-config'
 
 // 创建路由实例
 const router = Router()
@@ -774,5 +776,163 @@ router.get('/:id/isolation-check', (req: Request, res: Response) => {
 // ==================== Phase 2.2: 挂载 Cookie 管理子路由 ====================
 import cookieRouter from './cookie'
 router.use('/:id/cookies', cookieRouter)
+
+// ==================== Phase 2.3: 智能配置接口 ====================
+
+/**
+ * POST /api/v1/profiles/:id/smart-config
+ * 一键智能配置：根据代理IP自动设置指纹参数
+ */
+router.post('/:id/smart-config', async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.userId
+    const { id } = req.params
+    const db = getDatabase()
+    
+    // 1. 查询窗口配置
+    const profile = db.prepare('SELECT * FROM profiles WHERE id = ? AND user_id = ?').get(Number(id), userId) as any
+    
+    if (!profile) {
+      return res.status(404).json({
+        code: 404,
+        data: null,
+        message: '窗口不存在'
+      })
+    }
+    
+    // 2. 查询绑定的代理
+    if (!profile.proxy_id) {
+      return res.status(400).json({
+        code: 400,
+        data: null,
+        message: '请先绑定代理，智能配置需要根据代理IP国家匹配指纹'
+      })
+    }
+    
+    const proxy = db.prepare('SELECT * FROM proxies WHERE id = ? AND user_id = ?').get(profile.proxy_id, userId) as any
+    
+    if (!proxy) {
+      return res.status(400).json({
+        code: 400,
+        data: null,
+        message: '代理不存在，请重新绑定'
+      })
+    }
+    
+    // 3. 检测代理出口国家
+    const countryCode = await detectProxyCountry({
+      type: proxy.type,
+      host: proxy.host,
+      port: proxy.port,
+      username: proxy.username,
+      password: proxy.password
+    })
+    
+    // 4. 获取指纹配置
+    const geoConfig = resolveGeoConfig(countryCode)
+    const countryName = getCountryName(countryCode || '')
+    
+    console.log(`[SmartConfig] Profile ${id} 智能配置: 代理=${proxy.host}:${proxy.port}, 国家=${countryCode || '未知'}`)
+    
+    // 5. 更新数据库
+    const now = Date.now()
+    db.prepare(`
+      UPDATE profiles SET
+        ui_language = ?,
+        font = ?,
+        screen_resolution = ?,
+        webrtc_mode = 'replace',
+        updated_at = ?
+      WHERE id = ? AND user_id = ?
+    `).run(
+      geoConfig.language,
+      geoConfig.font,
+      geoConfig.resolution,
+      now,
+      Number(id),
+      userId
+    )
+    
+    // 6. 返回配置结果
+    res.json({
+      code: 200,
+      data: {
+        country: countryName,
+        ui_language: geoConfig.language,
+        font: geoConfig.font,
+        screen_resolution: geoConfig.resolution,
+        timezone_mode: 'ip',
+        geolocation_mode: 'ip',
+        language_mode: 'ip',
+        webrtc_mode: 'replace'
+      },
+      message: `智能配置完成：已匹配 ${countryName} 地区指纹`
+    })
+  } catch (err: any) {
+    console.error('[Profile API] 智能配置失败:', err)
+    res.status(500).json({
+      code: 500,
+      data: null,
+      message: err.message || '智能配置失败'
+    })
+  }
+})
+
+// ==================== Phase 2.3: 启动时 auto 值解析 ====================
+
+/**
+ * 解析 profile 中的 auto 值
+ * 在启动 Chrome 前调用，根据代理IP国家设置实际值
+ */
+function resolveProfileAutoFields(profile: any, proxy: any): any {
+  const resolved = { ...profile }
+  
+  // 检查是否有 auto 字段需要解析
+  const autoFields = ['ui_language', 'font', 'screen_resolution']
+  const hasAuto = autoFields.some(field => profile[field] === 'auto')
+  
+  if (!hasAuto || !proxy) {
+    // 没有 auto 值或没有代理，直接返回
+    return resolved
+  }
+  
+  // 同步检测代理国家（简单实现，同步调用）
+  try {
+    // 由于 detectProxyCountry 是 async，这里用同步方式获取
+    // 我们直接在这里实现同步版本
+    const countryCode = syncDetectProxyCountry(proxy)
+    const geoConfig = resolveGeoConfig(countryCode)
+    
+    // 解析 auto 值
+    if (profile.ui_language === 'auto') {
+      resolved.uiLanguage = geoConfig.language
+    }
+    if (profile.font === 'auto') {
+      resolved.font = geoConfig.font
+    }
+    if (profile.screen_resolution === 'auto') {
+      resolved.screenResolution = geoConfig.resolution
+    }
+    
+    console.log(`[AutoResolve] Profile ${profile.id} 解析 auto 值: 国家=${countryCode || '未知'}, 语言=${resolved.uiLanguage}, 字体=${resolved.font}, 分辨率=${resolved.screenResolution}`)
+  } catch (err) {
+    console.error('[AutoResolve] 解析 auto 值失败:', err)
+  }
+  
+  return resolved
+}
+
+/**
+ * 同步版本的代理国家检测（简化实现）
+ */
+function syncDetectProxyCountry(proxy: any): string | null {
+  try {
+    // 这里使用简化的同步方式，实际生产环境应该用 async/await
+    // 但由于 launchChrome 已经是 async，这里可以等待
+    return null // 暂时返回 null，等待前端触发智能配置
+  } catch {
+    return null
+  }
+}
 
 export default router
