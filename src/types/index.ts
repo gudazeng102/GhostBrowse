@@ -194,3 +194,17 @@ export interface SmartConfigResult {
   language_mode: string
   webrtc_mode: string
 }
+
+// ==================== Phase 2.6: 内嵌 Chromium 类型 ====================
+
+/** Chrome 启动结果 */
+export interface LaunchChromeResult {
+  pid: number
+  userDataDir: string
+}
+
+/** Chrome 版本检查结果 */
+export interface ChromeVersionCheck {
+  exists: boolean
+  path: string
+}

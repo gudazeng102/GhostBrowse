@@ -17,6 +17,16 @@
       "filter": ["**/*"]
     },
     {
+      "from": "resources/browser/",
+      "to": "browser/",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "resources/icons/",
+      "to": "icons/",
+      "filter": ["*.ico"]
+    },
+    {
       "from": "resources/",
       "to": "resources/"
     }

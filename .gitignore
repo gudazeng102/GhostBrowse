@@ -42,3 +42,9 @@ temp/
 profiles/
 
 profiles_new/
+
+# Embedded Chromium (大文件，不提交到 git)
+resources/browser/
+
+# Local files (不纳入版本控制)
+src/renderer/views/Homepage.vue

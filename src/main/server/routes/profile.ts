@@ -75,6 +75,7 @@ interface ProfileDto {
   webglMode?: string
   mediaDeviceMode?: string
   startupUrl?: string
+  iconPath?: string
 }
 
 // ==================== API 路由 ====================
@@ -126,7 +127,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
         p.webrtc_mode, p.timezone_mode, p.geolocation_mode,
         p.language_mode, p.ui_language, p.screen_resolution,
         p.font, p.canvas_mode, p.webgl_mode, p.media_device_mode,
-        p.startup_url, p.created_at, p.updated_at,
+        p.startup_url, p.icon_path, p.created_at, p.updated_at,
         pr.id as pr_id, pr.name as pr_name, pr.type as pr_type,
         pr.host as pr_host, pr.port as pr_port, pr.username as pr_username
       FROM profiles p
@@ -155,6 +156,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
       webglMode: row.webgl_mode,
       mediaDeviceMode: row.media_device_mode,
       startupUrl: row.startup_url || undefined,
+      iconPath: row.icon_path || undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       // 关联的代理信息
@@ -199,7 +201,7 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
         p.webrtc_mode, p.timezone_mode, p.geolocation_mode,
         p.language_mode, p.ui_language, p.screen_resolution,
         p.font, p.canvas_mode, p.webgl_mode, p.media_device_mode,
-        p.startup_url, p.created_at, p.updated_at,
+        p.startup_url, p.icon_path, p.created_at, p.updated_at,
         pr.id as pr_id, pr.name as pr_name, pr.type as pr_type,
         pr.host as pr_host, pr.port as pr_port, pr.username as pr_username,
         pr.password as pr_password
@@ -235,6 +237,7 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
       webglMode: row.webgl_mode,
       mediaDeviceMode: row.media_device_mode,
       startupUrl: row.startup_url || undefined,
+      iconPath: row.icon_path || undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       proxy: row.pr_id ? {
@@ -301,13 +304,13 @@ router.post('/', (req: AuthRequest, res: Response) => {
         webrtc_mode, timezone_mode, geolocation_mode,
         language_mode, ui_language, screen_resolution,
         font, canvas_mode, webgl_mode, media_device_mode,
-        startup_url, user_id, created_at, updated_at
+        startup_url, icon_path, user_id, created_at, updated_at
       ) VALUES (
         @title, @proxy_id, @chrome_version, @os,
         @webrtc_mode, @timezone_mode, @geolocation_mode,
         @language_mode, @ui_language, @screen_resolution,
         @font, @canvas_mode, @webgl_mode, @media_device_mode,
-        @startup_url, @user_id, @created_at, @updated_at
+        @startup_url, @icon_path, @user_id, @created_at, @updated_at
       )
     `).run({
       title: body.title.trim(),
@@ -325,6 +328,7 @@ router.post('/', (req: AuthRequest, res: Response) => {
       webgl_mode: body.webglMode || 'mock',
       media_device_mode: body.mediaDeviceMode || 'mock',
       startup_url: body.startupUrl || null,
+      icon_path: body.iconPath || null,
       user_id: userId,
       created_at: now,
       updated_at: now
@@ -405,6 +409,7 @@ router.put('/:id', (req: Request, res: Response) => {
         webgl_mode = @webgl_mode,
         media_device_mode = @media_device_mode,
         startup_url = @startup_url,
+        icon_path = @icon_path,
         updated_at = @updated_at
       WHERE id = @id
     `).run({
@@ -424,6 +429,7 @@ router.put('/:id', (req: Request, res: Response) => {
       webgl_mode: body.webglMode || 'mock',
       media_device_mode: body.mediaDeviceMode || 'mock',
       startup_url: body.startupUrl || null,
+      icon_path: body.iconPath || null,
       updated_at: Date.now()
     })
     
@@ -515,7 +521,7 @@ router.post('/:id/launch', async (req: Request, res: Response) => {
         p.webrtc_mode, p.timezone_mode, p.geolocation_mode,
         p.language_mode, p.ui_language, p.screen_resolution,
         p.font, p.canvas_mode, p.webgl_mode, p.media_device_mode,
-        p.startup_url,
+        p.startup_url, p.icon_path,
         pr.id as pr_id, pr.name as pr_name, pr.type as pr_type,
         pr.host as pr_host, pr.port as pr_port, pr.username as pr_username,
         pr.password as pr_password
@@ -549,7 +555,8 @@ router.post('/:id/launch', async (req: Request, res: Response) => {
       canvasMode: profileRow.canvas_mode,
       webglMode: profileRow.webgl_mode,
       mediaDeviceMode: profileRow.media_device_mode,
-      startupUrl: profileRow.startup_url || ''
+      startupUrl: profileRow.startup_url || '',
+      iconPath: profileRow.icon_path || null
     }
     
     // 3. 构建 Proxy 对象（如果有代理）

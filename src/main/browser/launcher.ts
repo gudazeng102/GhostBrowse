@@ -1,9 +1,12 @@
 /**
  * Chrome 浏览器启动模块
  * Phase 1.3: 实现带有指纹注入的 Chrome 启动逻辑
+ * Phase 2.6: 重构为内嵌 Chromium 便携版 + rcedit 图标替换
  * 
  * 职责：
  * - 根据 Profile 配置启动带有指纹的 Chrome 浏览器
+ * - 优先使用内嵌 Chromium 便携版（resources/browser/{version}/chrome.exe）
+ * - 启动前用 rcedit 修改 chrome.exe 图标（预修改方案）
  * - 动态生成指纹注入 Extension
  * - 管理浏览器进程
  */
@@ -36,6 +39,7 @@ export interface Profile {
   canvasMode: string
   webglMode: string
   mediaDeviceMode: string
+  iconPath?: string
 }
 
 /** Proxy 配置 */
@@ -64,7 +68,175 @@ const CHROME_USER_AGENTS: Record<string, string> = {
   '134': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36'
 }
 
-// ==================== 本地代理转发器（解决 HTTPS over TLS 代理）====================
+// ==================== Phase 2.6: 内嵌 Chromium 路径管理 ====================
+
+/**
+ * Phase 2.6: 获取内嵌 Chromium 的 chrome.exe 路径
+ * 优先使用 resources/browser/{version}/chrome.exe
+ */
+function getEmbeddedChromeExePath(version: string): string {
+  // ✅ 修复：去除 "Chrome " 前缀，只保留纯数字版本号
+  const cleanVersion = version.replace(/^Chrome\s*/i, '').trim()
+  
+  const baseDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'browser', cleanVersion)
+    : path.join(process.cwd(), 'resources', 'browser', cleanVersion)
+
+  return path.join(baseDir, 'chrome.exe')
+}
+
+
+/**
+ * Phase 2.6: 获取默认图标路径
+ */
+function getDefaultIconPath(): string {
+  const iconDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'icons')
+    : path.join(process.cwd(), 'resources', 'icons')
+
+  return path.join(iconDir, 'default.ico')
+}
+
+/**
+ * Phase 2.6: 检查指定版本的 Chromium 是否存在
+ */
+export function checkChromeVersion(version: string): { exists: boolean; path: string } {
+  const exePath = getEmbeddedChromeExePath(version)
+  return {
+    exists: fs.existsSync(exePath),
+    path: exePath,
+  }
+}
+
+/**
+ * Phase 2.6: 查找可用的 Chrome 路径
+ * 优先级：内嵌 Chromium > 系统 Chrome > 系统 Edge
+ */
+function findAvailableChromePath(preferredVersion: string): string | null {
+  // 1. 首先检查内嵌 Chromium
+  const embeddedPath = getEmbeddedChromeExePath(preferredVersion)
+  if (fs.existsSync(embeddedPath)) {
+    console.log(`[BrowserLauncher] 使用内嵌 Chromium: ${embeddedPath}`)
+    return embeddedPath
+  }
+
+  // 2. 尝试其他版本的内嵌 Chromium
+  for (const version of ['128', '134', '124', '130', '132']) {
+    if (version === preferredVersion) continue
+    const otherPath = getEmbeddedChromeExePath(version)
+    if (fs.existsSync(otherPath)) {
+      console.log(`[BrowserLauncher] 使用备用内嵌 Chromium ${version}: ${otherPath}`)
+      return otherPath
+    }
+  }
+
+  // 3. 查找系统 Chrome
+  const systemCandidates = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+  ]
+
+  for (const candidate of systemCandidates) {
+    if (fs.existsSync(candidate)) {
+      console.log(`[BrowserLauncher] 使用系统 Chrome: ${candidate}`)
+      return candidate
+    }
+  }
+
+  // 4. 查找系统 Edge（备用）
+  const edgeCandidates = [
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+  ]
+
+  for (const candidate of edgeCandidates) {
+    if (fs.existsSync(candidate)) {
+      console.log(`[BrowserLauncher] 使用系统 Edge: ${candidate}`)
+      return candidate
+    }
+  }
+
+  return null
+}
+
+// ==================== Phase 2.6: rcedit 图标修改 ====================
+
+/**
+ * Phase 2.6: 使用 rcedit 修改 chrome.exe 图标
+ * 预修改方案：首次修改后写入 .patched 标记，后续跳过
+ */
+async function patchChromeIcon(chromeExePath: string, iconPath: string): Promise<void> {
+  const patchedMarker = chromeExePath + '.patched'
+
+  // 如果已修改过，跳过
+  if (fs.existsSync(patchedMarker)) {
+    console.log(`[rcedit] 图标已修改，跳过: ${chromeExePath}`)
+    return
+  }
+
+  // 查找 rcedit 可执行文件
+  let rceditPath: string
+
+  // 优先级：node_modules > resources/tools > 相对路径
+  const nodeModulesRcedit = path.join(process.cwd(), 'node_modules', 'rcedit', 'bin', 'rcedit-x64.exe')
+  const resourcesToolsRcedit = app.isPackaged
+    ? path.join(process.resourcesPath, 'tools', 'rcedit.exe')
+    : path.join(process.cwd(), 'resources', 'tools', 'rcedit.exe')
+
+  if (fs.existsSync(nodeModulesRcedit)) {
+    rceditPath = nodeModulesRcedit
+  } else if (fs.existsSync(resourcesToolsRcedit)) {
+    rceditPath = resourcesToolsRcedit
+  } else {
+    throw new Error('rcedit 未找到，请执行 npm install rcedit')
+  }
+
+  // 备份原文件（仅备份一次）
+  const backupPath = chromeExePath + '.bak'
+  if (!fs.existsSync(backupPath)) {
+    try {
+      fs.copyFileSync(chromeExePath, backupPath)
+      console.log(`[rcedit] 已备份原始文件: ${backupPath}`)
+    } catch (e) {
+      console.warn(`[rcedit] 备份失败（不影响继续）: ${e}`)
+    }
+  }
+
+  // 调用 rcedit 修改图标
+  return new Promise((resolve, reject) => {
+    const { exec } = require('child_process')
+    const cmd = `"${rceditPath}" "${chromeExePath}" --set-icon "${iconPath}"`
+
+    console.log(`[rcedit] 执行: ${cmd}`)
+
+    exec(cmd, { timeout: 30000, windowsHide: true }, (err: any, stdout: string, stderr: string) => {
+      if (err) {
+        console.error(`[rcedit] 修改图标失败: ${err.message}`)
+        if (stderr) console.error(`[rcedit] stderr: ${stderr}`)
+        // 图标修改失败不影响启动，只是任务栏显示默认图标
+        console.warn(`[rcedit] 图标修改失败，将使用默认图标继续启动`)
+        resolve() // 不 reject，继续启动
+        return
+      }
+
+      // 写入标记文件
+      try {
+        fs.writeFileSync(patchedMarker, JSON.stringify({
+          icon: iconPath,
+          patchedAt: new Date().toISOString()
+        }))
+        console.log(`[rcedit] 图标修改成功: ${iconPath}`)
+      } catch (e) {
+        console.warn(`[rcedit] 写入标记文件失败: ${e}`)
+      }
+
+      resolve()
+    })
+  })
+}
+
+// ==================== 本地代理转发器（Phase 1.6 验证可用，严禁修改）====================
 
 /**
  * 创建本地 HTTP 代理服务器
@@ -172,28 +344,6 @@ function getExtensionTemplateDir(): string {
   }
 }
 
-// ==================== Chrome 路径查找 ====================
-
-function findChromePath(): string | null {
-  const candidates = [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-    path.join(os.homedir(), 'AppData', 'Local', 'Chromium', 'Application', 'chrome.exe'),
-  ]
-  
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      console.log(`[BrowserLauncher] 找到浏览器: ${candidate}`)
-      return candidate
-    }
-  }
-  
-  return null
-}
-
 // ==================== Extension 动态生成 ====================
 
 function generateExtension(profile: Profile, proxy: Proxy | null): string {
@@ -242,14 +392,57 @@ export async function launchChrome(
   profile: Profile,
   proxy: Proxy | null
 ): Promise<LaunchResult> {
+  // 在 launchChrome 函数开头
+const rawVersion = profile.chromeVersion || '128'
+const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯数字
+
+  // const version = profile.chromeVersion || '128'
+
   console.log('[BrowserLauncher] 开始启动 Chrome...')
   console.log(`[BrowserLauncher] 窗口: ${profile.title} (ID: ${profile.id})`)
-  
-  const chromePath = findChromePath()
+  console.log(`[BrowserLauncher] Chrome 版本: ${version}`)
+
+  // === Phase 2.6: 查找可用的 Chrome 路径 ===
+  const chromePath = findAvailableChromePath(version)
   if (!chromePath) {
-    throw new Error('未找到 Chrome 浏览器，请安装 Google Chrome 或 Microsoft Edge')
+    throw new Error(
+      `未找到 Chrome 浏览器。\n` +
+      `请选择以下任一方式：\n` +
+      `1. 将 Chromium 便携版放入 resources/browser/${version}/ 目录（包含 chrome.exe）\n` +
+      `2. 安装 Google Chrome 或 Microsoft Edge\n`
+    )
   }
-  
+
+  // === Phase 2.6: 图标处理 ===
+  // 优先级：用户选择 > 默认图标
+  const defaultIconName = 'favicon.ico'
+  let iconFullPath: string | null = null
+
+  if (profile.iconPath) {
+    // 用户选择了自定义图标
+    iconFullPath = app.isPackaged
+      ? path.join(process.resourcesPath, profile.iconPath)
+      : path.join(process.cwd(), 'resources', profile.iconPath)
+  } else {
+    // 使用默认图标
+    iconFullPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'icons', defaultIconName)
+      : path.join(process.cwd(), 'resources', 'icons', defaultIconName)
+  }
+
+  // 检查图标文件是否存在
+  if (iconFullPath && fs.existsSync(iconFullPath)) {
+    console.log(`[rcedit] 准备修改图标: ${iconFullPath}`)
+    try {
+      await patchChromeIcon(chromePath, iconFullPath)
+    } catch (e: any) {
+      console.warn(`[rcedit] 图标修改失败，使用默认图标启动: ${e.message}`)
+    }
+  } else {
+    console.warn(`[rcedit] 图标文件不存在: ${iconFullPath}，使用 Chrome 默认图标`)
+  }
+
+  // === 构建 user-data-dir ===
   const userDataDir = path.join(
     app.isPackaged ? app.getPath('userData') : process.cwd(),
     'profiles',
@@ -260,25 +453,23 @@ export async function launchChrome(
     fs.mkdirSync(userDataDir, { recursive: true })
   }
   console.log(`[BrowserLauncher] 用户数据目录: ${userDataDir}`)
-  
+
+  // === 生成指纹注入 Extension ===
   const extensionPath = generateExtension(profile, proxy)
   
-  // 4. 构建代理参数（检测是否需要本地转发）
+  // === 构建代理参数 ===
   let proxyServer = ''
   let localProxyServer: http.Server | null = null
   
   if (proxy) {
-    // 检测是否需要 TLS 转发（端口 443 或类型为 https）
     const needsTlsForward = proxy.port === 443 || proxy.type === 'https'
     
     if (needsTlsForward) {
-      // 创建本地 HTTP 转发代理
       const localProxy = createLocalProxy(proxy)
       localProxyServer = localProxy.server
       proxyServer = localProxy.url
       console.log(`[BrowserLauncher] 使用本地转发: ${proxyServer}`)
     } else {
-      // 明文代理，直接连接
       const encode = (str: string | null) => str ? encodeURIComponent(str) : ''
       const user = encode(proxy.username)
       const pass = encode(proxy.password)
@@ -299,40 +490,42 @@ export async function launchChrome(
     }
   }
   
-  // 5. 获取 User-Agent
-  const userAgent = CHROME_USER_AGENTS[profile.chromeVersion] || CHROME_USER_AGENTS['128']
+  // === 获取 User-Agent ===
+  const userAgent = CHROME_USER_AGENTS[version] || CHROME_USER_AGENTS['128']
   
-  // 6. 解析分辨率
+  // === 解析分辨率 ===
   const resolution = profile.screenResolution || '1920x1080'
   const [screenWidth, screenHeight] = resolution.split('x').map(Number)
   
   // Phase 2.2: 智能窗口布局逻辑
-  // 获取当前显示器分辨率（工作区尺寸，不包含任务栏）
   const primaryDisplay = screen.getPrimaryDisplay()
   const displayWidth = primaryDisplay.workAreaSize.width
   const displayHeight = primaryDisplay.workAreaSize.height
   
-  // 计算窗口应该的尺寸和位置
   let windowWidth = screenWidth
   let windowHeight = screenHeight
   let positionX = 0
   let positionY = 0
   let shouldMaximize = false
   
-  // 判断是否需要最大化：预设分辨率 >= 屏幕分辨率（宽高同时满足）
   if (screenWidth >= displayWidth && screenHeight >= displayHeight) {
     shouldMaximize = true
     console.log(`[BrowserLauncher] 窗口布局: 最大化模式 (${screenWidth}x${screenHeight} >= ${displayWidth}x${displayHeight})`)
   } else {
-    // 计算居中位置：窗口在屏幕正中央
     positionX = Math.floor((displayWidth - screenWidth) / 2)
     positionY = Math.floor((displayHeight - screenHeight) / 2)
-    console.log(`[BrowserLauncher] 窗口布局: 居中模式 (${screenWidth}x${screenHeight} at ${positionX},${positionY} on ${displayWidth}x${displayHeight})`)
+    console.log(`[BrowserLauncher] 窗口布局: 居中模式 (${screenWidth}x${screenHeight} at ${positionX},${positionY})`)
   }
   
-  // 7. 构建 Chrome 启动参数
-  // Phase 2.1: 启动页面使用用户自定义 URL，默认 Google
-  const startupUrl = (profile as any).startupUrl || 'https://www.google.com'
+  // === 构建 Chrome 启动参数 ===
+  // 默认使用本地 homepage.html（显示 img 目录下的 webp 图片）
+  const getDefaultHomepage = (): string => {
+    const homepagePath = app.isPackaged
+      ? path.join(process.resourcesPath, 'browser', version, 'homepage.html')
+      : path.join(process.cwd(), 'resources', 'browser', version, 'homepage.html')
+    return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://www.google.com'
+  }
+  const startupUrl = (profile as any).startupUrl || getDefaultHomepage()
   
   const args: string[] = [
     `--user-data-dir=${userDataDir}`,
@@ -340,8 +533,6 @@ export async function launchChrome(
     `--user-agent=${userAgent}`,
     `--window-size=${windowWidth},${windowHeight}`,
     `--window-position=${positionX},${positionY}`,
-    // Phase 2.2: 移除 --disable-blink-features，改用 Extension + test-type 开关隐藏警告
-    // `--disable-blink-features=AutomationControlled`, // 已移除，避免黄条警告
     `--test-type`,
     `--disable-features=IsolateOrigins,site-per-process`,
     `--enable-features=ChromeExtensionsOnChromeURLs`,
@@ -353,12 +544,10 @@ export async function launchChrome(
     startupUrl
   ]
   
-  // 如果需要最大化，添加 start-maximized 参数
   if (shouldMaximize) {
     args.push(`--start-maximized`)
   }
   
-  // 如果有代理，添加代理参数
   if (proxyServer) {
     args.push(`--proxy-server=${proxyServer}`)
   }
@@ -366,7 +555,7 @@ export async function launchChrome(
   console.log(`[BrowserLauncher] Chrome 路径: ${chromePath}`)
   console.log(`[BrowserLauncher] 启动参数: ${args.join(' ')}`)
   
-  // 8. 启动 Chrome 进程
+  // === 启动 Chrome 进程 ===
   return new Promise((resolve, reject) => {
     try {
       const chromeProcess = spawn(chromePath, args, {
@@ -388,12 +577,10 @@ export async function launchChrome(
       
       chromeProcess.on('exit', (code, signal) => {
         console.log(`[BrowserLauncher] Chrome 进程退出，code: ${code}, signal: ${signal}`)
-        // 关闭本地代理
         if (localProxyServer) {
           localProxyServer.close()
           console.log('[LocalProxy] 已关闭')
         }
-        // 清理临时 Extension 目录
         try {
           if (fs.existsSync(extensionPath)) {
             fs.rmSync(extensionPath, { recursive: true, force: true })

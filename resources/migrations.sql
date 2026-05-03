@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS proxies (
 
 -- 指纹窗口配置表（Profile）：存储浏览器指纹配置
 -- Phase 1.6 修复：webrtc_mode CHECK 添加 'real' 选项
+-- Phase 2.1 修复：添加 startup_url 字段
+-- Phase 2.6 修复：添加 icon_path 字段
 CREATE TABLE IF NOT EXISTS profiles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
@@ -35,6 +37,9 @@ CREATE TABLE IF NOT EXISTS profiles (
   canvas_mode TEXT NOT NULL DEFAULT 'noise',
   webgl_mode TEXT NOT NULL DEFAULT 'mock',
   media_device_mode TEXT NOT NULL DEFAULT 'mock',
+  startup_url TEXT,
+  icon_path TEXT,
+  user_id INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

@@ -87,6 +87,60 @@ router.get('/health', (req: Request, res: Response) => {
 })
 
 /**
+ * GET /api/v1/system/icons
+ * Phase 2.6: 获取可用图标列表
+ * 扫描 resources/icons/ 目录，返回所有 .ico 文件
+ */
+router.get('/icons', (req: Request, res: Response) => {
+  try {
+    const isDev = !app.isPackaged
+    const iconsDir = isDev
+      ? path.join(process.cwd(), 'resources', 'icons')
+      : path.join(process.resourcesPath, 'icons')
+
+    // 如果目录不存在，返回空列表
+    if (!fs.existsSync(iconsDir)) {
+      console.warn(`[System API] 图标目录不存在: ${iconsDir}`)
+      return res.json({
+        code: 0,
+        data: [],
+        message: 'success'
+      })
+    }
+
+    // 扫描 .ico 文件
+    const files = fs.readdirSync(iconsDir)
+      .filter(f => f.toLowerCase().endsWith('.ico'))
+
+    // 构建图标列表，标记默认图标
+    const DEFAULT_ICON = 'favicon.ico'
+    const icons = files.map(filename => {
+      const name = filename.replace('.ico', '')
+      const isDefault = filename === DEFAULT_ICON
+      return {
+        name: isDefault ? '👻 默认图标 (Snipaste)' : name,
+        path: `icons/${filename}`,
+        filename,
+        isDefault,
+      }
+    })
+
+    res.json({
+      code: 0,
+      data: icons,
+      message: 'success'
+    })
+  } catch (err: any) {
+    console.error('[System API] 获取图标列表失败:', err)
+    res.status(500).json({
+      code: 500,
+      data: [],
+      message: err.message || '获取图标列表失败'
+    })
+  }
+})
+
+/**
  * GET /api/v1/system/info
  * 获取系统基本信息
  */
