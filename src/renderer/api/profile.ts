@@ -161,3 +161,14 @@ export async function closeProfile(id: number): Promise<CloseProfileResult> {
   const response = await request.post<any>(`/profiles/${id}/close`)
   return response.data.data
 }
+
+// ==================== Phase 3.0: 生成新指纹 API ====================
+
+/**
+ * 生成随机指纹配置
+ * @param proxyId 可选的代理 ID，用于根据代理国家匹配指纹
+ */
+export async function generateFingerprint(proxyId?: number): Promise<any> {
+  const response = await request.post<any>('/profiles/generate-fingerprint', { proxyId })
+  return response.data
+}

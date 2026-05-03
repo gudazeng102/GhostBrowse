@@ -208,3 +208,51 @@ export interface ChromeVersionCheck {
   exists: boolean
   path: string
 }
+
+// ==================== Phase 3.0: 浏览器设定卡片 + 生成新指纹类型 ====================
+
+/** 生成的指纹配置（后端返回） */
+export interface GeneratedFingerprint {
+  chromeVersion: string
+  userAgent: string
+  os: string
+  webrtcMode: string
+  timezoneMode: string
+  geolocationMode: string
+  languageMode: string
+  uiLanguage: string
+  screenResolution: string
+  font: string
+  canvasMode: string
+  canvasNoiseSeed?: string
+  webglMode: string
+  webglVendor: string
+  webglRenderer: string
+  audioContextMode: string
+  audioContextNoiseSeed?: string
+  clientRectsMode: string
+  clientRectsNoiseSeed?: string
+  deviceName: string
+  macAddress: string
+  mediaDeviceMode: string
+}
+
+/** 浏览器设定卡片显示数据 */
+export interface BrowserSettingsCard {
+  browser: string
+  userAgent: string
+  webrtc: string
+  timezone: string
+  geolocation: string
+  language: string
+  uiLanguage: string
+  resolution: string
+  font: string
+  canvas: string
+  webglImage: string
+  webglMetadata: string
+  audioContext: string
+  clientRects: string
+  deviceName: string
+  macAddress: string
+}

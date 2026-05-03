@@ -178,6 +178,7 @@ function runMigrations(): void {
   createFingerprintChecksTable()
   migrateStartupUrlColumn()
   createCookieBackupsTable()
+  migrateFingerprintColumns()
 }
 
 /**
@@ -328,6 +329,40 @@ function createCookieBackupsTable(): void {
     console.log('[DB] cookie_backups 表创建成功')
   } catch (err: any) {
     console.error('[DB] cookie_backups 表创建失败:', err.message)
+  }
+}
+
+/**
+ * Phase 3.0: 浏览器设定卡片 + 生成新指纹
+ * 为 profiles 表添加指纹参数相关字段
+ */
+function migrateFingerprintColumns(): void {
+  if (!db) return
+
+  try {
+    const columns = db!.prepare('PRAGMA table_info(profiles)').all() as any[]
+    const columnNames = columns.map(col => col.name)
+
+    const newColumns = [
+      { name: 'device_name', type: 'TEXT' },
+      { name: 'mac_address', type: 'TEXT' },
+      { name: 'canvas_noise_seed', type: 'TEXT' },
+      { name: 'audio_noise_seed', type: 'TEXT' },
+      { name: 'rects_noise_seed', type: 'TEXT' },
+      { name: 'webgl_vendor', type: 'TEXT' },
+      { name: 'webgl_renderer', type: 'TEXT' },
+    ]
+
+    for (const col of newColumns) {
+      if (!columnNames.includes(col.name)) {
+        db!.prepare(`ALTER TABLE profiles ADD COLUMN ${col.name} ${col.type}`).run()
+        console.log(`[DB Migrate] 已为 profiles 表添加 ${col.name} 字段`)
+      } else {
+        console.log(`[DB Migrate] profiles 表已有 ${col.name} 字段，跳过`)
+      }
+    }
+  } catch (err: any) {
+    console.error('[DB Migrate] 为 profiles 表添加指纹字段失败:', err.message)
   }
 }
 

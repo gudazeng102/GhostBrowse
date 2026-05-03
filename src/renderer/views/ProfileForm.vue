@@ -23,15 +23,19 @@
       </a-space>
     </a-card>
 
-    <a-form
-      ref="formRef"
-      :model="formState"
-      :rules="rules"
-      layout="vertical"
-      class="profile-form"
-    >
-      <!-- 基本信息卡片 -->
-      <a-card :bordered="false" style="margin-bottom: 16px;">
+    <!-- Phase 3.0: 左右分栏布局 -->
+    <a-row :gutter="24">
+      <!-- 左侧：表单区域 (16/24) -->
+      <a-col :span="16">
+        <a-form
+          ref="formRef"
+          :model="formState"
+          :rules="rules"
+          layout="vertical"
+          class="profile-form"
+        >
+          <!-- 基本信息卡片 -->
+          <a-card :bordered="false" style="margin-bottom: 16px;">
         <template #title>
           <span>
             📋 基本信息
@@ -359,6 +363,67 @@
         </a-space>
       </div>
     </a-form>
+      </a-col>
+
+      <!-- 右侧：浏览器设定卡片 (8/24) -->
+      <a-col :span="8">
+        <!-- Phase 3.0: 浏览器设定卡片 -->
+        <a-card 
+          title="浏览器设定" 
+          :bordered="true"
+          style="position: sticky; top: 24px;"
+        >
+          <template #extra>
+            <a-space>
+              <a-button type="primary" size="small" @click="handleGenerateFingerprint" :loading="generating">
+                <SyncOutlined />
+                生成新指纹
+              </a-button>
+            </a-space>
+          </template>
+          
+          <!-- 浏览器信息 -->
+          <div class="browser-info" style="margin-bottom: 16px;">
+            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+              <ChromeOutlined style="font-size: 24px; margin-right: 8px; color: #4285f4;" />
+              <span style="font-weight: 500;">{{ browserSettings.browser }}</span>
+            </div>
+          </div>
+          
+          <!-- 配置摘要 -->
+          <a-descriptions :column="1" size="small" bordered>
+            <a-descriptions-item label="User-Agent">
+              <span class="text-wrap">{{ browserSettings.userAgent }}</span>
+            </a-descriptions-item>
+            <a-descriptions-item label="WebRTC">
+              <a-tag :color="getWebrtcColor(browserSettings.webrtc)">{{ browserSettings.webrtc }}</a-tag>
+            </a-descriptions-item>
+            <a-descriptions-item label="时区">{{ browserSettings.timezone }}</a-descriptions-item>
+            <a-descriptions-item label="地理位置">{{ browserSettings.geolocation }}</a-descriptions-item>
+            <a-descriptions-item label="语言">{{ browserSettings.language }}</a-descriptions-item>
+            <a-descriptions-item label="界面语言">{{ browserSettings.uiLanguage }}</a-descriptions-item>
+            <a-descriptions-item label="分辨率">{{ browserSettings.resolution }}</a-descriptions-item>
+            <a-descriptions-item label="字体">{{ browserSettings.font }}</a-descriptions-item>
+            <a-descriptions-item label="Canvas">
+              <span>{{ browserSettings.canvas }}</span>
+              <a-tag v-if="formState.canvasNoiseSeed" color="blue" style="margin-left: 4px;">{{ formState.canvasNoiseSeed }}</a-tag>
+            </a-descriptions-item>
+            <a-descriptions-item label="WebGL 图像">{{ browserSettings.webglImage }}</a-descriptions-item>
+            <a-descriptions-item label="WebGL 元数据">{{ browserSettings.webglMetadata }}</a-descriptions-item>
+            <a-descriptions-item label="AudioContext">
+              <span>{{ browserSettings.audioContext }}</span>
+              <a-tag v-if="formState.audioNoiseSeed" color="blue" style="margin-left: 4px;">{{ formState.audioNoiseSeed }}</a-tag>
+            </a-descriptions-item>
+            <a-descriptions-item label="ClientRects">
+              <span>{{ browserSettings.clientRects }}</span>
+              <a-tag v-if="formState.rectsNoiseSeed" color="blue" style="margin-left: 4px;">{{ formState.rectsNoiseSeed }}</a-tag>
+            </a-descriptions-item>
+            <a-descriptions-item label="设备名称">{{ browserSettings.deviceName }}</a-descriptions-item>
+            <a-descriptions-item label="MAC 地址">{{ browserSettings.macAddress }}</a-descriptions-item>
+          </a-descriptions>
+        </a-card>
+      </a-col>
+    </a-row>
 
     <!-- Phase 2.2: Cookie 管理弹窗 -->
     <CookieManagerModal
@@ -381,8 +446,81 @@ import { getProxyList, type ProxyRecord } from '../api/proxy'
 import { getProfileDetail, createProfile, updateProfile, type ProfileDto, type ProfileRecord, type WebRtcMode } from '../api/profile'
 import { getCookieStatus, getCookieBackups, exportCookies, clearCookies, type CookieStatus } from '../api/cookie'
 import CookieManagerModal from '../components/CookieManagerModal.vue'
-import { ExportOutlined, DatabaseOutlined, DeleteOutlined, BulbOutlined } from '@ant-design/icons-vue'
-import { smartConfigProfile } from '../api/profile'
+import { ExportOutlined, DatabaseOutlined, DeleteOutlined, BulbOutlined, SyncOutlined, ChromeOutlined } from '@ant-design/icons-vue'
+import { smartConfigProfile, generateFingerprint } from '../api/profile'
+
+// Phase 3.0: 生成新指纹相关状态和函数
+const generating = ref(false)
+
+// 浏览器设定卡片数据（computed，实时联动表单）
+const browserSettings = computed(() => {
+  const version = formState.chromeVersion || '128'
+  const defaultUA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version}.0.0.0 Safari/537.36`
+  return {
+    browser: `SunBrowser [Chrome ${version}]`,
+    userAgent: formState.userAgent || defaultUA,
+    webrtc: formState.webrtcMode === 'disable' ? '禁用' : formState.webrtcMode === 'replace' ? '替换' : formState.webrtcMode === 'forward' ? '转发' : '真实',
+    timezone: formState.timezoneMode === 'ip' ? '基于 IP' : formState.timezoneMode === 'custom' ? '自定义' : '真实',
+    geolocation: formState.geolocationMode === 'ip' ? '基于 IP' : formState.geolocationMode === 'custom' ? '自定义' : '真实',
+    language: formState.languageMode === 'ip' ? '基于 IP' : formState.languageMode === 'mask' ? '模拟浏览器' : '自定义',
+    uiLanguage: formState.uiLanguage || '基于语言',
+    resolution: formState.screenResolution || '基于 User-Agent',
+    font: formState.font || '默认',
+    canvas: formState.canvasMode === 'noise' ? `噪声 [${formState.canvasNoiseSeed || '未设置'}]` : '真实',
+    webglImage: formState.webglMode === 'mock' ? '伪装' : formState.webglMode === 'disable' ? '禁用' : '真实',
+    webglMetadata: formState.webglVendor ? `${formState.webglVendor} (${formState.webglRenderer || ''})` : '未设置',
+    audioContext: formState.audioNoiseSeed ? `噪声 [${formState.audioNoiseSeed}]` : '未设置',
+    clientRects: formState.rectsNoiseSeed ? `噪声 [${formState.rectsNoiseSeed}]` : '未设置',
+    deviceName: formState.deviceName || '未设置',
+    macAddress: formState.macAddress || '未设置',
+  }
+})
+
+function getWebrtcColor(mode: string) {
+  if (mode === '禁用') return 'green'
+  if (mode === '替换') return 'blue'
+  if (mode === '转发') return 'orange'
+  return 'default'
+}
+
+async function handleGenerateFingerprint() {
+  generating.value = true
+  try {
+    const res: any = await generateFingerprint(formState.proxyId || undefined)
+    if (res.code === 200 && res.data) {
+      const fp = res.data
+      // 回填表单
+      formState.chromeVersion = fp.chromeVersion
+      formState.userAgent = fp.userAgent
+      formState.os = fp.os
+      formState.webrtcMode = fp.webrtcMode
+      formState.timezoneMode = fp.timezoneMode
+      formState.geolocationMode = fp.geolocationMode
+      formState.languageMode = fp.languageMode
+      formState.uiLanguage = fp.uiLanguage
+      formState.screenResolution = fp.screenResolution
+      formState.font = fp.font
+      formState.canvasMode = fp.canvasMode
+      formState.canvasNoiseSeed = fp.canvasNoiseSeed || ''
+      formState.webglMode = fp.webglMode
+      formState.webglVendor = fp.webglVendor || ''
+      formState.webglRenderer = fp.webglRenderer || ''
+      formState.audioNoiseSeed = fp.audioContextNoiseSeed || ''
+      formState.rectsNoiseSeed = fp.clientRectsNoiseSeed || ''
+      formState.deviceName = fp.deviceName || ''
+      formState.macAddress = fp.macAddress || ''
+      formState.mediaDeviceMode = fp.mediaDeviceMode
+      
+      message.success('新指纹已生成，所有配置已自动更新')
+    } else {
+      message.error(res.message || '生成指纹失败')
+    }
+  } catch (err: any) {
+    message.error(err.response?.data?.message || '生成指纹请求失败')
+  } finally {
+    generating.value = false
+  }
+}
 
 // Phase 2.3: 智能配置相关状态和函数
 const smartConfigLoading = ref(false)
@@ -533,7 +671,16 @@ const formState: any = reactive({
   canvasMode: 'noise',
   webglMode: 'mock',
   mediaDeviceMode: 'mock',
-  startupUrl: ''
+  startupUrl: '',
+  // Phase 3.0: 新增指纹参数字段
+  userAgent: '',
+  canvasNoiseSeed: '',
+  audioNoiseSeed: '',
+  rectsNoiseSeed: '',
+  webglVendor: '',
+  webglRenderer: '',
+  deviceName: '',
+  macAddress: '',
 })
 
 // 表单校验规则
@@ -797,4 +944,11 @@ onMounted(async () => {
   height: 24px;
   object-fit: contain;
 }
+
+/* Phase 3.0: 文本换行样式（长文本自动换行） */
+.text-wrap {
+  word-break: break-all;
+  word-wrap: break-word;
+}
 </style>
+                                                                                                

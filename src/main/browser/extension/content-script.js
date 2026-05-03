@@ -505,3 +505,400 @@
   
   console.log('[GhostBrowse Extension] Fingerprint injection loaded');
 })();
+
+// ==================== Phase 3.1: 核心反检测指纹补全（追加在文件末尾） ====================
+
+(function() {
+  'use strict';
+
+  // 获取配置（从外层 IIFE 传递的 config）
+  const config = typeof window.__GB_CONFIG__ !== 'undefined' 
+    ? window.__GB_CONFIG__ 
+    : {{CONFIG}};
+
+  // ============ Phase 3.1 维度 1: 清理 ChromeDriver 遗留变量 ============
+  // ChromeDriver 会注入 $cdc_ 和 $chrome_ 变量，这是最强的 Bot 信号
+  try {
+    const cdcVars = Object.keys(window).filter(k => k.startsWith('cdc_') || k.startsWith('$chrome_'));
+    cdcVars.forEach(v => {
+      try { delete window[v]; } catch(e) {}
+    });
+  } catch(e) {}
+
+  // ============ Phase 3.1 维度 2: 完整 window.chrome 对象 ============
+  // 真实 Chrome 有 chrome.runtime / chrome.app / chrome.csi / chrome.loadTimes
+  if (!window.chrome) {
+    window.chrome = {};
+  }
+
+  // chrome.runtime（扩展程序 API）
+  if (!window.chrome.runtime) {
+    window.chrome.runtime = {
+      id: '',
+      manifest: { name: 'GhostBrowse', version: '1.0', manifest_version: 3 },
+      getManifest: function() { return this.manifest; },
+      getURL: function(path) { return 'chrome-extension://fake-id/' + path; },
+      connect: function() { return { onMessage: { addListener: function() {} }, postMessage: function() {} }; },
+      sendMessage: function(msg, cb) { if (cb) setTimeout(cb, 0); },
+      onInstalled: { addListener: function() {} },
+      onUpdateAvailable: { addListener: function() {} }
+    };
+  }
+
+  // chrome.app（已废弃但仍有检测）
+  if (!window.chrome.app) {
+    window.chrome.app = {
+      isInstalled: false,
+      getDetails: function() { return null; },
+      InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+      RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+    };
+  }
+
+  // chrome.csi（页面加载时间）
+  if (!window.chrome.csi) {
+    const now = Date.now();
+    window.chrome.csi = function() {
+      return {
+        onloadT: now,
+        startE: now - 100,
+        pageT: 100.0,
+        domContentLoadedT: now - 50
+      };
+    };
+  }
+
+  // chrome.loadTimes（页面加载时间）
+  if (!window.chrome.loadTimes) {
+    window.chrome.loadTimes = function() {
+      const now = Date.now() / 1000;
+      return {
+        requestTime: now - 0.050,
+        startLoadTime: now - 0.050,
+        commitLoadTime: now - 0.030,
+        finishDocumentLoadTime: now - 0.010,
+        finishLoadTime: now,
+        firstPaintTime: now - 0.020,
+        firstPaintAfterLoadTime: 0,
+        navigationType: 'Other',
+        wasFetchedViaSpdy: false,
+        wasNpnNegotiated: false,
+        wasAlternateProtocolAvailable: false,
+        connectionInfo: 'h2'
+      };
+    };
+  }
+
+  // ============ Phase 3.1 维度 3: navigator.plugins ============
+  // 真实 Chrome 有 3-5 个插件：PDF Viewer、Widevine、Native Client
+  if (!navigator.plugins || navigator.plugins.length === 0) {
+    const mockPlugins = [
+      {
+        name: 'Chrome PDF Viewer',
+        filename: 'internal-pdf-viewer',
+        description: 'Portable Document Format',
+        version: '',
+        length: 2,
+        item: function(i) { return this[i]; },
+        namedItem: function(name) { 
+          for (let i = 0; i < this.length; i++) {
+            if (this[i].name === name) return this[i];
+          }
+          return null;
+        }
+      },
+      {
+        name: 'Widevine Content Decryption Module',
+        filename: 'widevinecdmadapter.dll',
+        description: 'Widevine Content Decryption Module',
+        version: '4.10.2209.0',
+        length: 0,
+        item: function(i) { return this[i]; },
+        namedItem: function() { return null; }
+      },
+      {
+        name: 'Native Client',
+        filename: 'internal-nacl-plugin',
+        description: 'Native Client module',
+        version: '',
+        length: 2,
+        item: function(i) { return this[i]; },
+        namedItem: function(name) {
+          for (let i = 0; i < this.length; i++) {
+            if (this[i].name === name) return this[i];
+          }
+          return null;
+        }
+      }
+    ];
+
+    // 添加 PluginArray 原型方法
+    mockPlugins.refresh = function() {};
+    mockPlugins.item = function(index) { return this[index < 0 || index >= this.length ? undefined : this[index]]; };
+    mockPlugins.namedItem = function(name) {
+      for (let i = 0; i < this.length; i++) {
+        if (this[i].name === name) return this[i];
+      }
+      return null;
+    };
+    Object.defineProperty(mockPlugins, 'length', { value: 3, writable: false, configurable: true });
+
+    Object.defineProperty(navigator, 'plugins', {
+      get: function() { return mockPlugins; },
+      configurable: true,
+      enumerable: true
+    });
+
+    // ============ Phase 3.1 维度 4: navigator.mimeTypes ============
+    const mockMimeTypes = [
+      { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[0] },
+      { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[0] },
+      { type: 'application/x-nacl', suffixes: '', description: 'Native Client executable', enabledPlugin: mockPlugins[2] }
+    ];
+    mockMimeTypes.length = 3;
+    mockMimeTypes.item = function(index) { return this[index < 0 || index >= this.length ? undefined : this[index]]; };
+    mockMimeTypes.namedItem = function(name) {
+      for (let i = 0; i < this.length; i++) {
+        if (this[i].type === name) return this[i];
+      }
+      return null;
+    };
+
+    Object.defineProperty(navigator, 'mimeTypes', {
+      get: function() { return mockMimeTypes; },
+      configurable: true,
+      enumerable: true
+    });
+  }
+
+  // ============ Phase 3.1 维度 5: navigator.languages ============
+  // 真实浏览器有 2-4 个语言，空数组是 Bot 信号
+  const uiLang = config.ui_language || 'zh-CN';
+  const baseLang = uiLang.split('-')[0];
+  const languages = [uiLang, baseLang, 'en-US', 'en'];
+  if (!navigator.languages || navigator.languages.length <= 1) {
+    Object.defineProperty(navigator, 'languages', {
+      get: function() { return languages; },
+      configurable: true,
+      enumerable: true
+    });
+  }
+  // 同步更新 language
+  Object.defineProperty(navigator, 'language', {
+    get: function() { return uiLang; },
+    configurable: true,
+    enumerable: true
+  });
+
+  // ============ Phase 3.1 维度 6: navigator.hardwareConcurrency / deviceMemory ============
+  // 根据分辨率推断合理的核心数
+  const resolution = config.screen_resolution || '1920x1080';
+  let cores = 4;
+  if (resolution.includes('3840') || resolution.includes('2560')) cores = 8;
+  if (resolution.includes('1366') || resolution.includes('1280')) cores = 2;
+
+  if (!navigator.hardwareConcurrency || navigator.hardwareConcurrency < 2) {
+    Object.defineProperty(navigator, 'hardwareConcurrency', {
+      get: function() { return cores; },
+      configurable: true,
+      enumerable: true
+    });
+  }
+
+  if (!navigator.deviceMemory || navigator.deviceMemory < 1) {
+    Object.defineProperty(navigator, 'deviceMemory', {
+      get: function() { return 8; },
+      configurable: true,
+      enumerable: true
+    });
+  }
+
+  // ============ Phase 3.1 维度 7: navigator.vendor / maxTouchPoints ============
+  Object.defineProperty(navigator, 'vendor', {
+    get: function() { return 'Google Inc.'; },
+    configurable: true,
+    enumerable: true
+  });
+
+  if (!navigator.maxTouchPoints || navigator.maxTouchPoints < 0) {
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      get: function() { return 0; }, // 桌面端
+      configurable: true,
+      enumerable: true
+    });
+  }
+
+  // ============ Phase 3.1 维度 8: window.devicePixelRatio ============
+  if (typeof window.devicePixelRatio === 'undefined' || window.devicePixelRatio < 1) {
+    Object.defineProperty(window, 'devicePixelRatio', {
+      get: function() { return 1; }, // 普通屏
+      configurable: true
+    });
+  }
+
+  // ============ Phase 3.1 维度 9: window.outerWidth / outerHeight ============
+  const [screenW, screenH] = (config.screen_resolution || '1920x1080').split('x').map(Number);
+  if (!window.outerWidth || window.outerWidth < screenW) {
+    Object.defineProperty(window, 'outerWidth', {
+      get: function() { return screenW; },
+      configurable: true
+    });
+  }
+  if (!window.outerHeight || window.outerHeight < screenH) {
+    Object.defineProperty(window, 'outerHeight', {
+      get: function() { return screenH + 40; }, // 标题栏+工具栏约 40px
+      configurable: true
+    });
+  }
+  if (!window.innerWidth) {
+    Object.defineProperty(window, 'innerWidth', {
+      get: function() { return screenW; },
+      configurable: true
+    });
+  }
+  if (!window.innerHeight) {
+    Object.defineProperty(window, 'innerHeight', {
+      get: function() { return screenH; },
+      configurable: true
+    });
+  }
+
+  // ============ Phase 3.1 维度 10: navigator.connection ============
+  if (!navigator.connection) {
+    Object.defineProperty(navigator, 'connection', {
+      get: function() {
+        return {
+          effectiveType: '4g',
+          downlink: 10,
+          downlinkMax: Infinity,
+          rtt: 50,
+          type: 'wifi',
+          saveData: false,
+          onchange: null,
+          addEventListener: function() {},
+          removeEventListener: function() {}
+        };
+      },
+      configurable: true,
+      enumerable: true
+    });
+  }
+
+  // ============ Phase 3.1 维度 11: window.performance.memory ============
+  if (window.performance && !window.performance.memory) {
+    Object.defineProperty(window.performance, 'memory', {
+      get: function() {
+        return {
+          usedJSHeapSize: 12000000,
+          totalJSHeapSize: 22000000,
+          jsHeapSizeLimit: 2190000000
+        };
+      },
+      configurable: true
+    });
+  }
+
+  // ============ Phase 3.1 维度 12: screen.colorDepth / pixelDepth ============
+  if (window.screen && !window.screen.colorDepth) {
+    Object.defineProperty(window.screen, 'colorDepth', {
+      get: function() { return 24; },
+      configurable: true
+    });
+    Object.defineProperty(window.screen, 'pixelDepth', {
+      get: function() { return 24; },
+      configurable: true
+    });
+  }
+
+  // ============ Phase 3.1 维度 13: screen.availLeft / availTop ============
+  if (window.screen) {
+    if (!window.screen.availLeft) {
+      Object.defineProperty(window.screen, 'availLeft', {
+        get: function() { return 0; },
+        configurable: true
+      });
+    }
+    if (!window.screen.availTop) {
+      Object.defineProperty(window.screen, 'availTop', {
+        get: function() { return 0; },
+        configurable: true
+      });
+    }
+  }
+
+  // ============ Phase 3.1 维度 14: Intl.DateTimeFormat 时区增强 ============
+  // 确保格式化输出与配置时区一致
+  const timezone = config.timezone || 'Asia/Shanghai';
+  if (window.Intl && window.Intl.DateTimeFormat) {
+    const OrigDateTimeFormat = window.Intl.DateTimeFormat;
+    window.Intl.DateTimeFormat = function(locales, options) {
+      const opts = Object.assign({}, options);
+      if (opts.timeZone === undefined) {
+        opts.timeZone = timezone;
+      }
+      return new OrigDateTimeFormat(locales, opts);
+    };
+    window.Intl.DateTimeFormat.prototype = OrigDateTimeFormat.prototype;
+    window.Intl.DateTimeFormat.supportedLocalesOf = function(locales, options) {
+      return OrigDateTimeFormat.supportedLocalesOf(locales, options);
+    };
+  }
+
+  // ============ Phase 3.1 维度 15: CSS.supports 伪装 ============
+  if (typeof CSS !== 'undefined' && CSS.supports) {
+    const origSupports = CSS.supports.bind(CSS);
+    CSS.supports = function(property, value) {
+      // 常见检测项返回真实结果
+      if (property === '(--custom:property)') return true;
+      if (property === 'display' && value === 'grid') return true;
+      if (property === 'display' && value === 'flex') return true;
+      return origSupports(property, value);
+    };
+  }
+
+  // ============ Phase 3.1 维度 16: Notification.permission ============
+  if (window.Notification) {
+    Object.defineProperty(Notification, 'permission', {
+      get: function() { return 'default'; },
+      configurable: true
+    });
+  }
+
+  // ============ Phase 3.1 维度 17: Permissions.query 增强 ============
+  if (navigator.permissions && navigator.permissions.query) {
+    const origQuery = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = function(parameters) {
+      const name = parameters.name;
+      // 返回合理的默认权限状态
+      const defaults = {
+        'notifications': 'default',
+        'push': 'prompt',
+        'midi': 'prompt',
+        'clipboard-read': 'prompt',
+        'clipboard-write': 'granted',
+        'geolocation': 'prompt',
+        'camera': 'prompt',
+        'microphone': 'prompt'
+      };
+      if (defaults.hasOwnProperty(name)) {
+        return Promise.resolve({ state: defaults[name], onchange: null });
+      }
+      return origQuery(parameters);
+    };
+  }
+
+  // ============ Phase 3.1 维度 18: navigator.webdriver 最终确认 ============
+  // 确保即使之前被覆盖，这里也是 undefined
+  Object.defineProperty(navigator, 'webdriver', {
+    get: function() { return undefined; },
+    configurable: true,
+    enumerable: true
+  });
+
+  // 清理 __proto__ 上的 webdriver
+  try {
+    delete navigator.__proto__.webdriver;
+  } catch(e) {}
+
+  console.log('[GhostBrowse Phase 3.1] 核心反检测指纹补全完成');
+})();

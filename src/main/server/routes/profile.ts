@@ -76,6 +76,14 @@ interface ProfileDto {
   mediaDeviceMode?: string
   startupUrl?: string
   iconPath?: string
+  // Phase 3.0: 指纹参数
+  deviceName?: string
+  macAddress?: string
+  canvasNoiseSeed?: string
+  audioNoiseSeed?: string
+  rectsNoiseSeed?: string
+  webglVendor?: string
+  webglRenderer?: string
 }
 
 // ==================== API 路由 ====================
@@ -304,13 +312,17 @@ router.post('/', (req: AuthRequest, res: Response) => {
         webrtc_mode, timezone_mode, geolocation_mode,
         language_mode, ui_language, screen_resolution,
         font, canvas_mode, webgl_mode, media_device_mode,
-        startup_url, icon_path, user_id, created_at, updated_at
+        startup_url, icon_path, user_id, created_at, updated_at,
+        device_name, mac_address, canvas_noise_seed, audio_noise_seed,
+        rects_noise_seed, webgl_vendor, webgl_renderer
       ) VALUES (
         @title, @proxy_id, @chrome_version, @os,
         @webrtc_mode, @timezone_mode, @geolocation_mode,
         @language_mode, @ui_language, @screen_resolution,
         @font, @canvas_mode, @webgl_mode, @media_device_mode,
-        @startup_url, @icon_path, @user_id, @created_at, @updated_at
+        @startup_url, @icon_path, @user_id, @created_at, @updated_at,
+        @device_name, @mac_address, @canvas_noise_seed, @audio_noise_seed,
+        @rects_noise_seed, @webgl_vendor, @webgl_renderer
       )
     `).run({
       title: body.title.trim(),
@@ -331,7 +343,15 @@ router.post('/', (req: AuthRequest, res: Response) => {
       icon_path: body.iconPath || null,
       user_id: userId,
       created_at: now,
-      updated_at: now
+      updated_at: now,
+      // Phase 3.0: 指纹参数
+      device_name: body.deviceName || null,
+      mac_address: body.macAddress || null,
+      canvas_noise_seed: body.canvasNoiseSeed || null,
+      audio_noise_seed: body.audioNoiseSeed || null,
+      rects_noise_seed: body.rectsNoiseSeed || null,
+      webgl_vendor: body.webglVendor || null,
+      webgl_renderer: body.webglRenderer || null
     })
     
     res.json({
@@ -410,7 +430,14 @@ router.put('/:id', (req: Request, res: Response) => {
         media_device_mode = @media_device_mode,
         startup_url = @startup_url,
         icon_path = @icon_path,
-        updated_at = @updated_at
+        updated_at = @updated_at,
+        device_name = @device_name,
+        mac_address = @mac_address,
+        canvas_noise_seed = @canvas_noise_seed,
+        audio_noise_seed = @audio_noise_seed,
+        rects_noise_seed = @rects_noise_seed,
+        webgl_vendor = @webgl_vendor,
+        webgl_renderer = @webgl_renderer
       WHERE id = @id
     `).run({
       id: Number(id),
@@ -430,7 +457,15 @@ router.put('/:id', (req: Request, res: Response) => {
       media_device_mode: body.mediaDeviceMode || 'mock',
       startup_url: body.startupUrl || null,
       icon_path: body.iconPath || null,
-      updated_at: Date.now()
+      updated_at: Date.now(),
+      // Phase 3.0: 指纹参数
+      device_name: body.deviceName || null,
+      mac_address: body.macAddress || null,
+      canvas_noise_seed: body.canvasNoiseSeed || null,
+      audio_noise_seed: body.audioNoiseSeed || null,
+      rects_noise_seed: body.rectsNoiseSeed || null,
+      webgl_vendor: body.webglVendor || null,
+      webgl_renderer: body.webglRenderer || null
     })
     
     res.json({
@@ -783,6 +818,138 @@ router.get('/:id/isolation-check', (req: Request, res: Response) => {
 // ==================== Phase 2.2: 挂载 Cookie 管理子路由 ====================
 import cookieRouter from './cookie'
 router.use('/:id/cookies', cookieRouter)
+
+// ==================== Phase 3.0: 生成新指纹接口 ====================
+
+/**
+ * 生成 8 位十六进制随机字符串
+ */
+function generateHexSeed(length: number = 8): string {
+  let result = ''
+  for (let i = 0; i < length; i++) {
+    result += Math.floor(Math.random() * 16).toString(16).toUpperCase()
+  }
+  return result
+}
+
+/**
+ * 生成随机 MAC 地址
+ */
+function generateMacAddress(): string {
+  const hexDigits = '0123456789ABCDEF'
+  let mac = ''
+  for (let i = 0; i < 6; i++) {
+    if (i > 0) mac += '-'
+    mac += hexDigits[Math.floor(Math.random() * 16)]
+    mac += hexDigits[Math.floor(Math.random() * 16)]
+  }
+  return mac
+}
+
+/**
+ * 生成随机 Windows 计算机名
+ */
+function generateDeviceName(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  let name = 'USER-'
+  for (let i = 0; i < 8; i++) {
+    name += chars[Math.floor(Math.random() * chars.length)]
+  }
+  return name
+}
+
+/**
+ * 构建 User-Agent
+ */
+function buildUserAgent(chromeVersion: string): string {
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion}.0.0.0 Safari/537.36`
+}
+
+/**
+ * POST /api/v1/profiles/generate-fingerprint
+ * 生成随机指纹配置
+ */
+router.post('/generate-fingerprint', async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.userId
+    const { proxyId } = req.body as { proxyId?: number }
+    const db = getDatabase()
+
+    let geoConfig = resolveGeoConfig(null)
+    let proxyCountry: string | null = null
+
+    // 如果传了 proxyId，查询代理信息并检测国家
+    if (proxyId) {
+      const proxy = db.prepare('SELECT * FROM proxies WHERE id = ? AND user_id = ?').get(proxyId, userId) as any
+      if (proxy) {
+        proxyCountry = await detectProxyCountry({
+          type: proxy.type,
+          host: proxy.host,
+          port: proxy.port,
+          username: proxy.username,
+          password: proxy.password
+        })
+        geoConfig = resolveGeoConfig(proxyCountry)
+        console.log(`[GenerateFingerprint] 根据代理 ${proxyId} 检测到国家: ${proxyCountry || '未知'}`)
+      }
+    }
+
+    // 随机选择 Chrome 版本
+    const chromeVersions = ['124', '128', '130', '132', '134']
+    const chromeVersion = chromeVersions[Math.floor(Math.random() * chromeVersions.length)]
+
+    // WebGL 供应商和渲染器映射
+    const webglOptions = [
+      { vendor: 'Intel Inc.', renderer: 'Intel Iris Xe Graphics' },
+      { vendor: 'AMD', renderer: 'AMD Radeon RX 580 Series' },
+      { vendor: 'NVIDIA Corporation', renderer: 'NVIDIA GeForce GTX 1080' },
+      { vendor: 'Intel Inc.', renderer: 'Intel UHD Graphics 620' },
+      { vendor: 'AMD', renderer: 'AMD Radeon Vega 8' },
+    ]
+    const webglChoice = webglOptions[Math.floor(Math.random() * webglOptions.length)]
+
+    // 构建指纹配置
+    const fingerprint = {
+      chromeVersion,
+      userAgent: buildUserAgent(chromeVersion),
+      os: 'Windows',
+      webrtcMode: 'disable',
+      timezoneMode: 'ip',
+      geolocationMode: 'ip',
+      languageMode: 'ip',
+      uiLanguage: geoConfig.language,
+      screenResolution: geoConfig.resolution,
+      font: geoConfig.font,
+      canvasMode: 'noise',
+      canvasNoiseSeed: generateHexSeed(),
+      webglMode: 'mock',
+      webglVendor: webglChoice.vendor,
+      webglRenderer: webglChoice.renderer,
+      audioContextMode: 'noise',
+      audioContextNoiseSeed: generateHexSeed(),
+      clientRectsMode: 'noise',
+      clientRectsNoiseSeed: generateHexSeed(),
+      deviceName: generateDeviceName(),
+      macAddress: generateMacAddress(),
+      mediaDeviceMode: 'mock'
+    }
+
+    console.log(`[GenerateFingerprint] 生成新指纹: Chrome ${chromeVersion}, 语言=${geoConfig.language}, 国家=${proxyCountry || '默认'}`)
+
+    res.json({
+      code: 200,
+      data: fingerprint,
+      message: '指纹生成成功'
+    })
+  } catch (err: any) {
+    console.error('[Profile API] 生成指纹失败:', err)
+    res.status(500).json({
+      code: 500,
+      data: null,
+      message: err.message || '生成指纹失败'
+    })
+  }
+})
 
 // ==================== Phase 2.3: 智能配置接口 ====================
 

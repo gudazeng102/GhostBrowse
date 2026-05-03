@@ -533,7 +533,7 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
     `--user-agent=${userAgent}`,
     `--window-size=${windowWidth},${windowHeight}`,
     `--window-position=${positionX},${positionY}`,
-    `--test-type`,
+    // Phase 3.1: 已删除 --test-type（防止显示"自动化测试控制"提示条）
     `--disable-features=IsolateOrigins,site-per-process`,
     `--enable-features=ChromeExtensionsOnChromeURLs`,
     `--no-first-run`,
