@@ -84,11 +84,17 @@
           <a-col :span="8">
             <a-form-item label="Chrome 版本" name="chromeVersion">
               <a-select v-model:value="formState.chromeVersion">
+                <a-select-option value="121">Chrome 121</a-select-option>
+                <a-select-option value="122">Chrome 122</a-select-option>
+                <a-select-option value="123">Chrome 123</a-select-option>
                 <a-select-option value="124">Chrome 124</a-select-option>
-                <a-select-option value="128">Chrome 128</a-select-option>
-                <a-select-option value="130">Chrome 130</a-select-option>
-                <a-select-option value="132">Chrome 132</a-select-option>
-                <a-select-option value="134">Chrome 134</a-select-option>
+                <a-select-option value="140">Chrome 140</a-select-option>
+                <a-select-option value="141">Chrome 141</a-select-option>
+                <a-select-option value="142">Chrome 142</a-select-option>
+                <a-select-option value="143">Chrome 143</a-select-option>
+                <a-select-option value="144">Chrome 144</a-select-option>
+                <a-select-option value="145">Chrome 145</a-select-option>
+                <a-select-option value="147">Chrome 147</a-select-option>
               </a-select>
             </a-form-item>
           </a-col>
@@ -659,7 +665,7 @@ const proxyList = ref<ProxyRecord[]>([])
 const formState: any = reactive({
   title: '',
   proxyId: undefined,
-  chromeVersion: '128',
+  chromeVersion: '121',
   os: 'windows',
   webrtcMode: 'replace',
   timezoneMode: 'ip',
@@ -722,6 +728,14 @@ async function loadProfileDetail() {
     formState.mediaDeviceMode = data.mediaDeviceMode
     // Phase 2.1: 启动页面回显
     formState.startupUrl = data.startupUrl || ''
+    // Phase 3.0: 指纹参数回显
+    formState.canvasNoiseSeed = data.canvasNoiseSeed || ''
+    formState.webglVendor = data.webglVendor || ''
+    formState.webglRenderer = data.webglRenderer || ''
+    formState.audioNoiseSeed = data.audioNoiseSeed || ''
+    formState.rectsNoiseSeed = data.rectsNoiseSeed || ''
+    formState.deviceName = data.deviceName || ''
+    formState.macAddress = data.macAddress || ''
   } catch (error) {
     console.error('加载窗口详情失败:', error)
     message.error('加载窗口详情失败')
@@ -738,10 +752,31 @@ async function handleSubmit() {
 
   submitting.value = true
   try {
-    // 构建提交数据
+    // 构建提交数据（注意：后端使用 snake_case，前端使用 camelCase，需显式映射）
     const submitData: ProfileDto = {
-      ...formState,
-      font: Array.isArray(formState.font) ? formState.font.join(',') : formState.font
+      title: formState.title,
+      proxyId: formState.proxyId,
+      chromeVersion: formState.chromeVersion,
+      os: formState.os,
+      webrtcMode: formState.webrtcMode,
+      timezoneMode: formState.timezoneMode,
+      geolocationMode: formState.geolocationMode,
+      languageMode: formState.languageMode,
+      uiLanguage: formState.uiLanguage,
+      screenResolution: formState.screenResolution,
+      font: Array.isArray(formState.font) ? formState.font.join(',') : formState.font,
+      canvasMode: formState.canvasMode,
+      webglMode: formState.webglMode,
+      mediaDeviceMode: formState.mediaDeviceMode,
+      startupUrl: formState.startupUrl,
+      // Phase 3.0: 指纹参数（显式映射 camelCase → snake_case）
+      deviceName: formState.deviceName || undefined,
+      macAddress: formState.macAddress || undefined,
+      canvasNoiseSeed: formState.canvasNoiseSeed || undefined,
+      audioNoiseSeed: formState.audioNoiseSeed || undefined,
+      rectsNoiseSeed: formState.rectsNoiseSeed || undefined,
+      webglVendor: formState.webglVendor || undefined,
+      webglRenderer: formState.webglRenderer || undefined,
     }
 
     if (isEdit.value && editId.value) {

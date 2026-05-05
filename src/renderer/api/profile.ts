@@ -40,6 +40,14 @@ export interface ProfileRecord {
   updatedAt: number
   startupUrl?: string
   proxy: ProxyInfo | null
+  // Phase 3.0: 指纹参数
+  deviceName?: string
+  macAddress?: string
+  canvasNoiseSeed?: string
+  audioNoiseSeed?: string
+  rectsNoiseSeed?: string
+  webglVendor?: string
+  webglRenderer?: string
 }
 
 /** 创建/更新 Profile 请求体 */
@@ -59,6 +67,14 @@ export interface ProfileDto {
   webglMode?: string
   mediaDeviceMode?: string
   startupUrl?: string
+  // Phase 3.0: 指纹参数
+  deviceName?: string
+  macAddress?: string
+  canvasNoiseSeed?: string
+  audioNoiseSeed?: string
+  rectsNoiseSeed?: string
+  webglVendor?: string
+  webglRenderer?: string
 }
 
 /** Chrome 启动结果 */

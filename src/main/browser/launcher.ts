@@ -61,12 +61,20 @@ export interface LaunchResult {
 
 /** Chrome 版本对应的 User-Agent */
 const CHROME_USER_AGENTS: Record<string, string> = {
-  '124': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  '128': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-  '130': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-  '132': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-  '134': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36'
+  '121': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.86 Safari/537.36',
+  '122': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36',
+  '123': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6312.87 Safari/537.36',
+  '124': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.79 Safari/537.36',
+  '140': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.7339.81 Safari/537.36',
+  '141': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.7390.77 Safari/537.36',
+  '142': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.7444.60 Safari/537.36',
+  '143': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.7499.41 Safari/537.36',
+  '144': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.7559.97 Safari/537.36',
+  '145': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.7632.76 Safari/537.36',
+  '147': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.7727.56 Safari/537.36'
 }
+
+
 
 // ==================== Phase 2.6: 内嵌 Chromium 路径管理 ====================
 
@@ -120,8 +128,8 @@ function findAvailableChromePath(preferredVersion: string): string | null {
     return embeddedPath
   }
 
-  // 2. 尝试其他版本的内嵌 Chromium
-  for (const version of ['128', '134', '124', '130', '132']) {
+  // 2. 尝试其他版本的内嵌 Chromium（按版本号降序）
+  for (const version of ['147', '145', '144', '143', '142', '141', '140', '124', '123', '122', '121',]) {
     if (version === preferredVersion) continue
     const otherPath = getEmbeddedChromeExePath(version)
     if (fs.existsSync(otherPath)) {
@@ -362,6 +370,7 @@ function generateExtension(profile: Profile, proxy: Proxy | null): string {
   const contentScriptPath = path.join(getExtensionTemplateDir(), 'content-script.js')
   let contentScript = fs.readFileSync(contentScriptPath, 'utf-8')
   
+  // Phase 3.2: 追加指纹噪声种子字段到 config
   const config = {
     profile_id: profile.id,
     canvas_mode: profile.canvasMode || 'noise',
@@ -375,10 +384,17 @@ function generateExtension(profile: Profile, proxy: Proxy | null): string {
     timezone: 'Asia/Shanghai',
     latitude: 39.9042,
     longitude: 116.4074,
-    proxy_ip: proxy?.host || null
+    proxy_ip: proxy?.host || null,
+    // Phase 3.0: 噪声种子（用于深度指纹伪装）
+    canvas_noise_seed: (profile as any).canvasNoiseSeed || '19AC8B24',
+    audio_noise_seed: (profile as any).audioNoiseSeed || '8F3E2A1B',
+    rects_noise_seed: (profile as any).rectsNoiseSeed || '13104F15',
+    // Phase 3.2: WebGL 完整伪装参数
+    webgl_vendor: (profile as any).webglVendor || 'Intel Inc.',
+    webgl_renderer: (profile as any).webglRenderer || 'Intel Iris Xe Graphics'
   }
   
-  contentScript = contentScript.replace('{{CONFIG}}', JSON.stringify(config))
+  contentScript = contentScript.split('{{CONFIG}}').join(JSON.stringify(config))
   fs.writeFileSync(path.join(tempDir, 'content-script.js'), contentScript)
   
   console.log(`[BrowserLauncher] Extension 生成到: ${tempDir}`)
@@ -523,7 +539,7 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
     const homepagePath = app.isPackaged
       ? path.join(process.resourcesPath, 'browser', version, 'homepage.html')
       : path.join(process.cwd(), 'resources', 'browser', version, 'homepage.html')
-    return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://www.google.com'
+    return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : ' https://browserleaks.com/webgl'//'https://www.google.com'
   }
   const startupUrl = (profile as any).startupUrl || getDefaultHomepage()
   
@@ -541,6 +557,8 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
     `--disable-dev-shm-usage`,
     `--disable-extensions-except=${extensionPath}`,
     `--load-extension=${extensionPath}`,
+      `--use-angle=swiftshader`,        // 强制 CPU 渲染
+  `--disable-gpu-sandbox`,           // 配合 SwiftShader 必需
     startupUrl
   ]
   

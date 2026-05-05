@@ -1,0 +1,239 @@
+{
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+  "chromeVersion": "147",
+  "platform": "Win32",
+  "language": "de-DE",
+  "languages": [
+    "de-DE",
+    "de",
+    "en-US",
+    "en"
+  ],
+  "screen": {
+    "width": 1920,
+    "height": 1080,
+    "availWidth": 1920,
+    "availHeight": 1032,
+    "colorDepth": 32,
+    "pixelDepth": 32,
+    "availLeft": 0,
+    "availTop": 0
+  },
+  "navigator": {
+    "hardwareConcurrency": 10,
+    "deviceMemory": 8,
+    "maxTouchPoints": 0,
+    "vendor": "Google Inc.",
+    "pdfViewerEnabled": true,
+    "devicePixelRatio": 1,
+    "outerWidth": 929,
+    "outerHeight": 1004
+  },
+  "webgl": {
+    "vendor": "Google Inc. (NVIDIA)",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 SUPER (0x000021C4) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "version": "WebKit",
+    "shadingLanguageVersion": "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)",
+    "maxTextureSize": 16384,
+    "maxCubeMapSize": 16384,
+    "maxRenderbufferSize": 16384,
+    "maxViewportDims": [
+      {
+        "0": 32767,
+        "1": 32767
+      },
+      null
+    ],
+    "maxVertexAttribs": 16,
+    "maxVertexUniformVectors": 4096,
+    "maxFragmentUniformVectors": 1024,
+    "maxVaryingVectors": 30,
+    "maxTextureImageUnits": 16,
+    "maxVertexTextureImageUnits": 16,
+    "maxCombinedTextureImageUnits": 32
+  },
+  "webgl2": {
+    "version": "WebKit",
+    "shadingLanguageVersion": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)",
+    "vendor": "Google Inc. (NVIDIA)",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 SUPER (0x000021C4) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+  },
+  "plugins": {
+    "length": 5,
+    "items": [
+      {
+        "name": "PDF Viewer",
+        "filename": "internal-pdf-viewer",
+        "description": "Portable Document Format",
+        "length": 2,
+        "item": true,
+        "namedItem": true,
+        "mimeTypes": [
+          {
+            "type": "application/pdf",
+            "suffixes": "pdf",
+            "description": "Portable Document Format"
+          },
+          {
+            "type": "text/pdf",
+            "suffixes": "pdf",
+            "description": "Portable Document Format"
+          }
+        ]
+      },
+      {
+        "name": "Chrome PDF Viewer",
+        "filename": "internal-pdf-viewer",
+        "description": "Portable Document Format",
+        "length": 2,
+        "item": true,
+        "namedItem": true,
+        "mimeTypes": [
+          {
+            "type": "application/pdf",
+            "suffixes": "pdf",
+            "description": "Portable Document Format"
+          },
+          {
+            "type": "text/pdf",
+            "suffixes": "pdf",
+            "description": "Portable Document Format"
+          }
+        ]
+      },
+      {
+        "name": "Chromium PDF Viewer",
+        "filename": "internal-pdf-viewer",
+        "description": "Portable Document Format",
+        "length": 2,
+        "item": true,
+        "namedItem": true,
+        "mimeTypes": [
+          {
+            "type": "application/pdf",
+            "suffixes": "pdf",
+            "description": "Portable Document Format"
+          },
+          {
+            "type": "text/pdf",
+            "suffixes": "pdf",
+            "description": "Portable Document Format"
+          }
+        ]
+      },
+      {
+        "name": "Microsoft Edge PDF Viewer",
+        "filename": "internal-pdf-viewer",
+        "description": "Portable Document Format",
+        "length": 2,
+        "item": true,
+        "namedItem": true,
+        "mimeTypes": [
+          {
+            "type": "application/pdf",
+            "suffixes": "pdf",
+            "description": "Portable Document Format"
+          },
+          {
+            "type": "text/pdf",
+            "suffixes": "pdf",
+            "description": "Portable Document Format"
+          }
+        ]
+      },
+      {
+        "name": "WebKit built-in PDF",
+        "filename": "internal-pdf-viewer",
+        "description": "Portable Document Format",
+        "length": 2,
+        "item": true,
+        "namedItem": true,
+        "mimeTypes": [
+          {
+            "type": "application/pdf",
+            "suffixes": "pdf",
+            "description": "Portable Document Format"
+          },
+          {
+            "type": "text/pdf",
+            "suffixes": "pdf",
+            "description": "Portable Document Format"
+          }
+        ]
+      }
+    ],
+    "refresh": true
+  },
+  "mimeTypes": [
+    {
+      "type": "application/pdf",
+      "suffixes": "pdf",
+      "description": "Portable Document Format",
+      "enabledPlugin": "PDF Viewer"
+    },
+    {
+      "type": "text/pdf",
+      "suffixes": "pdf",
+      "description": "Portable Document Format",
+      "enabledPlugin": "PDF Viewer"
+    }
+  ],
+  "cssFeatures": {
+    "grid": true,
+    "flexbox": true,
+    "customProperties": true,
+    "transforms": true,
+    "transitions": true,
+    "animations": true,
+    "filters": true,
+    "clipPath": true,
+    "mask": true,
+    "blendModes": true,
+    "shapes": true,
+    "columns": true,
+    "writingMode": true,
+    "objectFit": true,
+    "objectPosition": true,
+    "sticky": true,
+    "calc": true,
+    "minMaxClamp": true,
+    "aspectRatio": true,
+    "accentColor": true,
+    "colorMix": false,
+    "labColors": true,
+    "oklabColors": true,
+    "colorContrast": false,
+    "fontPalette": true,
+    "math": true,
+    "viewTransition": true,
+    "anchorPositioning": true,
+    "nesting": true,
+    "scope": false,
+    "startingStyle": false,
+    "containerQueries": true,
+    "hasSelector": true,
+    "transitionBehavior": true
+  },
+  "chrome": {
+    "exists": true,
+    "runtimeExists": false,
+    "appExists": true,
+    "csiExists": true,
+    "loadTimesExists": true,
+    "runtimeOnConnect": false,
+    "runtimeOnMessage": false,
+    "runtimeConnect": false,
+    "runtimeSendMessage": false
+  },
+  "brokenImage": {
+    "width": 0,
+    "height": 0,
+    "naturalWidth": 0,
+    "naturalHeight": 0,
+    "complete": false,
+    "note": "请在图片加载完成后（约1秒）再次运行此脚本获取准确值"
+  },
+  "timezone": "Europe/Berlin",
+  "timezoneOffset": -120,
+  "collectedAt": "2026-05-04T16:05:23.381Z"
+}

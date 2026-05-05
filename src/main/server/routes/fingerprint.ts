@@ -144,7 +144,17 @@ function calculatePurity(profile: ProfileRecord): PurityResult {
   const warnings: string[] = []
 
   // 1. User-Agent 模拟（+15）
-  const uaVersions = ['124', '128', '130', '132', '134']
+  const uaVersions = ['121',
+'122',
+'123',
+'124',
+'140',
+'141',
+'142',
+'143',
+'144',
+'145',
+'147']
   if (uaVersions.includes(profile.chrome_version)) {
     score += 15
   } else {

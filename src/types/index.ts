@@ -40,6 +40,14 @@ export interface Profile {
   createdAt?: number
   updatedAt?: number
   proxy?: Proxy | null
+  // Phase 3.0: 指纹参数
+  deviceName?: string
+  macAddress?: string
+  canvasNoiseSeed?: string
+  audioNoiseSeed?: string
+  rectsNoiseSeed?: string
+  webglVendor?: string
+  webglRenderer?: string
 }
 
 // ==================== Phase 1.8: 认证相关类型 ====================
@@ -255,4 +263,32 @@ export interface BrowserSettingsCard {
   clientRects: string
   deviceName: string
   macAddress: string
+}
+
+// ==================== Phase 3.3: 一致性校验类型 ====================
+
+/** 一致性校验单项结果 */
+export interface ConsistencyCheckItem {
+  category: string
+  status: 'pass' | 'warning' | 'fail'
+  message: string
+  suggestion: string | null
+}
+
+/** 一致性校验总结果 */
+export interface ConsistencyCheckResult {
+  profileId: number
+  overallScore: number
+  level: 'excellent' | 'good' | 'fair' | 'poor'
+  checks: ConsistencyCheckItem[]
+  summary: {
+    pass: number
+    warning: number
+    fail: number
+  }
+}
+
+/** 带一致性校验的指纹生成结果 */
+export interface GeneratedFingerprintWithConsistency extends GeneratedFingerprint {
+  consistency: ConsistencyCheckResult
 }

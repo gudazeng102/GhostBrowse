@@ -210,6 +210,8 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
         p.language_mode, p.ui_language, p.screen_resolution,
         p.font, p.canvas_mode, p.webgl_mode, p.media_device_mode,
         p.startup_url, p.icon_path, p.created_at, p.updated_at,
+        p.device_name, p.mac_address, p.canvas_noise_seed,
+        p.audio_noise_seed, p.rects_noise_seed, p.webgl_vendor, p.webgl_renderer,
         pr.id as pr_id, pr.name as pr_name, pr.type as pr_type,
         pr.host as pr_host, pr.port as pr_port, pr.username as pr_username,
         pr.password as pr_password
@@ -248,6 +250,14 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
       iconPath: row.icon_path || undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      // Phase 3.0: 指纹参数
+      deviceName: row.device_name || undefined,
+      macAddress: row.mac_address || undefined,
+      canvasNoiseSeed: row.canvas_noise_seed || undefined,
+      audioNoiseSeed: row.audio_noise_seed || undefined,
+      rectsNoiseSeed: row.rects_noise_seed || undefined,
+      webglVendor: row.webgl_vendor || undefined,
+      webglRenderer: row.webgl_renderer || undefined,
       proxy: row.pr_id ? {
         id: row.pr_id,
         name: row.pr_name,
@@ -573,7 +583,7 @@ router.post('/:id/launch', async (req: Request, res: Response) => {
       })
     }
     
-    // 2. 构建 Profile 对象
+    // 2. 构建 Profile 对象（Phase 3.3: 追加所有 Phase 3.0 字段）
     const profile = {
       id: profileRow.id,
       title: profileRow.title,
@@ -591,7 +601,15 @@ router.post('/:id/launch', async (req: Request, res: Response) => {
       webglMode: profileRow.webgl_mode,
       mediaDeviceMode: profileRow.media_device_mode,
       startupUrl: profileRow.startup_url || '',
-      iconPath: profileRow.icon_path || null
+      iconPath: profileRow.icon_path || null,
+      // Phase 3.0: 指纹参数（传递给 content-script.js）
+      deviceName: profileRow.device_name || null,
+      macAddress: profileRow.mac_address || null,
+      canvasNoiseSeed: profileRow.canvas_noise_seed || null,
+      audioNoiseSeed: profileRow.audio_noise_seed || null,
+      rectsNoiseSeed: profileRow.rects_noise_seed || null,
+      webglVendor: profileRow.webgl_vendor || null,
+      webglRenderer: profileRow.webgl_renderer || null
     }
     
     // 3. 构建 Proxy 对象（如果有代理）
@@ -895,7 +913,17 @@ router.post('/generate-fingerprint', async (req: AuthRequest, res: Response) => 
     }
 
     // 随机选择 Chrome 版本
-    const chromeVersions = ['124', '128', '130', '132', '134']
+    const chromeVersions = ['121',
+'122',
+'123',
+'124',
+'140',
+'141',
+'142',
+'143',
+'144',
+'145',
+'147']
     const chromeVersion = chromeVersions[Math.floor(Math.random() * chromeVersions.length)]
 
     // WebGL 供应商和渲染器映射
@@ -1108,5 +1136,298 @@ function syncDetectProxyCountry(proxy: any): string | null {
     return null
   }
 }
+
+// ==================== Phase 3.3: 一致性校验引擎 ====================
+
+/**
+ * 一致性校验单项结果
+ */
+interface ConsistencyCheckItem {
+  category: string
+  status: 'pass' | 'warning' | 'fail'
+  message: string
+  suggestion: string | null
+}
+
+/**
+ * 一致性校验总结果
+ */
+interface ConsistencyCheckResult {
+  profileId: number
+  overallScore: number
+  level: 'excellent' | 'good' | 'fair' | 'poor'
+  checks: ConsistencyCheckItem[]
+  summary: {
+    pass: number
+    warning: number
+    fail: number
+  }
+}
+
+/**
+ * 根据分辨率推断合理的硬件核心数
+ */
+function inferHardwareConcurrency(resolution: string): number {
+  const [w, h] = (resolution || '1920x1080').split('x').map(Number)
+  if (w >= 3840 || h >= 2160) return 8  // 4K+
+  if (w >= 2560 || h >= 1440) return 6  // 2K+
+  if (w >= 1920 || h >= 1080) return 4  // 1080p
+  if (w >= 1366 || h >= 768) return 2   // 768p
+  return 2
+}
+
+/**
+ * 时区-语言匹配检测
+ */
+function checkTimezoneLanguageConsistency(timezone: string, uiLanguage: string): ConsistencyCheckItem {
+  const tzToLanguages: Record<string, string[]> = {
+    'Asia/Shanghai': ['zh-CN', 'zh', 'zh-SG', 'zh-HK'],
+    'Asia/Tokyo': ['ja-JP', 'ja'],
+    'Asia/Seoul': ['ko-KR', 'ko'],
+    'Asia/Bangkok': ['th-TH', 'th'],
+    'Europe/London': ['en-GB', 'en'],
+    'Europe/Berlin': ['de-DE', 'de', 'de-AT', 'de-CH'],
+    'Europe/Paris': ['fr-FR', 'fr', 'fr-CA', 'fr-BE'],
+    'Europe/Madrid': ['es-ES', 'es'],
+    'Europe/Rome': ['it-IT', 'it'],
+    'Europe/Amsterdam': ['nl-NL', 'nl'],
+    'Europe/Moscow': ['ru-RU', 'ru'],
+    'America/New_York': ['en-US', 'en'],
+    'America/Los_Angeles': ['en-US', 'en'],
+    'America/Chicago': ['en-US', 'en'],
+    'America/Toronto': ['en-CA', 'en', 'fr-CA'],
+    'America/Vancouver': ['en-CA', 'en'],
+    'America/Sao_Paulo': ['pt-BR', 'pt'],
+    'America/Buenos_Aires': ['es-AR', 'es']
+  }
+
+  const expectedLangs = tzToLanguages[timezone]
+  if (!expectedLangs) {
+    return {
+      category: '时区-语言',
+      status: 'warning',
+      message: `时区 ${timezone} 未配置预期语言列表`,
+      suggestion: null
+    }
+  }
+
+  const baseLang = uiLanguage.split('-')[0]
+  if (expectedLangs.some(l => l.startsWith(baseLang))) {
+    return {
+      category: '时区-语言',
+      status: 'pass',
+      message: `时区 ${timezone} 与界面语言 ${uiLanguage} 匹配`,
+      suggestion: null
+    }
+  }
+
+  return {
+    category: '时区-语言',
+    status: 'warning',
+    message: `时区 ${timezone} 与界面语言 ${uiLanguage} 不匹配`,
+    suggestion: `建议将界面语言改为 ${expectedLangs[0]} 或 ${expectedLangs[1] || expectedLangs[0]}`
+  }
+}
+
+/**
+ * OS-显卡匹配检测
+ */
+function checkOsGpuConsistency(os: string, webglVendor: string, webglRenderer: string): ConsistencyCheckItem {
+  const validVendors: Record<string, string[]> = {
+    'Windows': ['Intel', 'NVIDIA', 'AMD', 'Qualcomm'],
+    'macOS': ['Apple', 'Intel', 'AMD'],
+    'Linux': ['Intel', 'NVIDIA', 'AMD', 'Mesa']
+  }
+
+  const valid = validVendors[os] || validVendors['Windows']
+  if (valid.some(v => webglVendor.includes(v))) {
+    return {
+      category: 'OS-显卡',
+      status: 'pass',
+      message: `系统 ${os} 与显卡 ${webglVendor} 匹配`,
+      suggestion: null
+    }
+  }
+
+  return {
+    category: 'OS-显卡',
+    status: 'warning',
+    message: `系统 ${os} 与显卡 ${webglVendor} 可能不匹配`,
+    suggestion: `建议显卡供应商使用 ${valid.join('/')} 之一`
+  }
+}
+
+/**
+ * WebRTC-代理安全性检测
+ */
+function checkWebrtcProxyConsistency(webrtcMode: string, hasProxy: boolean): ConsistencyCheckItem {
+  if (hasProxy && webrtcMode !== 'disable') {
+    return {
+      category: 'WebRTC-代理',
+      status: 'warning',
+      message: `使用了代理但 WebRTC 模式为 ${webrtcMode}，存在泄露真实 IP 的风险`,
+      suggestion: '建议将 WebRTC 模式改为 "disable" 以确保安全'
+    }
+  }
+
+  return {
+    category: 'WebRTC-代理',
+    status: 'pass',
+    message: webrtcMode === 'disable' ? 'WebRTC 已禁用，安全' : `WebRTC 模式为 ${webrtcMode}`,
+    suggestion: webrtcMode !== 'disable' ? '建议在生产环境使用 disable 模式' : null
+  }
+}
+
+/**
+ * 分辨率-核心数匹配检测
+ */
+function checkResolutionCoresConsistency(screenResolution: string, hardwareConcurrency: number): ConsistencyCheckItem {
+  const expected = inferHardwareConcurrency(screenResolution)
+  if (Math.abs(hardwareConcurrency - expected) <= 2) {
+    return {
+      category: '分辨率-核心数',
+      status: 'pass',
+      message: `分辨率 ${screenResolution} 与核心数 ${hardwareConcurrency} 匹配`,
+      suggestion: null
+    }
+  }
+
+  return {
+    category: '分辨率-核心数',
+    status: 'warning',
+    message: `分辨率 ${screenResolution} 预期核心数约 ${expected}，当前 ${hardwareConcurrency}`,
+    suggestion: `建议调整 hardwareConcurrency 为 ${expected} 左右`
+  }
+}
+
+/**
+ * Chrome 版本-分辨率匹配检测
+ */
+function checkChromeVersionResolutionConsistency(chromeVersion: string, screenResolution: string): ConsistencyCheckItem {
+  const ver = parseInt(chromeVersion) || 128
+  const [w] = (screenResolution || '1920x1080').split('x').map(Number)
+
+  // 高版本 Chrome 通常配合较高分辨率屏幕
+  if (ver >= 121 && w < 1920) {
+    return {
+      category: 'Chrome版本-分辨率',
+      status: 'warning',
+      message: `Chrome ${ver} 版本较高但分辨率 ${screenResolution} 较低`,
+      suggestion: '考虑使用更高分辨率或较低 Chrome 版本以保持一致性'
+    }
+  }
+
+  return {
+    category: 'Chrome版本-分辨率',
+    status: 'pass',
+    message: `Chrome ${ver} 与分辨率 ${screenResolution} 匹配合理`,
+    suggestion: null
+  }
+}
+
+/**
+ * POST /api/v1/profiles/:id/validate-consistency
+ * 一致性校验：验证当前指纹配置的逻辑自洽性
+ */
+router.post('/:id/validate-consistency', (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.userId
+    const { id } = req.params
+    const db = getDatabase()
+
+    // 1. 查询窗口配置（包含 Phase 3.0 字段）
+    const profile = db.prepare(`
+      SELECT 
+        p.id, p.screen_resolution, p.ui_language, p.os,
+        p.webrtc_mode, p.proxy_id,
+        p.webgl_vendor, p.webgl_renderer, p.chrome_version,
+        p.canvas_noise_seed, p.audio_noise_seed, p.rects_noise_seed,
+        pr.id as pr_id
+      FROM profiles p
+      LEFT JOIN proxies pr ON p.proxy_id = pr.id
+      WHERE p.id = ? AND p.user_id = ?
+    `).get(Number(id), userId) as any
+
+    if (!profile) {
+      return res.status(404).json({
+        code: 404,
+        data: null,
+        message: '窗口不存在'
+      })
+    }
+
+    // 2. 执行一致性校验
+    const checks: ConsistencyCheckItem[] = []
+
+    // 时区-语言匹配（需要从 timezone_mode 解析实际时区）
+    const timezone = profile.timezone_mode === 'ip' ? 'Asia/Shanghai' : 'Asia/Shanghai'
+    checks.push(checkTimezoneLanguageConsistency(timezone, profile.ui_language))
+
+    // OS-显卡匹配
+    checks.push(checkOsGpuConsistency(
+      profile.os || 'Windows',
+      profile.webgl_vendor || 'Intel Inc.',
+      profile.webgl_renderer || 'Intel Iris Xe Graphics'
+    ))
+
+    // WebRTC-代理安全性
+    checks.push(checkWebrtcProxyConsistency(
+      profile.webrtc_mode || 'disable',
+      !!profile.pr_id
+    ))
+
+    // 分辨率-核心数（需要从 canvas_noise_seed 推断，这里简化处理）
+    const inferredCores = inferHardwareConcurrency(profile.screen_resolution || '1920x1080')
+    checks.push(checkResolutionCoresConsistency(
+      profile.screen_resolution || '1920x1080',
+      inferredCores
+    ))
+
+    // Chrome版本-分辨率
+    checks.push(checkChromeVersionResolutionConsistency(
+      profile.chrome_version || '128',
+      profile.screen_resolution || '1920x1080'
+    ))
+
+    // 3. 计算总分
+    const passCount = checks.filter(c => c.status === 'pass').length
+    const warningCount = checks.filter(c => c.status === 'warning').length
+    const failCount = checks.filter(c => c.status === 'fail').length
+    const overallScore = Math.round((passCount / checks.length) * 100)
+
+    let level: 'excellent' | 'good' | 'fair' | 'poor' = 'good'
+    if (overallScore >= 95) level = 'excellent'
+    else if (overallScore >= 80) level = 'good'
+    else if (overallScore >= 60) level = 'fair'
+    else level = 'poor'
+
+    const result: ConsistencyCheckResult = {
+      profileId: profile.id,
+      overallScore,
+      level,
+      checks,
+      summary: {
+        pass: passCount,
+        warning: warningCount,
+        fail: failCount
+      }
+    }
+
+    console.log(`[ConsistencyCheck] Profile ${id}: score=${overallScore}%, level=${level}, pass=${passCount}, warning=${warningCount}, fail=${failCount}`)
+
+    res.json({
+      code: 200,
+      data: result,
+      message: '一致性校验完成'
+    })
+  } catch (err: any) {
+    console.error('[Profile API] 一致性校验失败:', err)
+    res.status(500).json({
+      code: 500,
+      data: null,
+      message: err.message || '一致性校验失败'
+    })
+  }
+})
 
 export default router

@@ -89,33 +89,6 @@
     };
   }
   
-  // ==================== 2. WebGL 指纹 - 固定伪装值 ====================
-  if (config.webgl_mode === 'mock') {
-    const vendorKey = 37445;  // UNMASKED_VENDOR_WEBGL
-    const rendererKey = 37446; // UNMASKED_RENDERER_WEBGL
-    
-    const mockVendor = 'Intel Inc.';
-    const mockRenderer = 'Intel Iris Xe Graphics';
-    
-    // Hook getParameter
-    const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function(parameter) {
-      if (parameter === vendorKey) return mockVendor;
-      if (parameter === rendererKey) return mockRenderer;
-      return originalGetParameter.call(this, parameter);
-    };
-    
-    // 也 hook WebGL2
-    if (typeof WebGL2RenderingContext !== 'undefined') {
-      const originalGetParameter2 = WebGL2RenderingContext.prototype.getParameter;
-      WebGL2RenderingContext.prototype.getParameter = function(parameter) {
-        if (parameter === vendorKey) return mockVendor;
-        if (parameter === rendererKey) return mockRenderer;
-        return originalGetParameter2.call(this, parameter);
-      };
-    }
-  }
-  
   // ==================== 3. WebRTC - 四种模式（与 AdsPower 保持一致） ====================
   // 
   // WebRTC 模式说明：
@@ -533,16 +506,21 @@
 
   // chrome.runtime（扩展程序 API）
   if (!window.chrome.runtime) {
-    window.chrome.runtime = {
-      id: '',
-      manifest: { name: 'GhostBrowse', version: '1.0', manifest_version: 3 },
-      getManifest: function() { return this.manifest; },
-      getURL: function(path) { return 'chrome-extension://fake-id/' + path; },
-      connect: function() { return { onMessage: { addListener: function() {} }, postMessage: function() {} }; },
-      sendMessage: function(msg, cb) { if (cb) setTimeout(cb, 0); },
-      onInstalled: { addListener: function() {} },
-      onUpdateAvailable: { addListener: function() {} }
-    };
+    Object.defineProperty(window.chrome, 'runtime', {
+      get: function() {
+        return {
+          id: '',
+          manifest: { name: 'GhostBrowse', version: '1.0', manifest_version: 3 },
+          getManifest: function() { return this.manifest; },
+          getURL: function(path) { return 'chrome-extension://fake-id/' + path; },
+          connect: function() { return { onMessage: { addListener: function() {} }, postMessage: function() {} }; },
+          sendMessage: function(msg, cb) { if (cb) setTimeout(cb, 0); },
+          onInstalled: { addListener: function() {} },
+          onUpdateAvailable: { addListener: function() {} }
+        };
+      },
+      configurable: true
+    });
   }
 
   // chrome.app（已废弃但仍有检测）
@@ -901,4 +879,1565 @@
   } catch(e) {}
 
   console.log('[GhostBrowse Phase 3.1] 核心反检测指纹补全完成');
+})();
+
+// ==================== Phase 3.2: Canvas/WebGL/Audio/ClientRects 深度伪装（追加在文件末尾） ====================
+
+(function() {
+  'use strict';
+
+  // 获取配置（从外层 IIFE 传递的 config）
+  const CONFIG = typeof window.__GB_CONFIG__ !== 'undefined' 
+    ? window.__GB_CONFIG__ 
+    : {{CONFIG}};
+
+  // ============ Phase 3.2 辅助函数：确定性伪随机数生成器 ============
+  // 使用种子生成确定性的伪随机数，同一窗口相同，不同窗口不同
+
+  function createSeededRandom(seedHex) {
+    let seed = parseInt(seedHex, 16) || 0x19AC8B24;
+    return function() {
+      seed = (seed * 16807 + 0) % 2147483647;
+      return (seed - 1) / 2147483646;
+    };
+  }
+
+  // ============ Phase 3.2 维度 1: Canvas 2D 深度噪声 ============
+  // 覆盖所有 Canvas 2D 指纹采集点：fillText/strokeText/measureText/isPointInPath/getImageData/toDataURL
+
+  const canvasSeed = CONFIG.canvas_noise_seed || '19AC8B24';
+  const canvasRandom = createSeededRandom(canvasSeed);
+
+  // 噪声函数：给数值添加微小偏移
+  function canvasNoise(value, magnitude) {
+    return value + (canvasRandom() - 0.5) * magnitude;
+  }
+
+  // 劫持 fillText
+  const originalFillText = CanvasRenderingContext2D.prototype.fillText;
+  CanvasRenderingContext2D.prototype.fillText = function(text, x, y, maxWidth) {
+    return originalFillText.call(this, text, canvasNoise(x, 0.1), canvasNoise(y, 0.1), maxWidth);
+  };
+
+  // 劫持 strokeText
+  const originalStrokeText = CanvasRenderingContext2D.prototype.strokeText;
+  CanvasRenderingContext2D.prototype.strokeText = function(text, x, y, maxWidth) {
+    return originalStrokeText.call(this, text, canvasNoise(x, 0.1), canvasNoise(y, 0.1), maxWidth);
+  };
+
+  // 劫持 measureText（字体测量指纹）
+  const originalMeasureText = CanvasRenderingContext2D.prototype.measureText;
+  CanvasRenderingContext2D.prototype.measureText = function(text) {
+    const metrics = originalMeasureText.call(this, text);
+    Object.defineProperty(metrics, 'width', {
+      get: () => metrics.width + (canvasRandom() - 0.5) * 0.02,
+      configurable: true
+    });
+    return metrics;
+  };
+
+  // 劫持 isPointInPath
+  const originalIsPointInPath = CanvasRenderingContext2D.prototype.isPointInPath;
+  CanvasRenderingContext2D.prototype.isPointInPath = function(path, x, y, fillRule) {
+    const nx = canvasNoise(x, 0.5);
+    const ny = canvasNoise(y, 0.5);
+    if (arguments.length === 4) {
+      return originalIsPointInPath.call(this, path, nx, ny, fillRule);
+    }
+    return originalIsPointInPath.call(this, path, nx, ny);
+  };
+
+  // 劫持 getImageData（关键：阻止像素级分析）
+  const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+  CanvasRenderingContext2D.prototype.getImageData = function(sx, sy, sw, sh) {
+    const imageData = originalGetImageData.call(this, sx, sy, sw, sh);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const noise = Math.floor((canvasRandom() - 0.5) * 4);
+      data[i] = Math.max(0, Math.min(255, data[i] + noise));
+      data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise));
+      data[i+2] = Math.max(0, Math.min(255, data[i+2] + noise));
+    }
+    return imageData;
+  };
+
+  // 劫持 toDataURL（关键：阻止导出图片分析）
+  const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+  HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
+    const ctx = this.getContext('2d');
+    if (ctx) {
+      const w = this.width, h = this.height;
+      const imageData = ctx.getImageData(0, 0, w, h);
+      const data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const noise = Math.floor((canvasRandom() - 0.5) * 4);
+        data[i] = Math.max(0, Math.min(255, data[i] + noise));
+        data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise));
+        data[i+2] = Math.max(0, Math.min(255, data[i+2] + noise));
+      }
+      ctx.putImageData(imageData, 0, 0);
+    }
+    return originalToDataURL.call(this, type, quality);
+  };
+
+  // ============ Phase 3.2 维度 2: WebGL 元数据完整伪装 ============
+  // 策略：以 getContext 实例劫持为主（100% 安全，无 Illegal invocation）
+  //      以原型劫持为辅（防止网站提前缓存原型引用）
+
+  const webglVendor = CONFIG.webgl_vendor || 'Intel Inc.';
+  const webglRenderer = CONFIG.webgl_renderer || 'Intel Iris Xe Graphics';
+  const resolution = CONFIG.screen_resolution || '1920x1080';
+  const [screenW, screenH] = resolution.split('x').map(Number);
+
+  // 常量
+  const VENDOR = 0x1F00;
+  const RENDERER = 0x1F01;
+  const VERSION = 0x1F02;
+  const SHADING_LANGUAGE_VERSION = 0x8B8C;
+  const UNMASKED_VENDOR_WEBGL = 0x9245;
+  const UNMASKED_RENDERER_WEBGL = 0x9246;
+
+  // 根据显卡类型确定参数集
+  const isNvidia = webglVendor.includes('NVIDIA');
+  const isAMD = webglVendor.includes('AMD');
+  const isIntel = webglVendor.includes('Intel');
+
+  // 基础参数映射（WebGL 1.0）
+  const paramMap = {
+    [VENDOR]: 'WebKit',
+    [RENDERER]: 'WebKit WebGL',
+    [VERSION]: 'WebGL 1.0 (OpenGL ES 2.0 Chromium)',
+    [SHADING_LANGUAGE_VERSION]: 'WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)',
+    [UNMASKED_VENDOR_WEBGL]: webglVendor,
+    [UNMASKED_RENDERER_WEBGL]: webglRenderer,
+    0x0D33: isNvidia ? 32768 : (isAMD ? 16384 : 8192),           // MAX_TEXTURE_SIZE
+    0x851C: isNvidia ? 32768 : (isAMD ? 16384 : 8192),           // MAX_CUBE_MAP_TEXTURE_SIZE
+    0x84E8: isNvidia ? 32768 : (isAMD ? 16384 : 8192),           // MAX_RENDERBUFFER_SIZE
+    0x0D3A: isNvidia ? [32768, 32768] : [8192, 8192],            // MAX_VIEWPORT_DIMS
+    0x8869: 16,                                                   // MAX_VERTEX_ATTRIBS
+    0x8DFB: isNvidia ? 4096 : 1024,                               // MAX_VERTEX_UNIFORM_VECTORS
+    0x8DFD: isNvidia ? 4096 : 1024,                               // MAX_FRAGMENT_UNIFORM_VECTORS
+    0x8DFC: isNvidia ? 32 : 16,                                   // MAX_VARYING_VECTORS
+    0x8872: isNvidia ? 32 : 16,                                   // MAX_TEXTURE_IMAGE_UNITS
+    0x8B4C: isNvidia ? 32 : 16,                                   // MAX_VERTEX_TEXTURE_IMAGE_UNITS
+    0x8B4D: isNvidia ? 48 : 32,                                   // MAX_COMBINED_TEXTURE_IMAGE_UNITS
+    0x8829: isNvidia ? 8 : 4,                                     // MAX_DRAW_BUFFERS_WEBGL
+    0x8CDF: isNvidia ? 8 : 4,                                     // MAX_COLOR_ATTACHMENTS_WEBGL
+    0x80E9: 4294967295,                                           // MAX_ELEMENTS_INDICES
+    0x80E8: 4294967295,                                           // MAX_ELEMENTS_VERTICES
+    0x846D: [1, isNvidia ? 2047 : 255],                          // ALIASED_POINT_SIZE_RANGE
+    0x846E: [1, isNvidia ? 2047 : 1],                            // ALIASED_LINE_WIDTH_RANGE
+    0x0D52: 8, 0x0D53: 8, 0x0D54: 8, 0x0D55: 8,                 // RGBA_BITS
+    0x0D56: 24, 0x0D57: 8, 0x0D50: 4,                            // DEPTH/STENCIL/SUBPIXEL_BITS
+    0x80A8: 1, 0x80A9: 4,                                         // SAMPLE_BUFFERS / SAMPLES
+  };
+
+  const supportedExtensions = [
+    'WEBGL_debug_renderer_info', 'WEBGL_lose_context', 'EXT_texture_filter_anisotropic',
+    'EXT_disjoint_timer_query', 'OES_texture_float_linear', 'OES_element_index_uint',
+    'OES_standard_derivatives', 'OES_texture_half_float', 'OES_texture_half_float_linear',
+    'OES_vertex_array_object', 'WEBGL_color_buffer_float', 'WEBGL_compressed_texture_s3tc',
+    'WEBGL_depth_texture', 'ANGLE_instanced_arrays', 'KHR_parallel_shader_compile'
+  ];
+
+  // ---------- 核心：实例级劫持（getContext 返回的每个 ctx 上覆盖方法） ----------
+  const originalGetContext = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function(type, attrs) {
+    const ctx = originalGetContext.call(this, type, attrs);
+    if (!ctx) return ctx;
+
+    const isWebGL2 = type === 'webgl2';
+    if (type === 'webgl' || type === 'experimental-webgl' || isWebGL2) {
+      // bind 固定 this，避免任何 Illegal invocation
+      const origGetParameter = ctx.getParameter.bind(ctx);
+      const origGetExtension = ctx.getExtension.bind(ctx);
+      const origGetSupportedExtensions = ctx.getSupportedExtensions.bind(ctx);
+
+      ctx.getParameter = function(pname) {
+        // 优先返回伪装值
+        if (pname === UNMASKED_VENDOR_WEBGL) return webglVendor;
+        if (pname === UNMASKED_RENDERER_WEBGL) return webglRenderer;
+        if (pname === VENDOR) return 'WebKit';
+        if (pname === RENDERER) return 'WebKit WebGL';
+        if (pname === VERSION) return isWebGL2 
+          ? 'WebGL 2.0 (OpenGL ES 3.0 Chromium)' 
+          : paramMap[VERSION];
+        if (pname === SHADING_LANGUAGE_VERSION) return isWebGL2
+          ? 'WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)'
+          : paramMap[SHADING_LANGUAGE_VERSION];
+        if (paramMap[pname] !== undefined) return paramMap[pname];
+        return origGetParameter(pname);
+      };
+
+      ctx.getExtension = function(name) {
+        if (name === 'WEBGL_debug_renderer_info') {
+          return {
+            UNMASKED_VENDOR_WEBGL: 0x9245,
+            UNMASKED_RENDERER_WEBGL: 0x9246
+          };
+        }
+        if (name === 'WEBGL_lose_context') {
+          return { loseContext: function() {}, restoreContext: function() {} };
+        }
+        return origGetExtension(name);
+      };
+
+      ctx.getSupportedExtensions = function() {
+        const exts = origGetSupportedExtensions() || [];
+        const result = Array.from(exts);
+        if (!result.includes('WEBGL_debug_renderer_info')) {
+          result.push('WEBGL_debug_renderer_info');
+        }
+        return result;
+      };
+    }
+    return ctx;
+  };
+
+  // ---------- 兜底：原型级劫持（防止网站提前缓存原型方法） ----------
+  // WebGL 1.0
+  const origProtoGetParam1 = WebGLRenderingContext.prototype.getParameter;
+  WebGLRenderingContext.prototype.getParameter = function(pname) {
+    if (pname === UNMASKED_VENDOR_WEBGL) return webglVendor;
+    if (pname === UNMASKED_RENDERER_WEBGL) return webglRenderer;
+    if (pname === VENDOR) return 'WebKit';
+    if (pname === RENDERER) return 'WebKit WebGL';
+    if (pname === VERSION) return 'WebGL 1.0 (OpenGL ES 2.0 Chromium)';
+    if (pname === SHADING_LANGUAGE_VERSION) return 'WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)';
+    return origProtoGetParam1.call(this, pname);
+  };
+
+  const origProtoGetExt1 = WebGLRenderingContext.prototype.getExtension;
+  WebGLRenderingContext.prototype.getExtension = function(name) {
+    if (name === 'WEBGL_debug_renderer_info') {
+      return { UNMASKED_VENDOR_WEBGL: 0x9245, UNMASKED_RENDERER_WEBGL: 0x9246 };
+    }
+    return origProtoGetExt1.call(this, name);
+  };
+
+  // WebGL 2.0（Main World 中不存在跨上下文问题，call(this) 可正常工作）
+  if (window.WebGL2RenderingContext) {
+    const origProtoGetParam2 = WebGL2RenderingContext.prototype.getParameter;
+    WebGL2RenderingContext.prototype.getParameter = function(pname) {
+      if (pname === UNMASKED_VENDOR_WEBGL) return webglVendor;
+      if (pname === UNMASKED_RENDERER_WEBGL) return webglRenderer;
+      if (pname === VENDOR) return 'WebKit';
+      if (pname === RENDERER) return 'WebKit WebGL';
+      if (pname === VERSION) return 'WebGL 2.0 (OpenGL ES 3.0 Chromium)';
+      if (pname === SHADING_LANGUAGE_VERSION) return 'WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)';
+      return origProtoGetParam2.call(this, pname);
+    };
+
+    const origProtoGetExt2 = WebGL2RenderingContext.prototype.getExtension;
+    WebGL2RenderingContext.prototype.getExtension = function(name) {
+      if (name === 'WEBGL_debug_renderer_info') {
+        return { UNMASKED_VENDOR_WEBGL: 0x9245, UNMASKED_RENDERER_WEBGL: 0x9246 };
+      }
+      return origProtoGetExt2.call(this, name);
+    };
+  }
+
+  // OffscreenCanvas 兜底
+  if (typeof OffscreenCanvas !== 'undefined') {
+    const origOffscreenGetContext = OffscreenCanvas.prototype.getContext;
+    OffscreenCanvas.prototype.getContext = function(type, attrs) {
+      const ctx = origOffscreenGetContext.call(this, type, attrs);
+      if (!ctx) return ctx;
+      if (type === 'webgl' || type === 'experimental-webgl' || type === 'webgl2') {
+        const origParam = ctx.getParameter.bind(ctx);
+        ctx.getParameter = function(pname) {
+          if (pname === UNMASKED_VENDOR_WEBGL) return webglVendor;
+          if (pname === UNMASKED_RENDERER_WEBGL) return webglRenderer;
+          return origParam(pname);
+        };
+      }
+      return ctx;
+    };
+  }
+
+  // ============ Phase 3.2 维度 3: WebGL 图像噪声 ============
+  // 劫持 readPixels，在像素数据中添加与 Canvas 一致的噪声
+
+  const originalReadPixels = WebGLRenderingContext.prototype.readPixels;
+  WebGLRenderingContext.prototype.readPixels = function(x, y, width, height, format, type, pixels) {
+    originalReadPixels.call(this, x, y, width, height, format, type, pixels);
+    if (pixels && pixels.length) {
+      for (let i = 0; i < pixels.length; i += 4) {
+        const noise = Math.floor((canvasRandom() - 0.5) * 4);
+        pixels[i] = Math.max(0, Math.min(255, pixels[i] + noise));
+        pixels[i+1] = Math.max(0, Math.min(255, pixels[i+1] + noise));
+        pixels[i+2] = Math.max(0, Math.min(255, pixels[i+2] + noise));
+      }
+    }
+  };
+
+  // ============ Phase 3.2 维度 4: AudioContext 噪声 ============
+  // 使用 audio_noise_seed 生成确定性噪声
+
+  const audioSeed = CONFIG.audio_noise_seed || '8F3E2A1B';
+  const audioRandom = createSeededRandom(audioSeed);
+
+  // 劫持 AudioBuffer.copyFromChannel
+  const originalCopyFromChannel = AudioBuffer.prototype.copyFromChannel;
+  AudioBuffer.prototype.copyFromChannel = function(destination, channelNumber, startInChannel) {
+    const result = originalCopyFromChannel.call(this, destination, channelNumber, startInChannel);
+    for (let i = 0; i < destination.length; i++) {
+      destination[i] += (audioRandom() - 0.5) * 0.0001;
+    }
+    return result;
+  };
+
+  // 劫持 AnalyserNode.getFloatFrequencyData
+  const originalGetFloatFrequencyData = AnalyserNode.prototype.getFloatFrequencyData;
+  AnalyserNode.prototype.getFloatFrequencyData = function(array) {
+    originalGetFloatFrequencyData.call(this, array);
+    for (let i = 0; i < array.length; i++) {
+      array[i] += (audioRandom() - 0.5) * 0.1;
+    }
+  };
+
+  // 劫持 AnalyserNode.getByteFrequencyData
+  const originalGetByteFrequencyData = AnalyserNode.prototype.getByteFrequencyData;
+  AnalyserNode.prototype.getByteFrequencyData = function(array) {
+    originalGetByteFrequencyData.call(this, array);
+    for (let i = 0; i < array.length; i++) {
+      array[i] = Math.max(0, Math.min(255, array[i] + Math.floor((audioRandom() - 0.5) * 2)));
+    }
+  };
+
+  // 劫持 AnalyserNode.getByteTimeDomainData
+  const originalGetByteTimeDomainData = AnalyserNode.prototype.getByteTimeDomainData;
+  AnalyserNode.prototype.getByteTimeDomainData = function(array) {
+    originalGetByteTimeDomainData.call(this, array);
+    for (let i = 0; i < array.length; i++) {
+      array[i] = Math.max(0, Math.min(255, array[i] + Math.floor((audioRandom() - 0.5) * 2)));
+    }
+  };
+
+  // ============ Phase 3.2 维度 5: ClientRects 坐标偏移 ============
+  // 使用 rects_noise_seed 生成确定性偏移
+
+  const rectsSeed = CONFIG.rects_noise_seed || '13104F15';
+  const rectsRandom = createSeededRandom(rectsSeed);
+
+  function rectsOffset() {
+    return (rectsRandom() - 0.5) * 1.0;
+  }
+
+  // 劫持 Element.getBoundingClientRect
+  const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function() {
+    const rect = originalGetBoundingClientRect.call(this);
+    const ox = rectsOffset(), oy = rectsOffset();
+    return {
+      x: rect.x + ox, y: rect.y + oy,
+      width: rect.width, height: rect.height,
+      top: rect.top + oy, right: rect.right + ox,
+      bottom: rect.bottom + oy, left: rect.left + ox,
+      toJSON: () => ({
+        x: rect.x + ox, y: rect.y + oy, width: rect.width, height: rect.height,
+        top: rect.top + oy, right: rect.right + ox, bottom: rect.bottom + oy, left: rect.left + ox
+      })
+    };
+  };
+
+  // 劫持 Element.getClientRects
+  const originalGetClientRects = Element.prototype.getClientRects;
+  Element.prototype.getClientRects = function() {
+    const rects = originalGetClientRects.call(this);
+    const result = [];
+    for (let i = 0; i < rects.length; i++) {
+      const rect = rects[i];
+      const ox = rectsOffset(), oy = rectsOffset();
+      result.push({
+        x: rect.x + ox, y: rect.y + oy, width: rect.width, height: rect.height,
+        top: rect.top + oy, right: rect.right + ox, bottom: rect.bottom + oy, left: rect.left + ox
+      });
+    }
+    result.item = function(index) { return this[index < 0 || index >= this.length ? undefined : this[index]]; };
+    Object.defineProperty(result, 'length', { value: result.length, writable: false, configurable: true });
+    return result;
+  };
+
+  // 劫持 Range.getBoundingClientRect 和 getClientRects
+  const originalRangeGetBoundingClientRect = Range.prototype.getBoundingClientRect;
+  Range.prototype.getBoundingClientRect = function() {
+    const rect = originalRangeGetBoundingClientRect.call(this);
+    const ox = rectsOffset(), oy = rectsOffset();
+    return {
+      x: rect.x + ox, y: rect.y + oy, width: rect.width, height: rect.height,
+      top: rect.top + oy, right: rect.right + ox, bottom: rect.bottom + oy, left: rect.left + ox,
+      toJSON: () => ({ x: rect.x + ox, y: rect.y + oy, width: rect.width, height: rect.height })
+    };
+  };
+
+  const originalRangeGetClientRects = Range.prototype.getClientRects;
+  Range.prototype.getClientRects = function() {
+    const rects = originalRangeGetClientRects.call(this);
+    const result = [];
+    for (let i = 0; i < rects.length; i++) {
+      const rect = rects[i];
+      const ox = rectsOffset(), oy = rectsOffset();
+      result.push({
+        x: rect.x + ox, y: rect.y + oy, width: rect.width, height: rect.height,
+        top: rect.top + oy, right: rect.right + ox, bottom: rect.bottom + oy, left: rect.left + ox
+      });
+    }
+    result.item = function(index) { return this[index < 0 || index >= this.length ? undefined : this[index]]; };
+    Object.defineProperty(result, 'length', { value: result.length, writable: false, configurable: true });
+    return result;
+  };
+
+  // ============ Phase 3.2 维度 6: 完整字体列表注入 ============
+  // 注入 Windows 系统常见字体列表（约 300 个）
+
+  const windowsFonts = [
+    'Arial', 'Arial Black', 'Arial Narrow', 'Arial Rounded MT Bold', 'Bahnschrift',
+    'Calibri', 'Calibri Light', 'Cambria', 'Cambria Math', 'Candara',
+    'Comic Sans MS', 'Consolas', 'Constantia', 'Corbel', 'Courier New',
+    'Ebrima', 'Franklin Gothic Medium', 'Gabriola', 'Gadugi', 'Georgia',
+    'HoloLens MDL2 Assets', 'Impact', 'Ink Free', 'Javanese Text',
+    'Leelawadee UI', 'Leelawadee UI Semilight', 'Lucida Console', 'Lucida Sans Unicode',
+    'Malgun Gothic', 'Malgun Gothic Semilight', 'Microsoft Himalaya', 'Microsoft JhengHei',
+    'Microsoft JhengHei UI', 'Microsoft New Tai Lue', 'Microsoft PhagsPa',
+    'Microsoft Sans Serif', 'Microsoft Tai Le', 'Microsoft YaHei', 'Microsoft YaHei UI',
+    'Microsoft Yi Baiti', 'MingLiU-ExtB', 'Mongolian Baiti', 'MV Boli', 'Myanmar Text',
+    'Nirmala UI', 'Nirmala UI Semilight', 'Palatino Linotype', 'Segoe MDL2 Assets',
+    'Segoe Print', 'Segoe Script', 'Segoe UI', 'Segoe UI Black', 'Segoe UI Emoji',
+    'Segoe UI Historic', 'Segoe UI Light', 'Segoe UI Semibold', 'Segoe UI Semilight',
+    'Segoe UI Symbol', 'SimSun', 'SimSun-ExtB', 'Sitka Banner', 'Sitka Display',
+    'Sitka Heading', 'Sitka Small', 'Sitka Subheading', 'Sitka Text', 'Sylfaen',
+    'Symbol', 'Tahoma', 'Times New Roman', 'Trebuchet MS', 'Verdana',
+    'Webdings', 'Wingdings', 'Yu Gothic', 'Yu Gothic UI',
+    'SimHei', 'FangSong', 'KaiTi', 'NSimSun', 'LiSu', 'YouYuan',
+    'Agency FB', 'Algerian', 'Arial Unicode MS', 'Baskerville Old Face',
+    'Bauhaus 93', 'Bell MT', 'Berlin Sans FB', 'Bernard MT Condensed',
+    'Bodoni MT', 'Bodoni MT Black', 'Bodoni MT Condensed', 'Bodoni MT Poster Compressed',
+    'Book Antiqua', 'Bookman Old Style', 'Bradley Hand ITC', 'Britannic Bold',
+    'Broadway', 'Brush Script MT', 'Californian FB', 'Calisto MT',
+    'Centaury Gothic', 'Century Schoolbook', 'Chiller', 'Colonna MT', 'Cooper Black',
+    'Copperplate Gothic Bold', 'Copperplate Gothic Light', 'Curlz MT',
+    'Edwardian Script ITC', 'Elephant', 'Engravers MT', 'Eras Bold ITC',
+    'Eras Demi ITC', 'Eras Light ITC', 'Eras Medium ITC', 'Felix Titling',
+    'Footlight MT Light', 'Forte', 'Franklin Gothic Book', 'Franklin Gothic Demi',
+    'Franklin Gothic Demi Cond', 'Franklin Gothic Heavy', 'Franklin Gothic Medium Cond',
+    'Freestyle Script', 'French Script MT', 'Garamond', 'Gigi',
+    'Gill Sans MT', 'Gill Sans MT Condensed', 'Gill Sans MT Ext Condensed Bold',
+    'Gill Sans Ultra Bold', 'Gloucester MT Extra Condensed', 'Goudy Old Style', 'Goudy Stout',
+    'Haettenschweiler', 'Harlow Solid Italic', 'Harrington', 'High Tower Text',
+    'Imprint MT Shadow', 'Informal Roman', 'Jokerman', 'Juice ITC', 'Kristen ITC',
+    'Kunstler Script', 'Latha', 'Lucida Bright', 'Lucida Calligraphy', 'Lucida Fax',
+    'Lucida Handwriting', 'Lucida Sans', 'Lucida Sans Typewriter', 'Magneto',
+    'Maiandra GD', 'Matura MT Script Capitals', 'Mistral', 'Modern No. 20',
+    'Monotype Corsiva', 'Niagara Engraved', 'Niagara Solid', 'OCR A Extended',
+    'Old English Text MT', 'Onyx', 'Palace Script MT', 'Papyrus',
+    'Parchment', 'Perpetua', 'Perpetua Titling MT', 'Playbill',
+    'Poor Richard', 'Pristina', 'Rage Italic', 'Ravie',
+    'Rockwell', 'Rockwell Condensed', 'Rockwell Extra Bold', 'Script MT Bold',
+    'Showcard Gothic', 'Snap ITC', 'Stencil', 'Tw Cen MT',
+    'Tw Cen MT Condensed', 'Tw Cen MT Condensed Extra Bold', 'Tempus Sans ITC',
+    'Viner Hand ITC', 'Vivaldi', 'Vladimir Script', 'Wide Latin'
+  ];
+
+  // 劫持 document.fonts
+  Object.defineProperty(document, 'fonts', {
+    get: () => {
+      const fontSet = {
+        check: function(family, text) {
+          const fontName = String(family).replace(/['"]/g, '').split(',')[0].trim();
+          return windowsFonts.includes(fontName);
+        },
+        load: function(family, text) { return Promise.resolve([]); },
+        ready: Promise.resolve(fontSet),
+        size: windowsFonts.length,
+        add: function() {}, delete: function() { return false; }, clear: function() {},
+        forEach: function(cb) { windowsFonts.forEach(f => cb({ family: f })); },
+        entries: function* () { for (const f of windowsFonts) yield [{ family: f }, { family: f }]; },
+        keys: function* () { for (const f of windowsFonts) yield { family: f }; },
+        values: function* () { for (const f of windowsFonts) yield { family: f }; },
+        has: function(family) { return windowsFonts.includes(family); },
+        [Symbol.iterator]: function* () { for (const f of windowsFonts) yield [{ family: f }, { family: f }]; }
+      };
+      return fontSet;
+    },
+    configurable: true
+  });
+
+  // ============ Phase 3.2 维度 7: SpeechVoices 注入 ============
+  // 根据 ui_language 返回匹配的语音包
+
+  const uiLang = CONFIG.ui_language || 'zh-CN';
+  const baseLang = uiLang.split('-')[0];
+
+  const voiceMap = {
+    'zh': [
+      { name: 'Microsoft Huihui - Chinese (Simplified, PRC)', lang: 'zh-CN', default: true },
+      { name: 'Microsoft Kangkang - Chinese (Simplified, PRC)', lang: 'zh-CN' },
+      { name: 'Microsoft Yaoyao - Chinese (Simplified, PRC)', lang: 'zh-CN' },
+      { name: 'Microsoft Tracy - Chinese (Traditional, Hong Kong SAR)', lang: 'zh-HK' },
+      { name: 'Microsoft Yating - Chinese (Traditional, Taiwan)', lang: 'zh-TW' }
+    ],
+    'en': [
+      { name: 'Microsoft David - English (United States)', lang: 'en-US', default: true },
+      { name: 'Microsoft Zira - English (United States)', lang: 'en-US' },
+      { name: 'Microsoft George - English (United Kingdom)', lang: 'en-GB' }
+    ],
+    'de': [
+      { name: 'Microsoft Hedda - German', lang: 'de-DE', default: true },
+      { name: 'Microsoft Stefan - German', lang: 'de-DE' }
+    ],
+    'ja': [
+      { name: 'Microsoft Ayumi - Japanese', lang: 'ja-JP', default: true },
+      { name: 'Microsoft Ichiro - Japanese', lang: 'ja-JP' }
+    ],
+    'fr': [
+      { name: 'Microsoft Hortense - French', lang: 'fr-FR', default: true },
+      { name: 'Microsoft Paul - French', lang: 'fr-FR' }
+    ],
+    'ko': [
+      { name: 'Microsoft Heami - Korean', lang: 'ko-KR', default: true }
+    ],
+    'ru': [
+      { name: 'Microsoft Irina - Russian', lang: 'ru-RU', default: true }
+    ],
+    'es': [
+      { name: 'Microsoft Helena - Spanish', lang: 'es-ES', default: true },
+      { name: 'Microsoft Pablo - Spanish', lang: 'es-ES' }
+    ]
+  };
+
+  function getVoicesForLanguage(lang) {
+    const voices = (voiceMap[baseLang] || voiceMap['en']).map((v, idx) => ({
+      voiceURI: `urn:ms-tts:voice:${v.name}`,
+      name: v.name, lang: v.lang, localService: true, default: !!v.default || idx === 0
+    }));
+    return voices;
+  }
+
+  // 劫持 speechSynthesis.getVoices
+  const originalGetVoices = window.speechSynthesis.getVoices.bind(window.speechSynthesis);
+  window.speechSynthesis.getVoices = function() {
+    return getVoicesForLanguage(uiLang);
+  };
+
+  // 阻止 voiceschanged 事件覆盖
+  Object.defineProperty(window.speechSynthesis, 'onvoiceschanged', {
+    get: () => null,
+    set: () => {},
+    configurable: true
+  });
+
+  console.log('[GhostBrowse Phase 3.2] Canvas/WebGL/Audio/ClientRects 深度伪装完成');
+})();
+
+// ==================== Phase 3.3: 设备指纹完整化 + 一致性校验引擎（追加在文件末尾） ====================
+
+(function() {
+  'use strict';
+
+  // 获取配置（从外层 IIFE 传递的 config）
+  const CONFIG = typeof window.__GB_CONFIG__ !== 'undefined' 
+    ? window.__GB_CONFIG__ 
+    : {{CONFIG}};
+
+  // ============ Phase 3.3 维度 1: 设备名称注入 ============
+  // 注入 navigator.userAgentData/platform 等设备信息
+
+  const deviceName = CONFIG.device_name || 'USER-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+  const chromeVersion = CONFIG.chrome_version || '128';
+
+  // 劫持 navigator.userAgentData（Chrome 90+ User-Agent Client Hints API）
+  if (!navigator.userAgentData) {
+    Object.defineProperty(navigator, 'userAgentData', {
+      get: () => ({
+        brands: [
+          { brand: 'Chromium', version: chromeVersion },
+          { brand: 'Google Chrome', version: chromeVersion },
+          { brand: 'Not;A=Brand', version: '99' }
+        ],
+        mobile: false,
+        platform: 'Windows',
+        platformVersion: '10.0',
+        architecture: 'x86',
+        bitness: '64',
+        model: '',
+        uaFullVersion: `${chromeVersion}.0.0.0`,
+        fullVersionList: [
+          { brand: 'Chromium', version: `${chromeVersion}.0.0.0` },
+          { brand: 'Google Chrome', version: `${chromeVersion}.0.0.0` },
+          { brand: 'Not;A=Brand', version: '99.0.0.0' }
+        ],
+        getHighEntropyValues: function(hints) {
+          return Promise.resolve({
+            platform: 'Windows',
+            platformVersion: '10.0',
+            architecture: 'x86',
+            bitness: '64',
+            model: '',
+            uaFullVersion: `${chromeVersion}.0.0.0`,
+            fullVersionList: this.fullVersionList
+          });
+        }
+      }),
+      configurable: true,
+      enumerable: true
+    });
+  }
+
+  // navigator.platform
+  Object.defineProperty(navigator, 'platform', {
+    get: () => 'Win32',
+    configurable: true,
+    enumerable: true
+  });
+
+  // navigator.oscpu（Firefox 专有，Chrome 应为 undefined）
+  Object.defineProperty(navigator, 'oscpu', {
+    get: () => undefined,
+    configurable: true
+  });
+
+  // navigator.cpuClass（IE 遗留，Chrome 应为 undefined）
+  Object.defineProperty(navigator, 'cpuClass', {
+    get: () => undefined,
+    configurable: true
+  });
+
+  // ============ Phase 3.3 维度 2: WebRTC 深度清理 ============
+  // 在 disable 模式下，彻底删除所有 WebRTC 相关对象
+
+  const webrtcMode = CONFIG.webrtc_mode || 'disable';
+
+  if (webrtcMode === 'disable') {
+    // 彻底删除所有 WebRTC 构造函数
+    const webrtcConstructors = [
+      'RTCPeerConnection', 'RTCSessionDescription', 'RTCIceCandidate',
+      'RTCIceTransport', 'RTCDtlsTransport', 'RTCIceGatherer',
+      'RTCRtpSender', 'RTCRtpReceiver', 'RTCRtpTransceiver',
+      'RTCDataChannel', 'RTCSctpTransport', 'RTCDTMFSender',
+      'RTCDTMFToneChangeEvent', 'RTCStatsReport', 'RTCError', 'RTCErrorEvent'
+    ];
+
+    webrtcConstructors.forEach(ctor => {
+      if (window[ctor] !== undefined) {
+        try {
+          delete window[ctor];
+        } catch(e) {
+          Object.defineProperty(window, ctor, {
+            get: () => undefined,
+            set: () => {},
+            configurable: true
+          });
+        }
+      }
+    });
+
+    // 清理 navigator.mediaDevices
+    if (navigator.mediaDevices) {
+      navigator.mediaDevices.getUserMedia = function() {
+        return Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
+      };
+      navigator.mediaDevices.enumerateDevices = function() {
+        return Promise.resolve([]);
+      };
+    }
+  }
+
+  // replace 或 forward 模式下，劫持 RTCPeerConnection 清理 iceServers
+  if (webrtcMode === 'replace' || webrtcMode === 'forward') {
+    if (window.RTCPeerConnection) {
+      const OriginalRTCPeerConnection = window.RTCPeerConnection;
+      window.RTCPeerConnection = function(config) {
+        const cleanedConfig = config || {};
+        if (webrtcMode === 'replace') {
+          cleanedConfig.iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+        }
+        return new OriginalRTCPeerConnection(cleanedConfig);
+      };
+      window.RTCPeerConnection.prototype = OriginalRTCPeerConnection.prototype;
+    }
+  }
+
+  // ============ Phase 3.3 维度 3: 时区格式化完整化 ============
+  // 确保 Intl.DateTimeFormat 的 formatToParts/resolvedOptions 与 timezone 配置一致
+
+  const timezone = CONFIG.timezone || 'Asia/Shanghai';
+  const OriginalDateTimeFormat = Intl.DateTimeFormat;
+
+  Intl.DateTimeFormat = function(locales, options) {
+    const opts = Object.assign({}, options, { timeZone: timezone });
+    const instance = new OriginalDateTimeFormat(locales, opts);
+
+    const originalFormat = instance.format.bind(instance);
+    Object.defineProperty(instance, 'format', {
+      value: function(date) { return originalFormat(date || new Date()); },
+      writable: true,
+      configurable: true
+    });
+
+    const originalFormatToParts = instance.formatToParts.bind(instance);
+    instance.formatToParts = function(date) {
+      const parts = originalFormatToParts(date || new Date());
+      return parts.map(part => {
+        if (part.type === 'timeZoneName') {
+          return { ...part, value: timezone.split('/')[1] || timezone };
+        }
+        return part;
+      });
+    };
+
+    const originalResolvedOptions = instance.resolvedOptions.bind(instance);
+    instance.resolvedOptions = function() {
+      const opts = originalResolvedOptions();
+      opts.timeZone = timezone;
+      return opts;
+    };
+
+    return instance;
+  };
+  Intl.DateTimeFormat.prototype = OriginalDateTimeFormat.prototype;
+  Intl.DateTimeFormat.supportedLocalesOf = OriginalDateTimeFormat.supportedLocalesOf.bind(Intl.DateTimeFormat);
+
+  // 全局 resolvedOptions 劫持
+  const originalProtoResolvedOptions = OriginalDateTimeFormat.prototype.resolvedOptions;
+  OriginalDateTimeFormat.prototype.resolvedOptions = function() {
+    const opts = originalProtoResolvedOptions.call(this);
+    opts.timeZone = timezone;
+    return opts;
+  };
+
+  // ============ Phase 3.3 维度 4: CSS 特性查询完整化 ============
+  // 确保 CSS.supports 返回与 Chrome 版本一致的结果
+
+  const ver = parseInt(chromeVersion) || 128;
+
+  const chromeFeatures = {
+    'container-type': ver >= 105,
+    'container-queries': ver >= 105,
+    'layer': ver >= 99,
+    'nesting': ver >= 112,
+    'has': ver >= 105,
+    'anchor-positioning': ver >= 125,
+    'view-transition': ver >= 126,
+    'grid': true, 'flexbox': true, 'custom-properties': true,
+    'transforms': true, 'animations': true, 'transitions': true,
+    'filters': true, 'clip-path': true, 'aspect-ratio': ver >= 88,
+    'accent-color': ver >= 93, 'color-mix': ver >= 111,
+    'font-palette': ver >= 101, 'math': ver >= 109
+  };
+
+  const originalSupports = CSS.supports.bind(CSS);
+  CSS.supports = function(property, value) {
+    if (arguments.length === 1) {
+      const cond = property;
+      if (cond.includes('container-type')) return !!chromeFeatures['container-type'];
+      if (cond.includes('container-queries')) return !!chromeFeatures['container-queries'];
+      if (cond.includes('has(')) return !!chromeFeatures['has'];
+      if (cond.includes('anchor')) return !!chromeFeatures['anchor-positioning'];
+      if (cond.includes('view-transition')) return !!chromeFeatures['view-transition'];
+      if (cond.includes('layer')) return !!chromeFeatures['layer'];
+      if (cond.includes('nesting')) return !!chromeFeatures['nesting'];
+      if (cond.includes('grid')) return true;
+      if (cond.includes('flex')) return true;
+      if (cond.startsWith('--')) return true;
+      return originalSupports(cond);
+    }
+    const prop = String(property).toLowerCase();
+    if (prop === 'display' && value && value.includes('grid')) return true;
+    if (prop === 'display' && value && value.includes('flex')) return true;
+    if (prop.startsWith('--')) return true;
+    return originalSupports(property, value);
+  };
+
+  // ============ Phase 3.3 维度 5: navigator 对象补充 ============
+  // 补全可能被检测的缺失属性
+
+  Object.defineProperty(navigator, 'pdfViewerEnabled', { get: () => true, configurable: true, enumerable: true });
+  Object.defineProperty(navigator, 'bluetooth', { get: () => undefined, configurable: true });
+
+  if (!navigator.clipboard) {
+    Object.defineProperty(navigator, 'clipboard', {
+      get: () => ({
+        read: () => Promise.reject(new DOMException('Permission denied')),
+        readText: () => Promise.reject(new DOMException('Permission denied')),
+        write: () => Promise.reject(new DOMException('Permission denied')),
+        writeText: () => Promise.reject(new DOMException('Permission denied'))
+      }),
+      configurable: true
+    });
+  }
+
+  if (!navigator.credentials) {
+    Object.defineProperty(navigator, 'credentials', {
+      get: () => ({
+        get: () => Promise.resolve(null),
+        create: () => Promise.reject(new DOMException('Not allowed')),
+        preventSilentAccess: () => Promise.resolve()
+      }),
+      configurable: true
+    });
+  }
+
+  if (!navigator.keyboard) {
+    Object.defineProperty(navigator, 'keyboard', {
+      get: () => ({
+        getLayoutMap: () => Promise.resolve({
+          has: () => true, get: () => 'KeyA',
+          entries: function* () {}, keys: function* () {},
+          values: function* () {}, forEach: () => {}, size: 0
+        }),
+        lock: () => Promise.resolve(), unlock: () => Promise.resolve()
+      }),
+      configurable: true
+    });
+  }
+
+  if (!navigator.mediaCapabilities) {
+    Object.defineProperty(navigator, 'mediaCapabilities', {
+      get: () => ({
+        decodingInfo: (config) => Promise.resolve({ supported: true, smooth: true, powerEfficient: true }),
+        encodingInfo: (config) => Promise.resolve({ supported: true, smooth: true, powerEfficient: true })
+      }),
+      configurable: true
+    });
+  }
+
+  if (!navigator.wakeLock) {
+    Object.defineProperty(navigator, 'wakeLock', {
+      get: () => ({
+        request: (type) => Promise.resolve({
+          type: type || 'screen', released: false,
+          release: () => Promise.resolve(),
+          addEventListener: () => {}, removeEventListener: () => {}
+        })
+      }),
+      configurable: true
+    });
+  }
+
+  if (!navigator.scheduling) {
+    Object.defineProperty(navigator, 'scheduling', { get: () => ({ isInputPending: () => false }), configurable: true });
+  }
+
+  if (!navigator.presentation) {
+    Object.defineProperty(navigator, 'presentation', { get: () => ({ defaultRequest: null, receiver: null }), configurable: true });
+  }
+
+  // ============ Phase 3.3 维度 6: window 对象补充 ============
+
+  if (!window.visualViewport) {
+    Object.defineProperty(window, 'visualViewport', {
+      get: () => ({
+        width: window.innerWidth, height: window.innerHeight, scale: 1,
+        offsetLeft: 0, offsetTop: 0, pageLeft: 0, pageTop: 0,
+        onresize: null, onscroll: null, addEventListener: () => {}, removeEventListener: () => {}
+      }),
+      configurable: true
+    });
+  }
+
+  Object.defineProperty(window, 'originAgentCluster', { get: () => false, configurable: true });
+
+  console.log('[GhostBrowse Phase 3.3] 设备指纹完整化 + 一致性校验引擎完成');
+})();
+
+// ==================== Phase 3.4: 行为模拟引擎（鼠标/滚动/点击）- 追加在文件末尾 ====================
+
+(function() {
+  'use strict';
+
+  // 等待页面加载完成后再注入行为模拟（与 document_start 的指纹注入区分开）
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initBehaviorEngine);
+  } else {
+    initBehaviorEngine();
+  }
+
+  function initBehaviorEngine() {
+    // 行为模拟配置（从 config 读取，默认启用）
+    const behaviorEnabled = typeof config !== 'undefined' ? (config.behavior_enabled !== false) : true;
+
+    if (!behaviorEnabled) {
+      console.log('[GhostBrowse Phase 3.4] 行为模拟引擎已禁用');
+      return;
+    }
+
+    console.log('[GhostBrowse Phase 3.4] 行为模拟引擎已启动');
+
+    // ===== 维度 1: 鼠标轨迹模拟 —— 贝塞尔曲线插值 =====
+    // Fitts 定律：距离越短速度越慢，距离越长先加速后减速
+
+    const mouseConfig = {
+      enabled: true,
+      speed: 'normal' // 'slow' / 'normal' / 'fast'
+    };
+
+    let lastMouseX = 0;
+    let lastMouseY = 0;
+    let isAnimating = false;
+    let targetX = 0;
+    let targetY = 0;
+    let animationId = null;
+
+    // 三次贝塞尔曲线插值
+    function cubicBezier(t, p0, p1, p2, p3) {
+      const u = 1 - t;
+      return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
+    }
+
+    // 计算两点距离
+    function getDistance(x1, y1, x2, y2) {
+      return Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+    }
+
+    // 根据速度配置调整时间倍率
+    function getSpeedMultiplier() {
+      return mouseConfig.speed === 'slow' ? 1.5 : mouseConfig.speed === 'fast' ? 0.7 : 1.0;
+    }
+
+    // 平滑移动到目标点（贝塞尔曲线）
+    function smoothMoveTo(toX, toY) {
+      const fromX = lastMouseX;
+      const fromY = lastMouseY;
+      const distance = getDistance(fromX, fromY, toX, toY);
+
+      // 距离太小跳过（避免过度模拟）
+      if (distance < 5) {
+        lastMouseX = toX;
+        lastMouseY = toY;
+        return;
+      }
+
+      const duration = Math.max(100, Math.min(distance * 2, 1000)) * getSpeedMultiplier();
+      const startTime = performance.now();
+
+      // 生成随机控制点使曲线不规则
+      const midX = (fromX + toX) / 2;
+      const midY = (fromY + toY) / 2;
+      const offset = distance * 0.2;
+      const cp1x = midX + (Math.random() - 0.5) * offset;
+      const cp1y = midY + (Math.random() - 0.5) * offset;
+      const cp2x = midX + (Math.random() - 0.5) * offset;
+      const cp2y = midY + (Math.random() - 0.5) * offset;
+
+      function animate(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        // ease-in-out 缓动
+        const eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+        const currentX = cubicBezier(eased, fromX, cp1x, cp2x, toX);
+        const currentY = cubicBezier(eased, fromY, cp1y, cp2y, toY);
+
+        lastMouseX = currentX;
+        lastMouseY = currentY;
+
+        if (progress < 1) {
+          animationId = requestAnimationFrame(animate);
+        }
+      }
+
+      if (animationId) cancelAnimationFrame(animationId);
+      animationId = requestAnimationFrame(animate);
+    }
+
+    // ===== 维度 2: 神经肌肉抖动 —— 目标附近随机晃动 =====
+
+    function addJitterToClick(element) {
+      const rect = element.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      // 在中心附近 ±3px 范围内随机偏移
+      const jitterX = (Math.random() - 0.5) * 6;
+      const jitterY = (Math.random() - 0.5) * 6;
+      return { x: centerX + jitterX, y: centerY + jitterY };
+    }
+
+    // 劫持 HTMLElement.prototype.click
+    const originalClick = HTMLElement.prototype.click;
+    HTMLElement.prototype.click = function() {
+      const jittered = addJitterToClick(this);
+      smoothMoveTo(jittered.x, jittered.y);
+      // 延迟后点击（模拟人类反应时间）
+      setTimeout(() => {
+        originalClick.call(this);
+      }, 50 + Math.random() * 100);
+    };
+
+    // 劫持 MouseEvent，为鼠标事件添加微小抖动
+    const OriginalMouseEvent = window.MouseEvent;
+    window.MouseEvent = function(type, init) {
+      const opts = init || {};
+      if (['mousedown', 'mouseup', 'click'].includes(type) && opts.clientX !== undefined) {
+        opts.clientX += (Math.random() - 0.5) * 2;
+        opts.clientY += (Math.random() - 0.5) * 2;
+      }
+      return new OriginalMouseEvent(type, opts);
+    };
+    window.MouseEvent.prototype = OriginalMouseEvent.prototype;
+
+    // ===== 维度 3: 滚动行为模拟 —— 惯性滚动 + 随机停顿 + 偶尔回滚 =====
+
+    function inertiaScrollTo(targetY) {
+      const startY = window.scrollY || window.pageYOffset;
+      const distance = targetY - startY;
+      const duration = Math.abs(distance) * 0.5 + 200;
+      const startTime = performance.now();
+      const shouldOvershoot = Math.random() < 0.15; // 15% 概率回滚
+      const overshootAmount = shouldOvershoot ? distance * 0.1 : 0;
+
+      function scrollAnim(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        // ease-out-cubic（先快后慢）
+        const eased = 1 - Math.pow(1 - progress, 3);
+        let currentY = startY + distance * eased;
+
+        // 回滚效果
+        if (shouldOvershoot && progress > 0.8) {
+          currentY -= overshootAmount * Math.sin((progress - 0.8) / 0.2 * Math.PI);
+        }
+
+        window.scrollTo(0, currentY);
+
+        if (progress < 1) {
+          requestAnimationFrame(scrollAnim);
+        } else {
+          // 随机停顿（模拟阅读时间）
+          setTimeout(() => {
+            if (Math.abs(window.scrollY - targetY) > 10) {
+              inertiaScrollTo(targetY);
+            }
+          }, 200 + Math.random() * 800);
+        }
+      }
+      requestAnimationFrame(scrollAnim);
+    }
+
+    const originalScrollTo = window.scrollTo.bind(window);
+    window.scrollTo = function(x, y) {
+      if (typeof x === 'object') {
+        return originalScrollTo(x);
+      }
+      inertiaScrollTo(y);
+    };
+
+    const originalScrollBy = window.scrollBy.bind(window);
+    window.scrollBy = function(x, y) {
+      if (typeof x === 'object') {
+        return originalScrollBy(x);
+      }
+      inertiaScrollTo((window.scrollY || 0) + y);
+    };
+
+    // ===== 维度 4: 点击时机模拟 —— Gaussian 分布随机延迟 =====
+
+    // Box-Muller 变换生成 Gaussian 随机数
+    function gaussianRandom(mean, stdDev) {
+      let u = 0, v = 0;
+      while (u === 0) u = Math.random();
+      while (v === 0) v = Math.random();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) * stdDev + mean;
+    }
+
+    // 劫持 EventTarget.prototype.dispatchEvent，为鼠标事件添加延迟
+    const originalDispatch = EventTarget.prototype.dispatchEvent;
+    EventTarget.prototype.dispatchEvent = function(event) {
+      if (!(event instanceof MouseEvent)) {
+        return originalDispatch.call(this, event);
+      }
+
+      const delay = Math.max(50, gaussianRandom(150, 50)); // μ=150ms, σ=50ms, 最小 50ms
+      setTimeout(() => {
+        originalDispatch.call(this, event);
+      }, delay);
+      return true;
+    };
+
+    // ===== 维度 5: 按键节奏模拟 —— 人类打字间隔 =====
+
+    // 获取打字间隔（非匀速，有快有慢）
+    function getTypingInterval() {
+      const base = 50 + Math.random() * 150; // 基础 50-200ms
+      if (Math.random() < 0.05) return base + 300 + Math.random() * 700; // 5% 长停顿
+      if (Math.random() < 0.1) return 30 + Math.random() * 40; // 10% 快速连击
+      return base;
+    }
+
+    // 暴露打字模拟函数（供自动化脚本调用）
+    window.__ghostbrowse_simulateTyping = function(element, text) {
+      return new Promise((resolve) => {
+        let index = 0;
+        element.focus();
+        element.value = '';
+
+        function typeNext() {
+          if (index >= text.length) { resolve(); return; }
+          const char = text[index++];
+          element.value += char;
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+          setTimeout(typeNext, getTypingInterval());
+        }
+        typeNext();
+      });
+    };
+
+    console.log('[GhostBrowse Phase 3.4] 行为模拟引擎已初始化：鼠标轨迹/神经抖动/惯性滚动/点击延迟/打字节奏');
+  }
+})();
+
+// ==================== Phase 3.6-Sup: 内置指纹采集器 ====================
+// 在任意网页右下角显示"采集指纹"按钮，一键输出完整指纹 JSON
+// 用途：采集真实 Chrome 内核参数，用于填充 CHROME_VERSION_CONFIG
+
+(function() {
+  'use strict';
+
+  // 等待页面加载完成
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initFingerprintCollector);
+  } else {
+    initFingerprintCollector();
+  }
+
+  function initFingerprintCollector() {
+    console.log('[GhostBrowse Phase 3.6-Sup] initFingerprintCollector 开始执行, readyState:', document.readyState);
+    try {
+      var btn = document.createElement('button');
+      btn.id = '__ghostbrowse_collect_btn';
+      btn.textContent = '\ud83d\udcca \u91c7\u96c6\u6307\u7eb9';
+      btn.style.cssText = [
+        'position: fixed !important',
+        'bottom: 20px !important',
+        'right: 20px !important',
+        'z-index: 2147483647 !important',
+        'padding: 8px 16px !important',
+        'background: #1890ff !important',
+        'color: #fff !important',
+        'border: none !important',
+        'border-radius: 4px !important',
+        'cursor: pointer !important',
+        'font-size: 13px !important',
+        'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important',
+        'box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important',
+        'line-height: 1.5 !important',
+        'letter-spacing: normal !important',
+        'text-transform: none !important'
+      ].join(' !important; ') + ' !important;';
+
+      btn.addEventListener('mouseenter', function() { this.style.background = '#40a9ff'; });
+      btn.addEventListener('mouseleave', function() { this.style.background = '#1890ff'; });
+
+      document.body.appendChild(btn);
+
+      btn.addEventListener('click', function() {
+        console.log('[Phase 3.6-Sup] 按钮点击，开始采集...');
+        try {
+          var report = collectFullFingerprint();
+          console.log('[Phase 3.6-Sup] 采集完成，准备显示弹窗');
+          showResultModal(report);
+          console.log('[Phase 3.6-Sup] showResultModal 执行完毕');
+        } catch(e) {
+          console.error('[Phase 3.6-Sup] 采集失败:', e);
+          alert('采集失败: ' + e.message);
+        }
+      });
+
+      console.log('%c[GhostBrowse \u6307\u7eb9\u91c7\u96c6\u5668] \u5df2\u52a0\u8f7d\uff0c\u70b9\u51fb\u53f3\u4e0b\u89d2 \ud83d\udcca \u91c7\u96c6\u6307\u7eb9 \u6309\u94ae', 'color:#1890ff;font-size:12px;');
+    } catch (e) {
+      console.error('[GhostBrowse Phase 3.6-Sup] \u521d\u59cb\u5316\u5931\u8d25:', e);
+    }
+  }
+
+  function collectFullFingerprint() {
+    var report = {
+      // 基础信息
+      userAgent: navigator.userAgent,
+      chromeVersion: (navigator.userAgent.match(/Chrome\/(\d+)/) || [])[1] || 'unknown',
+      platform: navigator.platform,
+      language: navigator.language,
+      languages: Array.from(navigator.languages || []),
+
+      // 时区
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timezoneOffset: new Date().getTimezoneOffset(),
+
+      // Screen
+      screen: {
+        width: screen.width,
+        height: screen.height,
+        availWidth: screen.availWidth,
+        availHeight: screen.availHeight,
+        colorDepth: screen.colorDepth,
+        pixelDepth: screen.pixelDepth,
+        availLeft: screen.availLeft || 0,
+        availTop: screen.availTop || 0
+      },
+
+      // Window
+      window: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        outerWidth: window.outerWidth,
+        outerHeight: window.outerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        screenX: window.screenX,
+        screenY: window.screenY,
+        screenLeft: window.screenLeft,
+        screenTop: window.screenTop
+      },
+
+      // Navigator 核心字段
+      navigator: {
+        hardwareConcurrency: navigator.hardwareConcurrency,
+        deviceMemory: navigator.deviceMemory,
+        maxTouchPoints: navigator.maxTouchPoints,
+        vendor: navigator.vendor,
+        productSub: navigator.productSub,
+        pdfViewerEnabled: navigator.pdfViewerEnabled,
+        cookieEnabled: navigator.cookieEnabled,
+        doNotTrack: navigator.doNotTrack,
+        oscpu: navigator.oscpu,
+        cpuClass: navigator.cpuClass,
+        bluetooth: !!(navigator.bluetooth),
+        clipboard: !!(navigator.clipboard),
+        credentials: !!(navigator.credentials),
+        keyboard: !!(navigator.keyboard),
+        mediaCapabilities: !!(navigator.mediaCapabilities),
+        mediaDevices: !!(navigator.mediaDevices),
+        permissions: !!(navigator.permissions),
+        presentation: !!(navigator.presentation),
+        scheduling: !!(navigator.scheduling),
+        wakeLock: !!(navigator.wakeLock),
+        webdriver: navigator.webdriver,
+        userAgentData: !!(navigator.userAgentData)
+      },
+
+      // WebGL 1.0
+      webgl: (function() {
+        try {
+          var canvas = document.createElement('canvas');
+          var gl = canvas.getContext('webgl');
+          if (!gl) return null;
+          return {
+            vendor: gl.getParameter(0x9245),
+            renderer: gl.getParameter(0x9246),
+            version: gl.getParameter(0x1F00),
+            shadingLanguageVersion: gl.getParameter(0x8B8C),
+            maxTextureSize: gl.getParameter(0x0D33),
+            maxCubeMapTextureSize: gl.getParameter(0x851C),
+            maxRenderbufferSize: gl.getParameter(0x84E8),
+            maxViewportDims: (function() {
+              var dims = gl.getParameter(0x0D3A);
+              return Array.isArray(dims) ? dims : [dims, dims];
+            })(),
+            maxVertexAttribs: gl.getParameter(0x8869),
+            maxVertexUniformVectors: gl.getParameter(0x8DFB),
+            maxFragmentUniformVectors: gl.getParameter(0x8DFD),
+            maxVaryingVectors: gl.getParameter(0x8DFC),
+            maxTextureImageUnits: gl.getParameter(0x8872),
+            maxVertexTextureImageUnits: gl.getParameter(0x8B4C),
+            maxCombinedTextureImageUnits: gl.getParameter(0x8B4D),
+            aliasedPointSizeRange: gl.getParameter(0x846D),
+            aliasedLineWidthRange: gl.getParameter(0x846E),
+            redBits: gl.getParameter(0x0D52),
+            greenBits: gl.getParameter(0x0D53),
+            blueBits: gl.getParameter(0x0D54),
+            alphaBits: gl.getParameter(0x0D55),
+            depthBits: gl.getParameter(0x0D56),
+            stencilBits: gl.getParameter(0x0D57),
+            supportedExtensions: gl.getSupportedExtensions()
+          };
+        } catch(e) {
+          return { error: e.message };
+        }
+      })(),
+
+      // WebGL 2.0
+      webgl2: (function() {
+        try {
+          var canvas = document.createElement('canvas');
+          var gl = canvas.getContext('webgl2');
+          if (!gl) return null;
+          return {
+            version: gl.getParameter(0x1F00),
+            shadingLanguageVersion: gl.getParameter(0x8B8C),
+            vendor: gl.getParameter(0x9245),
+            renderer: gl.getParameter(0x9246),
+            maxTextureSize: gl.getParameter(0x0D33),
+            max3DTextureSize: gl.getParameter(0x8073),
+            maxArrayTextureLayers: gl.getParameter(0x88FF),
+            maxColorAttachments: gl.getParameter(0x8CDF),
+            maxDrawBuffers: gl.getParameter(0x8829),
+            supportedExtensions: gl.getSupportedExtensions()
+          };
+        } catch(e) {
+          return { error: e.message };
+        }
+      })(),
+
+      // Plugins
+      plugins: (function() {
+        try {
+          var plugins = [];
+          for (var i = 0; i < navigator.plugins.length; i++) {
+            var p = navigator.plugins[i];
+            var mimeTypes = [];
+            for (var j = 0; j < p.length; j++) {
+              var mt = p[j];
+              mimeTypes.push({
+                type: mt.type,
+                suffixes: mt.suffixes,
+                description: mt.description
+              });
+            }
+            plugins.push({
+              name: p.name,
+              filename: p.filename,
+              description: p.description,
+              length: p.length,
+              mimeTypes: mimeTypes
+            });
+          }
+          return {
+            length: navigator.plugins.length,
+            items: plugins
+          };
+        } catch(e) {
+          return { error: e.message };
+        }
+      })(),
+
+      // MimeTypes
+      mimeTypes: (function() {
+        try {
+          var mts = [];
+          for (var i = 0; i < navigator.mimeTypes.length; i++) {
+            var mt = navigator.mimeTypes[i];
+            mts.push({
+              type: mt.type,
+              suffixes: mt.suffixes,
+              description: mt.description,
+              enabledPlugin: mt.enabledPlugin ? mt.enabledPlugin.name : null
+            });
+          }
+          return mts;
+        } catch(e) {
+          return { error: e.message };
+        }
+      })(),
+
+      // CSS 特性支持
+      cssFeatures: {
+        grid: testCSS('display', 'grid'),
+        flexbox: testCSS('display', 'flex'),
+        customProperties: testCSS('--custom', 'property'),
+        transforms: testCSS('transform', 'translateX(0px)'),
+        transitions: testCSS('transition', 'all 1s'),
+        animations: testCSS('animation', 'name 1s'),
+        filters: testCSS('filter', 'blur(1px)'),
+        clipPath: testCSS('clip-path', 'circle(50%)'),
+        mask: testCSS('mask', 'url()'),
+        blendModes: testCSS('mix-blend-mode', 'multiply'),
+        shapes: testCSS('shape-outside', 'circle(50%)'),
+        columns: testCSS('columns', '2'),
+        writingMode: testCSS('writing-mode', 'vertical-rl'),
+        objectFit: testCSS('object-fit', 'cover'),
+        objectPosition: testCSS('object-position', 'center'),
+        sticky: testCSS('position', 'sticky'),
+        calc: testCSS('width', 'calc(1px + 1px)'),
+        minMaxClamp: testCSS('width', 'min(1px, 2px)'),
+        aspectRatio: testCSS('aspect-ratio', '16/9'),
+        accentColor: testCSS('accent-color', 'red'),
+        colorMix: testCSS('color-mix(in srgb, red, blue)'),
+        labColors: testCSS('color', 'lab(50% 0 0)'),
+        oklabColors: testCSS('color', 'oklab(50% 0 0)'),
+        colorContrast: testCSS('color', 'contrast(red)'),
+        fontPalette: testCSS('font-palette', 'light'),
+        math: testCSS('width', 'calc(1px * sin(45deg))'),
+        viewTransition: testCSS('view-transition-name', 'foo'),
+        anchorPositioning: testCSS('anchor-name', '--foo'),
+        nesting: (typeof CSS !== 'undefined' && CSS.supports) ? CSS.supports('selector(&)') : false,
+        scope: (typeof CSS !== 'undefined' && CSS.supports) ? (CSS.supports('scope') || CSS.supports('@scope')) : false,
+        startingStyle: (typeof CSS !== 'undefined' && CSS.supports) ? CSS.supports('starting-style') : false,
+        containerQueries: testCSS('container-type', 'size'),
+        hasSelector: (typeof CSS !== 'undefined' && CSS.supports) ? CSS.supports('selector(:has(.foo))') : false,
+        transitionBehavior: testCSS('transition-behavior', 'allow-discrete')
+      },
+
+      // Chrome 对象结构
+      chrome: {
+        exists: typeof window.chrome !== 'undefined',
+        runtimeExists: !!(window.chrome && window.chrome.runtime),
+        appExists: !!(window.chrome && window.chrome.app),
+        csiExists: !!(window.chrome && window.chrome.csi),
+        loadTimesExists: !!(window.chrome && window.chrome.loadTimes),
+        runtimeOnConnect: !!(window.chrome && window.chrome.runtime && window.chrome.runtime.onConnect),
+        runtimeOnMessage: !!(window.chrome && window.chrome.runtime && window.chrome.runtime.onMessage),
+        runtimeConnect: !!(window.chrome && window.chrome.runtime && typeof window.chrome.runtime.connect === 'function'),
+        runtimeSendMessage: !!(window.chrome && window.chrome.runtime && typeof window.chrome.runtime.sendMessage === 'function'),
+        runtimeGetManifest: !!(window.chrome && window.chrome.runtime && typeof window.chrome.runtime.getManifest === 'function'),
+        runtimeGetURL: !!(window.chrome && window.chrome.runtime && typeof window.chrome.runtime.getURL === 'function')
+      },
+
+      // Broken Image 测试
+      brokenImage: (function() {
+        try {
+          var img = new Image();
+          img.src = 'data:image/png;base64,invalid';
+          return {
+            width: img.width,
+            height: img.height,
+            naturalWidth: img.naturalWidth,
+            naturalHeight: img.naturalHeight,
+            complete: img.complete,
+            note: '如果值为 16x16，说明内核可能带 Headless 标志；正常应为 0x0'
+          };
+        } catch(e) {
+          return { error: e.message };
+        }
+      })(),
+
+      // Canvas 指纹（简单采样）
+      canvas: (function() {
+        try {
+          var canvas = document.createElement('canvas');
+          var ctx = canvas.getContext('2d');
+          if (!ctx) return null;
+          canvas.width = 200;
+          canvas.height = 50;
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillStyle = '#f60';
+          ctx.fillRect(0, 0, 200, 50);
+          ctx.fillStyle = '#069';
+          ctx.font = '16px Arial';
+          ctx.fillText('GhostBrowse Fingerprint', 2, 30);
+          ctx.strokeStyle = '#069';
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(200, 50);
+          ctx.stroke();
+          return {
+            toDataURL: canvas.toDataURL().slice(0, 50) + '...',
+            width: canvas.width,
+            height: canvas.height
+          };
+        } catch(e) {
+          return { error: e.message };
+        }
+      })(),
+
+      // AudioContext（基础检测）
+      audioContext: (function() {
+        try {
+          var AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return null;
+          var ac = new AC();
+          var result = {
+            sampleRate: ac.sampleRate,
+            state: ac.state,
+            baseLatency: ac.baseLatency,
+            outputLatency: ac.outputLatency
+          };
+          ac.close();
+          return result;
+        } catch(e) {
+          return { error: e.message };
+        }
+      })(),
+
+      // 采集时间
+      collectedAt: new Date().toISOString(),
+
+      // 备注
+      note: '此 JSON 用于 GhostBrowse CHROME_VERSION_CONFIG 配置，请复制后提交给管理员'
+    };
+
+    return report;
+  }
+
+  function testCSS(property, value) {
+    try {
+      return typeof CSS !== 'undefined' && CSS.supports ? CSS.supports(property, value) : false;
+    } catch(e) {
+      return false;
+    }
+  }
+
+  function showResultModal(report) {
+    // 移除已存在的弹窗
+    var existing = document.getElementById('__ghostbrowse_modal');
+    if (existing) existing.remove();
+
+    var json = JSON.stringify(report, null, 2);
+
+    var modal = document.createElement('div');
+    modal.id = '__ghostbrowse_modal';
+    modal.style.cssText = [
+      'position: fixed !important',
+      'top: 50% !important',
+      'left: 50% !important',
+      'transform: translate(-50%, -50%) !important',
+      'width: 85% !important',
+      'max-width: 900px !important',
+      'height: 85% !important',
+      'background: #fff !important',
+      'border: 2px solid #1890ff !important',
+      'border-radius: 8px !important',
+      'z-index: 2147483647 !important',
+      'padding: 20px !important',
+      'box-shadow: 0 8px 24px rgba(0,0,0,0.2) !important',
+      'display: flex !important',
+      'flex-direction: column !important',
+      'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important'
+    ].join(' !important; ') + ' !important;';
+
+    modal.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-shrink:0;">' +
+      '<div>' +
+        '<h3 style="margin:0;font-size:16px;color:#333;">GhostBrowse 指纹采集结果</h3>' +
+        '<p style="margin:4px 0 0 0;font-size:12px;color:#666;">Chrome ' + report.chromeVersion + ' | ' + report.collectedAt + '</p>' +
+      '</div>' +
+      '<button id="__gb_close" style="background:#ff4d4f;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;">关闭</button>' +
+    '</div>' +
+    '<textarea id="__gb_textarea" style="flex:1;width:100%;font-family:monospace;font-size:11px;resize:none;border:1px solid #d9d9d9;border-radius:4px;padding:8px;" readonly>' + json.replace(/</g, '<').replace(/>/g, '>') + '</textarea>' +
+    '<div style="display:flex;gap:10px;margin-top:12px;flex-shrink:0;">' +
+      '<button id="__gb_copy" style="flex:1;background:#1890ff;color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px;">📋 复制 JSON</button>' +
+      '<button id="__gb_download" style="flex:1;background:#52c41a;color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px;">💾 下载 JSON</button>' +
+    '</div>';
+
+    document.body.appendChild(modal);
+
+    // 关闭按钮
+    document.getElementById('__gb_close').addEventListener('click', function() { modal.remove(); });
+
+    // 复制按钮
+    document.getElementById('__gb_copy').addEventListener('click', function() {
+      navigator.clipboard.writeText(json).then(function() {
+        var btn = document.getElementById('__gb_copy');
+        btn.textContent = '✅ 已复制';
+        btn.style.background = '#52c41a';
+        setTimeout(function() {
+          btn.textContent = '📋 复制 JSON';
+          btn.style.background = '#1890ff';
+        }, 2000);
+      }).catch(function() { alert('复制失败，请手动复制文本框内容'); });
+    });
+
+    // 下载按钮
+    document.getElementById('__gb_download').addEventListener('click', function() {
+      var blob = new Blob([json], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'ghostbrowse-fingerprint-chrome' + report.chromeVersion + '-' + Date.now() + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+  }
+
+  // 暴露到全局，供外部调用
+  window.__ghostbrowse_collectFingerprint = collectFullFingerprint;
 })();
