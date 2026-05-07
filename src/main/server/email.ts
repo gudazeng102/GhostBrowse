@@ -32,7 +32,7 @@ function getProxyUrl(): string | undefined {
   
   for (const proxy of envProxyVars) {
     if (proxy) {
-      console.log('[Email] 检测到环境变量代理:', proxy)
+
       return proxy
     }
   }
@@ -47,14 +47,14 @@ function getProxyUrl(): string | undefined {
     const match = result.match(/ProxyServer\s+REG_SZ\s+(.+)/)
     if (match && match[1]) {
       const proxyServer = match[1].trim()
-      console.log('[Email] 检测到 Windows 系统代理:', proxyServer)
+
       return `http://${proxyServer}`
     }
   } catch (e) {
     // 注册表查询失败，忽略
   }
   
-  console.log('[Email] 未检测到系统代理')
+
   return undefined
 }
 
@@ -145,13 +145,13 @@ export async function sendVerificationCode(
 
   // 4. 开发模式下直接输出验证码到控制台
   if (isDevMode) {
-    console.log('===========================================')
-    console.log(`[Email Dev Mode] 验证码已生成（未配置 SMTP）`)
-    console.log(`  收件人: ${email}`)
-    console.log(`  用途: ${purpose}`)
-    console.log(`  验证码: ${verificationCode}`)
-    console.log(`  有效期: 5 分钟`)
-    console.log('===========================================')
+
+
+
+
+
+
+
     return
   }
 
@@ -163,7 +163,7 @@ export async function sendVerificationCode(
       subject,
       html: htmlContent
     })
-    console.log(`[Email] 验证码已发送到: ${email}`)
+
   } catch (err) {
     console.error(`[Email] 发送验证码失败: ${email}`, err)
     throw err

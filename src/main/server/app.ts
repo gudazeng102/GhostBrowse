@@ -52,7 +52,7 @@ export function createApp(): Express {
     ? path.join(process.cwd(), 'dist')
     : path.join(process.cwd(), 'dist')
   
-  console.log(`[Express] 静态文件目录: ${distPath}`)
+
   app.use(express.static(distPath))
 
   // ==================== API 路由 ====================
@@ -133,8 +133,8 @@ export function startServer(port: number = 3000, host: string = '0.0.0.0'): Prom
 
     // 启动监听
     const server = appInstance.listen(port, host, () => {
-      console.log(`[Express] 服务器已启动: http://${host}:${port}`)
-      console.log(`[Express] 静态文件目录: ${path.join(process.cwd(), 'dist')}`)
+
+
       resolve()
     })
 

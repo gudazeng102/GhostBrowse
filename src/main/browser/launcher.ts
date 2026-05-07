@@ -19,6 +19,142 @@ import { app, screen } from 'electron'
 import * as http from 'http'
 import * as net from 'net'
 import * as tls from 'tls'
+import { getDatabase } from '../server/db'
+
+// ==================== Phase 3.5 Rev2: Session Tab Manager（Electron 主进程集中心跳）====================
+
+interface TabInfo {
+  url: string
+  title: string | null
+  active: number
+  updatedAt: number
+}
+
+  // 每个 profile 的标签页管理器
+const profileTabManagers = new Map<number, {
+  tabs: TabInfo[]
+  syncTimer: NodeJS.Timeout | null
+  pollTimer: NodeJS.Timeout | null
+  debugPort: number
+}>()
+
+/**
+ * 通过 HTTP POST /api/v1/profiles/:id/session-tabs/bulk 同步标签页到后端
+ */
+async function syncSessionTabs(profileId: number) {
+  const manager = profileTabManagers.get(profileId)
+  if (!manager) return
+
+  try {
+    const body = JSON.stringify({ tabs: manager.tabs })
+    const res = await fetch(`http://localhost:3000/api/v1/profiles/${profileId}/session-tabs/bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body
+    })
+    if (res.ok) {
+      console.log(`[SessionManager] Profile ${profileId} 同步 ${manager.tabs.length} 个标签页`)
+    }
+  } catch (err) {
+    console.warn(`[SessionManager] Profile ${profileId} 同步失败: ${err}`)
+  }
+}
+
+/**
+ * 启动某 profile 的 Session Tab Manager
+ * 监听 CDP 事件并每 5 秒同步
+ */
+export function startSessionTabManager(profileId: number, debugPort: number) {
+  if (profileTabManagers.has(profileId)) {
+    stopSessionTabManager(profileId)
+  }
+
+  const manager = {
+    tabs: [] as TabInfo[],
+    syncTimer: null as NodeJS.Timeout | null,
+    pollTimer: null as NodeJS.Timeout | null,
+    debugPort
+  }
+  profileTabManagers.set(profileId, manager)
+
+  // 每 5 秒同步一次到后端
+  manager.syncTimer = setInterval(() => {
+    syncSessionTabs(profileId)
+  }, 5000)
+
+  // 通过 CDP 监听标签页变化
+  // Chrome DevTools Protocol over HTTP
+  const cdpUrl = `http://localhost:${debugPort}/json`
+
+  async function fetchCDPTabs() {
+    try {
+      const res = await fetch(cdpUrl)
+      if (!res.ok) return []
+      return await res.json() as any[]
+    } catch {
+      return []
+    }
+  }
+
+  // 轮询方式监听标签页（每 2 秒检查一次）
+  const pollTimer = setInterval(async () => {
+    const pages = await fetchCDPTabs()
+    if (pages.length > 0) {
+      const now = Date.now()
+      // 取所有页面中 active 状态最新的作为 active
+      const activePage = pages.find((p: any) => p.active) || pages[0]
+      manager.tabs = pages.map((p: any, idx: number) => ({
+        url: p.url || p.url,
+        title: p.title || null,
+        active: p.id === activePage?.id ? 1 : 0,
+        updatedAt: now
+      }))
+     // console.log(`[SessionManager] Profile ${profileId} 更新标签页: ${manager.tabs.length} 个`)
+      console.log(`[SessionManager] Profile ${profileId} 更新标签页: ${manager.tabs.length} 个`)
+
+    }
+  }, 2000)
+
+  // 清理时同时清理轮询
+  const originalStop = () => {
+    clearInterval(pollTimer)
+    if (manager.syncTimer) {
+      clearInterval(manager.syncTimer)
+      manager.syncTimer = null
+    }
+    // 窗口关闭前同步一次
+    syncSessionTabs(profileId)
+  }
+
+  console.log(`[SessionManager] Profile ${profileId} Session Tab Manager 已启动，debugPort=${debugPort}`)
+}
+
+/**
+ * 停止某 profile 的 Session Tab Manager
+ */
+export function stopSessionTabManager(profileId: number) {
+  const manager = profileTabManagers.get(profileId)
+  if (!manager) return
+
+  if (manager.pollTimer) {
+    clearInterval(manager.pollTimer)
+  }
+  if (manager.syncTimer) {
+    clearInterval(manager.syncTimer)
+  }
+  // 最后同步一次
+  syncSessionTabs(profileId)
+  profileTabManagers.delete(profileId)
+
+  console.log(`[SessionManager] Profile ${profileId} Session Tab Manager 已停止`)
+}
+
+/**
+ * 获取某 profile 的所有标签页
+ */
+export function getProfileTabs(profileId: number): TabInfo[] {
+  return profileTabManagers.get(profileId)?.tabs || []
+}
 
 // ==================== 类型定义 ====================
 
@@ -124,7 +260,7 @@ function findAvailableChromePath(preferredVersion: string): string | null {
   // 1. 首先检查内嵌 Chromium
   const embeddedPath = getEmbeddedChromeExePath(preferredVersion)
   if (fs.existsSync(embeddedPath)) {
-    console.log(`[BrowserLauncher] 使用内嵌 Chromium: ${embeddedPath}`)
+
     return embeddedPath
   }
 
@@ -133,7 +269,7 @@ function findAvailableChromePath(preferredVersion: string): string | null {
     if (version === preferredVersion) continue
     const otherPath = getEmbeddedChromeExePath(version)
     if (fs.existsSync(otherPath)) {
-      console.log(`[BrowserLauncher] 使用备用内嵌 Chromium ${version}: ${otherPath}`)
+
       return otherPath
     }
   }
@@ -147,7 +283,7 @@ function findAvailableChromePath(preferredVersion: string): string | null {
 
   for (const candidate of systemCandidates) {
     if (fs.existsSync(candidate)) {
-      console.log(`[BrowserLauncher] 使用系统 Chrome: ${candidate}`)
+
       return candidate
     }
   }
@@ -160,7 +296,7 @@ function findAvailableChromePath(preferredVersion: string): string | null {
 
   for (const candidate of edgeCandidates) {
     if (fs.existsSync(candidate)) {
-      console.log(`[BrowserLauncher] 使用系统 Edge: ${candidate}`)
+
       return candidate
     }
   }
@@ -179,7 +315,7 @@ async function patchChromeIcon(chromeExePath: string, iconPath: string): Promise
 
   // 如果已修改过，跳过
   if (fs.existsSync(patchedMarker)) {
-    console.log(`[rcedit] 图标已修改，跳过: ${chromeExePath}`)
+
     return
   }
 
@@ -205,7 +341,7 @@ async function patchChromeIcon(chromeExePath: string, iconPath: string): Promise
   if (!fs.existsSync(backupPath)) {
     try {
       fs.copyFileSync(chromeExePath, backupPath)
-      console.log(`[rcedit] 已备份原始文件: ${backupPath}`)
+
     } catch (e) {
       console.warn(`[rcedit] 备份失败（不影响继续）: ${e}`)
     }
@@ -216,7 +352,7 @@ async function patchChromeIcon(chromeExePath: string, iconPath: string): Promise
     const { exec } = require('child_process')
     const cmd = `"${rceditPath}" "${chromeExePath}" --set-icon "${iconPath}"`
 
-    console.log(`[rcedit] 执行: ${cmd}`)
+
 
     exec(cmd, { timeout: 30000, windowsHide: true }, (err: any, stdout: string, stderr: string) => {
       if (err) {
@@ -234,7 +370,7 @@ async function patchChromeIcon(chromeExePath: string, iconPath: string): Promise
           icon: iconPath,
           patchedAt: new Date().toISOString()
         }))
-        console.log(`[rcedit] 图标修改成功: ${iconPath}`)
+
       } catch (e) {
         console.warn(`[rcedit] 写入标记文件失败: ${e}`)
       }
@@ -332,7 +468,7 @@ function createLocalProxy(proxy: Proxy): { url: string; server: http.Server } {
   })
   
   server.listen(localPort, '127.0.0.1')
-  console.log(`[LocalProxy] 启动: http://127.0.0.1:${localPort} -> ${proxy.host}:${proxy.port}`)
+
   
   return {
     url: `http://127.0.0.1:${localPort}`,
@@ -397,7 +533,7 @@ function generateExtension(profile: Profile, proxy: Proxy | null): string {
   contentScript = contentScript.split('{{CONFIG}}').join(JSON.stringify(config))
   fs.writeFileSync(path.join(tempDir, 'content-script.js'), contentScript)
   
-  console.log(`[BrowserLauncher] Extension 生成到: ${tempDir}`)
+
   
   return tempDir
 }
@@ -414,9 +550,9 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
 
   // const version = profile.chromeVersion || '128'
 
-  console.log('[BrowserLauncher] 开始启动 Chrome...')
-  console.log(`[BrowserLauncher] 窗口: ${profile.title} (ID: ${profile.id})`)
-  console.log(`[BrowserLauncher] Chrome 版本: ${version}`)
+
+
+
 
   // === Phase 2.6: 查找可用的 Chrome 路径 ===
   const chromePath = findAvailableChromePath(version)
@@ -448,7 +584,7 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
 
   // 检查图标文件是否存在
   if (iconFullPath && fs.existsSync(iconFullPath)) {
-    console.log(`[rcedit] 准备修改图标: ${iconFullPath}`)
+
     try {
       await patchChromeIcon(chromePath, iconFullPath)
     } catch (e: any) {
@@ -468,7 +604,7 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
   if (!fs.existsSync(userDataDir)) {
     fs.mkdirSync(userDataDir, { recursive: true })
   }
-  console.log(`[BrowserLauncher] 用户数据目录: ${userDataDir}`)
+
 
   // === 生成指纹注入 Extension ===
   const extensionPath = generateExtension(profile, proxy)
@@ -484,7 +620,7 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
       const localProxy = createLocalProxy(proxy)
       localProxyServer = localProxy.server
       proxyServer = localProxy.url
-      console.log(`[BrowserLauncher] 使用本地转发: ${proxyServer}`)
+
     } else {
       const encode = (str: string | null) => str ? encodeURIComponent(str) : ''
       const user = encode(proxy.username)
@@ -526,11 +662,11 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
   
   if (screenWidth >= displayWidth && screenHeight >= displayHeight) {
     shouldMaximize = true
-    console.log(`[BrowserLauncher] 窗口布局: 最大化模式 (${screenWidth}x${screenHeight} >= ${displayWidth}x${displayHeight})`)
+
   } else {
     positionX = Math.floor((displayWidth - screenWidth) / 2)
     positionY = Math.floor((displayHeight - screenHeight) / 2)
-    console.log(`[BrowserLauncher] 窗口布局: 居中模式 (${screenWidth}x${screenHeight} at ${positionX},${positionY})`)
+
   }
   
   // === 构建 Chrome 启动参数 ===
@@ -541,7 +677,38 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
       : path.join(process.cwd(), 'resources', 'browser', version, 'homepage.html')
     return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : ' https://browserleaks.com/webgl'//'https://www.google.com'
   }
-  const startupUrl = (profile as any).startupUrl || getDefaultHomepage()
+  
+  // Phase 3.5: Session 标签页持久化恢复逻辑
+  // 优先级：startup_url > Session 恢复 > 默认 homepage
+  let startupUrls: string[] = []
+  
+  if ((profile as any).startupUrl) {
+    // Phase 2.1: 用户手动指定了启动页面，优先使用（保持原有逻辑）
+    startupUrls = [(profile as any).startupUrl]
+
+  } else {
+    // Phase 3.5: 无 startup_url，尝试从数据库恢复 Session 标签页
+    try {
+      const db = getDatabase()
+      // 查询该 profile 的所有标签页，按 sort_order 排序
+      const tabs = db.prepare(`
+        SELECT url FROM profile_session_tabs 
+        WHERE profile_id = ? 
+        ORDER BY sort_order ASC, updated_at DESC
+      `).all(profile.id) as { url: string }[]
+      
+      if (tabs && tabs.length > 0) {
+        startupUrls = tabs.map((t: { url: string }) => t.url)
+
+      } else {
+
+        startupUrls = [getDefaultHomepage()]
+      }
+    } catch (err) {
+      console.warn(`[BrowserLauncher] 查询 Session 失败: ${err}，使用默认首页`)
+      startupUrls = [getDefaultHomepage()]
+    }
+  }
   
   const args: string[] = [
     `--user-data-dir=${userDataDir}`,
@@ -549,7 +716,8 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
     `--user-agent=${userAgent}`,
     `--window-size=${windowWidth},${windowHeight}`,
     `--window-position=${positionX},${positionY}`,
-    // Phase 3.1: 已删除 --test-type（防止显示"自动化测试控制"提示条）
+      `--remote-debugging-port=${9000 + profile.id}`,
+      // Phase 3.1: 已删除 --test-type（防止显示"自动化测试控制"提示条）
     `--disable-features=IsolateOrigins,site-per-process`,
     `--enable-features=ChromeExtensionsOnChromeURLs`,
     `--no-first-run`,
@@ -559,7 +727,7 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
     `--load-extension=${extensionPath}`,
       `--use-angle=swiftshader`,        // 强制 CPU 渲染
   `--disable-gpu-sandbox`,           // 配合 SwiftShader 必需
-    startupUrl
+    ...startupUrls
   ]
   
   if (shouldMaximize) {
@@ -570,8 +738,8 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
     args.push(`--proxy-server=${proxyServer}`)
   }
   
-  console.log(`[BrowserLauncher] Chrome 路径: ${chromePath}`)
-  console.log(`[BrowserLauncher] 启动参数: ${args.join(' ')}`)
+
+
   
   // === 启动 Chrome 进程 ===
   return new Promise((resolve, reject) => {
@@ -586,7 +754,7 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
       })
       
       const pid = chromeProcess.pid ?? -1
-      console.log(`[BrowserLauncher] Chrome 进程已启动，PID: ${pid}`)
+
       
       chromeProcess.on('error', (err) => {
         console.error(`[BrowserLauncher] Chrome 进程错误: ${err.message}`)
@@ -594,10 +762,12 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
       })
       
       chromeProcess.on('exit', (code, signal) => {
-        console.log(`[BrowserLauncher] Chrome 进程退出，code: ${code}, signal: ${signal}`)
+        // Phase 3.5 Rev2: 停止 Session Tab Manager
+        stopSessionTabManager(profile.id)
+
         if (localProxyServer) {
           localProxyServer.close()
-          console.log('[LocalProxy] 已关闭')
+
         }
         try {
           if (fs.existsSync(extensionPath)) {
@@ -611,7 +781,7 @@ const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯�
       chromeProcess.stdout?.on('data', (data) => {
         const log = data.toString().trim()
         if (log) {
-          console.log(`[Chrome stdout] ${log}`)
+
         }
       })
       
@@ -639,7 +809,7 @@ const profileProcessMap = new Map<number, { pid: number; userDataDir: string; st
 
 export function registerChromeProcess(profileId: number, pid: number, userDataDir: string): void {
   profileProcessMap.set(profileId, { pid, userDataDir, startTime: Date.now() })
-  console.log(`[BrowserLauncher] 注册进程: Profile ${profileId} -> PID ${pid}`)
+
 }
 
 export function getChromeProcessPid(profileId: number): number {
@@ -648,7 +818,7 @@ export function getChromeProcessPid(profileId: number): number {
 
 export function unregisterChromeProcess(profileId: number): void {
   profileProcessMap.delete(profileId)
-  console.log(`[BrowserLauncher] 注销进程: Profile ${profileId}`)
+
 }
 
 export function getRunningProfiles(): number[] {
@@ -659,7 +829,7 @@ export function getRunningProfiles(): number[] {
       process.kill(info.pid, 0)
       result.push(profileId)
     } catch {
-      console.log(`[BrowserLauncher] 进程已死亡，自动清理: Profile ${profileId} -> PID ${info.pid}`)
+
       profileProcessMap.delete(profileId)
     }
   }
@@ -683,11 +853,11 @@ export function isProfileRunning(profileId: number): boolean {
 export function closeProfile(profileId: number): boolean {
   const info = profileProcessMap.get(profileId)
   if (!info) {
-    console.log(`[BrowserLauncher] 关闭窗口失败: Profile ${profileId} 未运行`)
+
     return false
   }
   
-  console.log(`[BrowserLauncher] 关闭窗口: Profile ${profileId} -> PID ${info.pid}`)
+
   
   try {
     process.kill(info.pid, 'SIGTERM')
@@ -695,7 +865,7 @@ export function closeProfile(profileId: number): boolean {
     setTimeout(() => {
       try {
         process.kill(info.pid, 0)
-        console.log(`[BrowserLauncher] SIGTERM 失败，使用 SIGKILL: PID ${info.pid}`)
+
         process.kill(info.pid, 'SIGKILL')
       } catch {
         // 进程已正常终止
@@ -703,7 +873,7 @@ export function closeProfile(profileId: number): boolean {
     }, 1000)
     
     profileProcessMap.delete(profileId)
-    console.log(`[BrowserLauncher] 关闭窗口成功: Profile ${profileId}`)
+
     return true
   } catch (err: any) {
     console.error(`[BrowserLauncher] 关闭窗口失败: ${err.message}`)

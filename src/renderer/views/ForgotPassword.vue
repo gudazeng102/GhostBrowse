@@ -210,7 +210,7 @@ async function handleSubmit() {
       // 保存后端返回的 resetToken
       if (res.data?.data?.resetToken) {
         savedResetToken = res.data.data.resetToken
-        console.log('[ForgotPassword] 保存 resetToken:', savedResetToken)
+
       }
       modalVisible.value = true
     } else {

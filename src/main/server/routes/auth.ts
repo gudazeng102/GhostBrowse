@@ -222,7 +222,7 @@ router.post('/register', (req: Request, res: Response) => {
     // 9. 生成 Token
     const token = generateToken(userId, email)
 
-    console.log(`[Auth] 用户注册成功: ${email} (ID: ${userId})`)
+
 
     res.json({
       code: 200,
@@ -284,7 +284,7 @@ router.post('/login', (req: Request, res: Response) => {
     // 5. 生成 Token
     const token = generateToken(user.id, user.email)
 
-    console.log(`[Auth] 用户登录成功: ${user.email} (ID: ${user.id})`)
+
 
     res.json({
       code: 200,
@@ -346,7 +346,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
       WHERE email = ?
     `).run(resetToken, resetTokenExpires, Date.now(), email)
 
-    console.log(`[Auth] 忘记密码验证码已发送: ${email}`)
+
 
     res.json({
       code: 200,
@@ -391,12 +391,12 @@ router.post('/reset-password', (req: Request, res: Response) => {
 
     // 4. 验证码校验（通过邮箱查找用户）
     // 注意：reset_password 验证码校验需要知道邮箱，这里通过 token 中的信息获取
-    console.log(`[ResetPassword] 收到 token: "${body.token.trim()}"`)
-    console.log(`[ResetPassword] 当前时间戳: ${Date.now()}`)
+
+
     
     // 先检查 token 是否存在于数据库
     const tokenCheck = db.prepare('SELECT id, email, reset_token, reset_token_expires FROM users WHERE reset_token = ?').get(body.token.trim()) as any
-    console.log(`[ResetPassword] Token 查询结果:`, tokenCheck)
+
     
     const user = db.prepare(
       'SELECT * FROM users WHERE reset_token = ? AND reset_token_expires > ?'
@@ -423,7 +423,7 @@ router.post('/reset-password', (req: Request, res: Response) => {
       WHERE id = ?
     `).run(passwordHash, Date.now(), user.id)
 
-    console.log(`[Auth] 密码重置成功: ${user.email}`)
+
 
     res.json({
       code: 200,

@@ -572,7 +572,7 @@ async function handleHostPaste(e: Event) {
   
   // 尝试解析
   const parsed = parseProxyString(pastedText)
-  console.log(parsed,'parsed');
+
   
   if (parsed) {
     // 阻止默认粘贴行为

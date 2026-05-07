@@ -28,7 +28,7 @@ request.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`
     }
     
-    console.log(`[Request] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`)
+
     return config
   },
   (error) => {
@@ -40,7 +40,7 @@ request.interceptors.request.use(
 // 响应拦截器
 request.interceptors.response.use(
   (response: AxiosResponse) => {
-    console.log(`[Response] ${response.status} ${response.config.url}`)
+
     return response
   },
   (error) => {

@@ -125,6 +125,16 @@
                 检测指纹
               </a-button>
 
+              <!-- Phase 3.5: Session 标签页按钮 -->
+              <a-button 
+                type="link" 
+                size="small"
+                @click="handleShowSession(record)"
+              >
+                <FileTextOutlined />
+                Session
+              </a-button>
+
             </a-space>
           </template>
         </template>
@@ -138,6 +148,56 @@
       :loading="checkingId !== null"
       @checkAgain="handleCheckAgain"
     />
+
+    <!-- Phase 3.5: Session 标签页弹窗 -->
+    <a-modal
+      v-model:open="sessionModalVisible"
+      title="📑 Session 标签页"
+      :footer="null"
+      width="600px"
+      :destroyOnClose="true"
+    >
+      <a-spin :spinning="sessionLoading">
+        <div v-if="sessionTabs.length === 0" class="empty-session">
+          <a-empty description="暂无保存的标签页" />
+        </div>
+        <a-list v-else :data-source="sessionTabs" size="small" bordered>
+          <template #renderItem="{ item, index }">
+            <a-list-item>
+              <template #actions>
+                <a-button type="link" size="small" @click="handleOpenTab(item.url)">
+                  🔗 打开
+                </a-button>
+                <a-button type="link" size="small" danger @click="handleRemoveTab(item.url)">
+                  🗑️
+                </a-button>
+              </template>
+              <a-list-item-meta>
+                <template #title>
+                  <span class="tab-title">{{ item.title || '无标题' }}</span>
+                </template>
+                <template #description>
+                  <a-tag :color="item.active ? 'green' : 'default'" size="small">
+                    {{ item.active ? '🟢 活动' : '⚪ 后台' }}
+                  </a-tag>
+                  <span class="tab-url">{{ item.url }}</span>
+                </template>
+              </a-list-item-meta>
+            </a-list-item>
+          </template>
+        </a-list>
+      </a-spin>
+      <template #footer>
+        <a-space>
+          <a-button @click="handleClearSession">
+            🗑️ 清理全部
+          </a-button>
+          <a-button type="primary" @click="sessionModalVisible = false">
+            关闭
+          </a-button>
+        </a-space>
+      </template>
+    </a-modal>
   </div>
 </template>
 
@@ -145,13 +205,74 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { SafetyOutlined } from '@ant-design/icons-vue'
-import { getProfileList, deleteProfile, launchProfile, getProfilesStatus, closeProfile, type ProfileRecord } from '../api/profile'
+import { SafetyOutlined, FileTextOutlined } from '@ant-design/icons-vue'
+import { getProfileList, deleteProfile, launchProfile, getProfilesStatus, closeProfile, type ProfileRecord, getSessionTabs, clearSessionTabs, type SessionTabRecord } from '../api/profile'
 import { checkFingerprint } from '../api/fingerprint'
 import FingerprintCheckModal from '../components/FingerprintCheckModal.vue'
 import type { FingerprintCheckResult } from '../../types'
 
 const router = useRouter()
+
+// ==================== Phase 3.5: Session 标签页相关状态和函数 ====================
+
+const sessionModalVisible = ref(false)
+const sessionLoading = ref(false)
+const sessionTabs = ref<SessionTabRecord[]>([])
+const currentSessionProfileId = ref<number | null>(null)
+
+function handleShowSession(record: ProfileRecord) {
+  currentSessionProfileId.value = record.id
+  loadSessionTabs(record.id)
+  sessionModalVisible.value = true
+}
+
+async function loadSessionTabs(profileId: number) {
+  sessionLoading.value = true
+  try {
+    const tabs = await getSessionTabs(profileId)
+    sessionTabs.value = tabs
+  } catch (err: any) {
+    console.error('[ProfileList] 加载 Session 标签页失败:', err)
+    message.error('加载 Session 标签页失败')
+  } finally {
+    sessionLoading.value = false
+  }
+}
+
+function handleOpenTab(url: string) {
+  // 使用 shell 打开外部链接
+  window.open(url, '_blank')
+}
+
+async function handleRemoveTab(url: string) {
+  // 前端不做单独删除，只刷新列表
+  if (currentSessionProfileId.value) {
+    // 后端使用 INSERT OR REPLACE，关闭标签页后超过 15 秒不上报就会自动删除
+    // 这里只是本地刷新显示，实际记录会在后端清理
+    message.info('标签页会在窗口关闭后自动清理')
+  }
+}
+
+async function handleClearSession() {
+  if (currentSessionProfileId.value === null) return
+  
+  Modal.confirm({
+    title: '确认清理',
+    content: '确定要清空该窗口的所有 Session 标签页记录吗？',
+    okText: '确认',
+    cancelText: '取消',
+    async onOk() {
+      try {
+        const count = await clearSessionTabs(currentSessionProfileId.value)
+        message.success(`已清理 ${count} 条记录`)
+        sessionTabs.value = []
+      } catch (err: any) {
+        console.error('[ProfileList] 清理 Session 失败:', err)
+        message.error('清理失败')
+      }
+    }
+  })
+}
 
 // ==================== Phase 2.0: 指纹检测相关状态和函数 ====================
 
@@ -308,7 +429,7 @@ async function loadProfileStatus() {
   try {
     const status = await getProfilesStatus()
     runningIds.value = status.runningIds || []
-    console.log('[ProfileList] 状态已刷新，运行中:', runningIds.value)
+
   } catch (error) {
     console.error('加载窗口状态失败:', error)
   } finally {

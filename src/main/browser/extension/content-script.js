@@ -106,7 +106,7 @@
   // real 模式：不做任何处理，让网站看到真实的本地 IP
   if (config.webrtc_mode === 'real') {
     // 不劫持 RTCPeerConnection，保持原样
-    console.log('[GhostBrowse Extension] WebRTC real 模式: 不处理，使用真实IP');
+
   } else if (config.webrtc_mode === 'disable') {
     // 完全禁用 WebRTC
     delete window.RTCPeerConnection;
@@ -211,7 +211,7 @@
             const ip = extractIPFromCandidate(candidateInit.candidate);
             if (ip && isPrivateIP(ip)) {
               // 构造一个空 candidate，不包含私有 IP
-              console.log('[GhostBrowse Extension] WebRTC Forward: 拦截私有 IP candidate', ip);
+
               const safeCandidate = { ...candidateInit, candidate: '' };
               return new _OrigRTCIceCandidate(safeCandidate);
             }
@@ -249,7 +249,7 @@
                 const ip = extractIPFromCandidate(event.candidate.candidate);
                 if (ip && isPrivateIP(ip)) {
                   // 阻止包含私有 IP 的 candidate 向上传递
-                  console.log('[GhostBrowse Extension] WebRTC Forward: 过滤私有 IP candidate', ip);
+
                   Object.defineProperty(event, 'candidate', {
                     value: { candidate: '', sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex },
                     writable: true,
@@ -275,7 +275,7 @@
                   if (event.candidate) {
                     const ip = extractIPFromCandidate(event.candidate.candidate);
                     if (ip && isPrivateIP(ip)) {
-                      console.log('[GhostBrowse Extension] WebRTC Forward: onicecandidate 过滤私有 IP', ip);
+
                       Object.defineProperty(event, 'candidate', {
                         value: { candidate: '', sdpMid: event.candidate.sdpMid, sdpMLineIndex: event.candidate.sdpMLineIndex },
                         writable: true,
@@ -303,7 +303,7 @@
             // 替换 SDP 中的私有 IP
             const filteredSdp = sdp.sdp.replace(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g, (match, ip) => {
               if (isPrivateIP(ip)) {
-                console.log('[GhostBrowse Extension] WebRTC Forward: SDP 替换私有 IP', ip);
+
                 return '0.0.0.0';
               }
               return ip;
@@ -317,7 +317,7 @@
           return originalCreateAnswer(...args).then(sdp => {
             const filteredSdp = sdp.sdp.replace(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g, (match, ip) => {
               if (isPrivateIP(ip)) {
-                console.log('[GhostBrowse Extension] WebRTC Forward: SDP 替换私有 IP', ip);
+
                 return '0.0.0.0';
               }
               return ip;
@@ -326,7 +326,7 @@
           });
         };
         
-        console.log('[GhostBrowse Extension] WebRTC Forward 模式: 强制使用 Google STUN + 私有 IP 过滤');
+
         return pc;
       };
       
@@ -476,7 +476,7 @@
     });
   }
   
-  console.log('[GhostBrowse Extension] Fingerprint injection loaded');
+
 })();
 
 // ==================== Phase 3.1: 核心反检测指纹补全（追加在文件末尾） ====================
@@ -878,7 +878,7 @@
     delete navigator.__proto__.webdriver;
   } catch(e) {}
 
-  console.log('[GhostBrowse Phase 3.1] 核心反检测指纹补全完成');
+
 })();
 
 // ==================== Phase 3.2: Canvas/WebGL/Audio/ClientRects 深度伪装（追加在文件末尾） ====================
@@ -1427,7 +1427,7 @@
     configurable: true
   });
 
-  console.log('[GhostBrowse Phase 3.2] Canvas/WebGL/Audio/ClientRects 深度伪装完成');
+
 })();
 
 // ==================== Phase 3.3: 设备指纹完整化 + 一致性校验引擎（追加在文件末尾） ====================
@@ -1738,7 +1738,7 @@
 
   Object.defineProperty(window, 'originAgentCluster', { get: () => false, configurable: true });
 
-  console.log('[GhostBrowse Phase 3.3] 设备指纹完整化 + 一致性校验引擎完成');
+
 })();
 
 // ==================== Phase 3.4: 行为模拟引擎（鼠标/滚动/点击）- 追加在文件末尾 ====================
@@ -1758,11 +1758,11 @@
     const behaviorEnabled = typeof config !== 'undefined' ? (config.behavior_enabled !== false) : true;
 
     if (!behaviorEnabled) {
-      console.log('[GhostBrowse Phase 3.4] 行为模拟引擎已禁用');
+
       return;
     }
 
-    console.log('[GhostBrowse Phase 3.4] 行为模拟引擎已启动');
+
 
     // ===== 维度 1: 鼠标轨迹模拟 —— 贝塞尔曲线插值 =====
     // Fitts 定律：距离越短速度越慢，距离越长先加速后减速
@@ -1983,7 +1983,114 @@
       });
     };
 
-    console.log('[GhostBrowse Phase 3.4] 行为模拟引擎已初始化：鼠标轨迹/神经抖动/惯性滚动/点击延迟/打字节奏');
+
   }
+})();
+
+// ==================== Phase 3.5: 窗口级 Session 标签页持久化引擎 ====================
+// 
+// 职责：每 5 秒心跳上报当前标签页 URL 到后端
+// 策略：使用 INSERT OR REPLACE，以 profile_id + url 为联合唯一键
+// 清理：后端定期删除超过 15 秒未更新的记录（视为已关闭的标签页）
+// 注意：此 IIFE 独立运行，不影响已有指纹注入逻辑
+
+(function() {
+  'use strict';
+
+  // 获取配置
+  let CONFIG
+  try {
+    CONFIG = typeof window.__GB_CONFIG__ !== 'undefined' 
+      ? window.__GB_CONFIG__ 
+      : {{CONFIG}}
+
+  } catch(e) {
+    console.error('[GB Session] ❌ CONFIG 解析失败:', e.message)
+    return
+  }
+
+  // Phase 3.5: Session 心跳上报间隔（毫秒）
+  const HEARTBEAT_INTERVAL = 5000
+
+  // 获取当前页面是否可见（用于标记 active 状态）
+  function isPageVisible() {
+    return document.visibilityState === 'visible' || document.visibilityState === 'hidden'
+  }
+
+  // 上报当前标签页到后端
+  function reportSessionTab() {
+    const profileId = CONFIG.profile_id
+    if (!profileId) {
+      console.warn('[GhostBrowse Phase 3.5] profile_id 未配置，跳过心跳上报')
+      return
+    }
+
+    const url = window.location.href
+    const title = document.title || ''
+    const active = isPageVisible() ? 1 : 0
+
+    // ✅ Phase 3.5: 打印打开的标签页
+
+
+    // 直接调用后端 API（localhost:3000，同源请求，无 CORS 问题）
+    fetch(`http://localhost:3000/api/v1/profiles/${profileId}/session-tabs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, title, active })
+    }).then(response => {
+      if (!response.ok) {
+        console.warn(`[GhostBrowse Phase 3.5] 心跳上报失败: ${response.status}`)
+      } else {
+        // ✅ Phase 3.5: 上报成功后查询并打印当前存储的 session 列表
+        return fetch(`http://localhost:3000/api/v1/profiles/${profileId}/session-tabs`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        }).then(r => r.json()).then(data => {
+          const tabs = data?.data?.tabs || []
+
+          tabs.forEach((t, i) => {
+
+          })
+        }).catch(() => {})
+      }
+    }).catch(err => {
+      // 静默失败，不影响页面功能
+      console.warn(`[GhostBrowse Phase 3.5] 心跳上报异常: ${err.message}`)
+    })
+  }
+
+  // 页面加载完成时立即上报一次
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    setTimeout(reportSessionTab, 100)
+  } else {
+    window.addEventListener('DOMContentLoaded', () => {
+      setTimeout(reportSessionTab, 100)
+    })
+  }
+
+  // 页面获得焦点时上报
+  window.addEventListener('focus', () => {
+    setTimeout(reportSessionTab, 100)
+  })
+
+  // 页面关闭前上报（尽量发送，但不做强制等待）
+  window.addEventListener('beforeunload', () => {
+    const profileId = CONFIG.profile_id
+    if (!profileId) return
+
+    const url = window.location.href
+    const title = document.title || ''
+
+    // 使用 sendBeacon 发送异步请求（不阻塞页面关闭）
+    navigator.sendBeacon(
+      `http://localhost:3000/api/v1/profiles/${profileId}/session-tabs`,
+      JSON.stringify({ url, title, active: 0 })
+    )
+  })
+
+  // 定时心跳上报（每 5 秒）
+  setInterval(reportSessionTab, HEARTBEAT_INTERVAL)
+
+
 })();
 

@@ -188,3 +188,41 @@ export async function generateFingerprint(proxyId?: number): Promise<any> {
   const response = await request.post<any>('/profiles/generate-fingerprint', { proxyId })
   return response.data
 }
+
+// ==================== Phase 3.5: Session Tabs API ====================
+
+/** Session 标签页记录 */
+export interface SessionTabRecord {
+  url: string
+  title: string | null
+  active: number
+  sort_order: number
+}
+
+/**
+ * 获取窗口的 Session 标签页列表
+ * @param profileId 窗口 ID
+ */
+export async function getSessionTabs(profileId: number): Promise<SessionTabRecord[]> {
+  const response = await request.get<any>(`/profiles/${profileId}/session-tabs`)
+  return response.data?.data?.tabs || []
+}
+
+/**
+ * 清除窗口的 Session 标签页记录
+ * @param profileId 窗口 ID
+ */
+export async function clearSessionTabs(profileId: number): Promise<number> {
+  const response = await request.delete<any>(`/profiles/${profileId}/session-tabs`)
+  return response.data?.data?.deleted || 0
+}
+
+/**
+ * Phase 3.5 Rev2: 同步 Session 标签页列表（整表替换）
+ * @param profileId 窗口 ID
+ * @param tabs 标签页数组
+ */
+export async function syncSessionTabs(profileId: number, tabs: Array<{ url: string; title?: string; active?: number }>): Promise<number> {
+  const response = await request.post<any>(`/profiles/${profileId}/session-tabs/bulk`, { tabs })
+  return response.data?.data?.count || 0
+}

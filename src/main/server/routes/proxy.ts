@@ -379,7 +379,7 @@ router.post('/:id/check', async (req: AuthRequest, res: Response) => {
     const { id } = req.params
     const { channel } = req.body as { channel: string }
     
-    console.log(`[Proxy Check] 检测请求: proxyId=${id}, channel=${channel}`)
+
     
     // 1. 验证渠道
     const channelConfig = CHECK_CHANNELS.find(c => c.id === channel)
@@ -451,7 +451,7 @@ router.post('/:id/check', async (req: AuthRequest, res: Response) => {
           ? `http://${proxy.username}:${proxy.password || ''}@${proxy.host}:${proxy.port}`
           : `http://${proxy.host}:${proxy.port}`
         
-        console.log(`[Proxy Check] SOCKS5 代理使用 HTTP CONNECT: ${proxy.host}:${proxy.port}`)
+
         const agent = new (HttpProxyAgent as any)(proxyUrl)
         axiosConfig.httpAgent = agent
         axiosConfig.httpsAgent = agent
@@ -552,7 +552,7 @@ router.post('/check-direct', async (req: Request, res: Response) => {
       channel: string
     }
 
-    console.log(`[Proxy Check Direct] 检测请求: host=${host}:${port}, channel=${channel}`)
+
 
     // 1. 验证必填字段
     if (!host || !host.trim()) {

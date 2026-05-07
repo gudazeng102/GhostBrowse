@@ -23,7 +23,7 @@ let mainWindow: any = null
  * 创建 Electron 主窗口
  */
 async function createWindow(): Promise<void> {
-  console.log('[Electron] 创建主窗口...')
+
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -71,7 +71,7 @@ async function createWindow(): Promise<void> {
   // 等待窗口准备好再显示
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
-    console.log('[Electron] 主窗口已显示')
+
   })
 
   // 窗口关闭时
@@ -86,11 +86,11 @@ async function createWindow(): Promise<void> {
     ? 'http://localhost:5173'
     : 'http://localhost:3000'
 
-  console.log(`[Electron] 加载 URL: ${loadURL}`)
+
   
   try {
     await mainWindow.loadURL(loadURL)
-    console.log('[Electron] 页面加载成功')
+
   } catch (err) {
     console.error('[Electron] 页面加载失败:', err)
   }
@@ -110,43 +110,43 @@ async function main(): Promise<void> {
   const dbPath = path.join(userDataPath, 'ghostbrowse.db')
   const profilesDir = path.join(userDataPath, 'profiles')
 
-  console.log('[GhostBrowse SelfCheck] ======================================')
-  console.log('[GhostBrowse SelfCheck] 应用版本:', app.getVersion())
-  console.log('[GhostBrowse SelfCheck] 打包模式:', app.isPackaged ? '生产环境' : '开发环境')
-  console.log('[GhostBrowse SelfCheck] UserData 路径:', userDataPath)
-  console.log('[GhostBrowse SelfCheck] 数据库路径:', dbPath)
-  console.log('[GhostBrowse SelfCheck] 数据库存在:', fs.existsSync(dbPath))
+
+
+
+
+
+
 
   // Extension 路径检查
   const extPath = app.isPackaged
     ? path.join(process.resourcesPath, 'extension')
     : path.join(process.cwd(), 'src', 'main', 'browser', 'extension')
-  console.log('[GhostBrowse SelfCheck] Extension 路径:', extPath)
-  console.log('[GhostBrowse SelfCheck] Extension 存在:', fs.existsSync(extPath))
-  console.log('[GhostBrowse SelfCheck] manifest.json 存在:', fs.existsSync(path.join(extPath, 'manifest.json')))
+
+
+
 
   // 自动创建 profiles 目录
   if (!fs.existsSync(profilesDir)) {
     fs.mkdirSync(profilesDir, { recursive: true })
-    console.log('[GhostBrowse SelfCheck] 已自动创建 profiles 目录:', profilesDir)
+
   }
 
-  console.log('[GhostBrowse SelfCheck] ======================================')
+
   // === Phase 1.7 打包后首次运行自检（结束）===
 
-  console.log('===========================================')
-  console.log('[GhostBrowse] Phase 1.0 启动中...')
-  console.log(`[GhostBrowse] 运行环境: ${isDev ? '开发模式' : '生产环境'}`)
-  console.log(`[GhostBrowse] Electron 版本: ${process.versions.electron}`)
-  console.log(`[GhostBrowse] Node 版本: ${process.versions.node}`)
-  console.log(`[GhostBrowse] Chrome 版本: ${process.versions.chrome}`)
-  console.log('===========================================')
+
+
+
+
+
+
+
 
   try {
     // Phase 1: 启动 Express 服务器
-    console.log('[GhostBrowse] 启动 Express 服务器...')
+
     await startServer(3000, '0.0.0.0')
-    console.log('[GhostBrowse] Express 服务器已就绪')
+
 
     // Phase 2: 创建 Electron 窗口
     await createWindow()
@@ -169,7 +169,7 @@ app.whenReady().then(main).catch(err => {
 app.on('window-all-closed', () => {
   // Windows/Linux: 关闭窗口后退出应用
   if (process.platform !== 'darwin') {
-    console.log('[GhostBrowse] 所有窗口已关闭，退出应用')
+
     app.quit()
   }
 })
@@ -183,7 +183,7 @@ app.on('activate', async () => {
 
 // 应用退出前清理
 app.on('before-quit', () => {
-  console.log('[GhostBrowse] 应用即将退出...')
+
   closeDatabase()
 })
 

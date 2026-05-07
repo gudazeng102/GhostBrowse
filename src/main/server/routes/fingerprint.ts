@@ -308,9 +308,9 @@ router.post('/check', async (req: AuthRequest, res: Response) => {
     // 步骤 3：代理联通检测
     let proxyResult: ProxyCheckResult
     if (proxyInfo) {
-      console.log(`[Fingerprint] 检测代理: ${proxyInfo.host}:${proxyInfo.port} (${proxyInfo.type})`)
+
       proxyResult = await checkProxyConnectivity(proxyInfo)
-      console.log(`[Fingerprint] 代理检测结果: ${proxyResult.status}, IP: ${proxyResult.ip}, 延迟: ${proxyResult.latency}ms`)
+
     } else {
       proxyResult = {
         status: 'no_proxy',
@@ -319,12 +319,12 @@ router.post('/check', async (req: AuthRequest, res: Response) => {
         city: '',
         latency: 0
       }
-      console.log('[Fingerprint] 窗口未绑定代理')
+
     }
 
     // 步骤 4：计算纯洁度评分
     const purity = calculatePurity(profile)
-    console.log(`[Fingerprint] 纯洁度评分: ${purity.score}分 (${purity.levelText}), 风险项: ${purity.warnings.length}`)
+
 
     // 步骤 5：构建指纹快照
     const snapshot = buildFingerprintSnapshot(profile)
@@ -352,7 +352,7 @@ router.post('/check', async (req: AuthRequest, res: Response) => {
       now
     )
 
-    console.log(`[Fingerprint] 检测记录已保存, ID: ${insertResult.lastInsertRowid}`)
+
 
     // 步骤 7：返回结果
     res.json({

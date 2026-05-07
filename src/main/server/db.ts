@@ -48,7 +48,7 @@ export function initDatabase(): Database.Database {
   }
 
   const dbPath = getDatabasePath()
-  console.log(`[DB] 数据库路径: ${dbPath}`)
+
 
   const dbDir = path.dirname(dbPath)
   if (!fs.existsSync(dbDir)) {
@@ -59,7 +59,7 @@ export function initDatabase(): Database.Database {
   db.pragma('foreign_keys = ON')
   runMigrations()
 
-  console.log('[DB] 数据库初始化完成')
+
   return db
 }
 
@@ -75,7 +75,7 @@ function migrateProfilesTable(): void {
     `).get()
 
     if (!tableExists) {
-      console.log('[DB] profiles 表尚不存在，跳过重建')
+
       return
     }
 
@@ -84,11 +84,11 @@ function migrateProfilesTable(): void {
     `).get() as { sql: string } | undefined
 
     if (hasCorrectCheck && hasCorrectCheck.sql.includes("'real'")) {
-      console.log('[DB] profiles 表结构已正确，跳过重建')
+
       return
     }
 
-    console.log('[DB] profiles 表 CHECK 约束需要更新，开始重建表...')
+
 
     db!.exec('BEGIN TRANSACTION')
     db!.exec('CREATE TABLE profiles_backup AS SELECT * FROM profiles')
@@ -124,7 +124,7 @@ function migrateProfilesTable(): void {
 
     db!.exec('DROP TABLE profiles_backup')
     db!.exec('COMMIT')
-    console.log('[DB] profiles 表重建完成')
+
   } catch (err: any) {
     db!.exec('ROLLBACK')
     console.error('[DB] profiles 表重建失败:', err.message)
@@ -138,7 +138,7 @@ function runMigrations(): void {
   if (!db) return
 
   const migrationsPath = getMigrationsPath()
-  console.log(`[DB] 迁移脚本路径: ${migrationsPath}`)
+
 
   if (!fs.existsSync(migrationsPath)) {
     console.error(`[DB] 迁移脚本不存在: ${migrationsPath}`)
@@ -165,13 +165,13 @@ function runMigrations(): void {
   for (const statement of statements) {
     try {
       db!.exec(statement)
-      console.log(`[DB] SQL 执行成功`)
+
     } catch (err: any) {
       console.error(`[DB] SQL 执行失败: ${err.message}`)
     }
   }
 
-  console.log('[DB] 数据库迁移完成，共执行 ' + statements.length + ' 条 SQL')
+
 
   migrateProfilesTable()
   migrateUserIdColumns()
@@ -179,7 +179,9 @@ function runMigrations(): void {
   migrateStartupUrlColumn()
   createCookieBackupsTable()
   migrateFingerprintColumns()
+  createSessionTabsTable()
 }
+
 
 /**
  * Phase 1.9: 多账号数据隔离 - 为现有表添加 user_id 字段
@@ -194,9 +196,9 @@ function migrateUserIdColumns(): void {
       const hasUserId = columns.some(col => col.name === 'user_id')
       if (!hasUserId) {
         db!.prepare(`ALTER TABLE ${table} ADD COLUMN user_id INTEGER`).run()
-        console.log(`[DB Migrate] 已为 ${table} 表添加 user_id 字段`)
+
       } else {
-        console.log(`[DB Migrate] ${table} 表已有 user_id 字段，跳过`)
+
       }
     } catch (err: any) {
       console.error(`[DB Migrate] 为 ${table} 表添加 user_id 字段失败:`, err.message)
@@ -216,7 +218,7 @@ function migrateExistingDataToUser(): void {
   const user = db.prepare('SELECT id FROM users WHERE email = ?').get(targetEmail) as { id: number } | undefined
 
   if (!user) {
-    console.log(`[DB Migrate] 用户 ${targetEmail} 尚未注册，跳过数据迁移。已有数据保持未归属状态。`)
+
     return
   }
 
@@ -224,21 +226,21 @@ function migrateExistingDataToUser(): void {
 
   try {
     const proxyResult = db.prepare('UPDATE proxies SET user_id = ? WHERE user_id IS NULL').run(userId)
-    console.log(`[DB Migrate] 已迁移 ${proxyResult.changes} 条代理记录到用户 ${targetEmail} (ID: ${userId})`)
+
   } catch (err: any) {
     console.error(`[DB Migrate] 迁移代理数据失败:`, err.message)
   }
 
   try {
     const profileResult = db.prepare('UPDATE profiles SET user_id = ? WHERE user_id IS NULL').run(userId)
-    console.log(`[DB Migrate] 已迁移 ${profileResult.changes} 条窗口记录到用户 ${targetEmail} (ID: ${userId})`)
+
   } catch (err: any) {
     console.error(`[DB Migrate] 迁移窗口数据失败:`, err.message)
   }
 
   try {
     const checkResult = db.prepare('UPDATE proxy_checks SET user_id = ? WHERE user_id IS NULL').run(userId)
-    console.log(`[DB Migrate] 已迁移 ${checkResult.changes} 条检测记录到用户 ${targetEmail} (ID: ${userId})`)
+
   } catch (err: any) {
     console.error(`[DB Migrate] 迁移检测记录失败:`, err.message)
   }
@@ -280,7 +282,7 @@ function createFingerprintChecksTable(): void {
       )
     `
     db!.prepare(sql).run()
-    console.log('[DB] fingerprint_checks 表创建成功')
+
   } catch (err: any) {
     console.error('[DB] fingerprint_checks 表创建失败:', err.message)
   }
@@ -297,9 +299,9 @@ function migrateStartupUrlColumn(): void {
     const hasStartupUrl = columns.some(col => col.name === 'startup_url')
     if (!hasStartupUrl) {
       db!.prepare('ALTER TABLE profiles ADD COLUMN startup_url TEXT').run()
-      console.log('[DB Migrate] 已为 profiles 表添加 startup_url 字段')
+
     } else {
-      console.log('[DB Migrate] profiles 表已有 startup_url 字段，跳过')
+
     }
   } catch (err: any) {
     console.error('[DB Migrate] 为 profiles 表添加 startup_url 字段失败:', err.message)
@@ -326,7 +328,7 @@ function createCookieBackupsTable(): void {
       )
     `
     db!.prepare(sql).run()
-    console.log('[DB] cookie_backups 表创建成功')
+
   } catch (err: any) {
     console.error('[DB] cookie_backups 表创建失败:', err.message)
   }
@@ -356,9 +358,9 @@ function migrateFingerprintColumns(): void {
     for (const col of newColumns) {
       if (!columnNames.includes(col.name)) {
         db!.prepare(`ALTER TABLE profiles ADD COLUMN ${col.name} ${col.type}`).run()
-        console.log(`[DB Migrate] 已为 profiles 表添加 ${col.name} 字段`)
+
       } else {
-        console.log(`[DB Migrate] profiles 表已有 ${col.name} 字段，跳过`)
+
       }
     }
   } catch (err: any) {
@@ -378,12 +380,40 @@ function migrateFingerprintColumns(): void {
  */
 
 /**
+ * Phase 3.5: 窗口级 Session 标签页持久化引擎
+ * 创建 profile_session_tabs 表
+ */
+function createSessionTabsTable(): void {
+  if (!db) return
+
+  try {
+    const sql = `
+      CREATE TABLE IF NOT EXISTS profile_session_tabs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        url TEXT NOT NULL,
+        title TEXT,
+        active INTEGER DEFAULT 0,
+        sort_order INTEGER DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(profile_id, url)
+      )
+    `
+    db!.prepare(sql).run()
+
+  } catch (err: any) {
+    console.error('[DB] profile_session_tabs 表创建失败:', err.message)
+  }
+}
+
+/**
  * 关闭数据库连接
  */
 export function closeDatabase(): void {
   if (db) {
     db.close()
     db = null
-    console.log('[DB] 数据库连接已关闭')
+
   }
 }

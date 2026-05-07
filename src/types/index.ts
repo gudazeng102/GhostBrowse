@@ -292,3 +292,23 @@ export interface ConsistencyCheckResult {
 export interface GeneratedFingerprintWithConsistency extends GeneratedFingerprint {
   consistency: ConsistencyCheckResult
 }
+
+// ==================== Phase 3.5: 窗口级 Session 标签页持久化类型 ====================
+
+/** Session 标签页记录（前后端共用） */
+export interface SessionTab {
+  profileId: number
+  userId: number
+  url: string
+  title: string | null
+  active: number
+  sortOrder: number
+  updatedAt: number
+}
+
+/** Session 标签页心跳上报请求体 */
+export interface SessionTabHeartbeat {
+  url: string
+  title?: string
+  active?: number
+}

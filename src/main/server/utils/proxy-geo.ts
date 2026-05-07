@@ -28,7 +28,7 @@ interface ProxyConfig {
  */
 export async function detectProxyCountry(proxy: ProxyConfig | null): Promise<string | null> {
   if (!proxy) {
-    console.log('[ProxyGeo] 无代理配置，跳过国家检测');
+
     return null;
   }
 
@@ -51,7 +51,7 @@ export async function detectProxyCountry(proxy: ProxyConfig | null): Promise<str
       };
     }
 
-    console.log(`[ProxyGeo] 通过代理 ${proxy.host}:${proxy.port} 检测国家...`);
+
 
     const res = await axios.get('http://ip-api.com/json/', {
       timeout: 10000,
@@ -61,7 +61,7 @@ export async function detectProxyCountry(proxy: ProxyConfig | null): Promise<str
     });
 
     const countryCode = res.data?.countryCode || null;
-    console.log(`[ProxyGeo] 代理出口国家: ${countryCode || '未知'}`);
+
     return countryCode;
 
   } catch (err: any) {
