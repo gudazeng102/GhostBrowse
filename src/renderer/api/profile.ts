@@ -218,6 +218,17 @@ export async function clearSessionTabs(profileId: number): Promise<number> {
 }
 
 /**
+ * 删除单个 Session 标签页
+ * @param profileId 窗口 ID
+ * @param url 要删除的标签页 URL（URL 编码后传递）
+ */
+export async function removeSessionTab(profileId: number, url: string): Promise<number> {
+  const encodedUrl = encodeURIComponent(url)
+  const response = await request.delete<any>(`/profiles/${profileId}/session-tabs/${encodedUrl}`)
+  return response.data?.data?.deleted || 0
+}
+
+/**
  * Phase 3.5 Rev2: 同步 Session 标签页列表（整表替换）
  * @param profileId 窗口 ID
  * @param tabs 标签页数组

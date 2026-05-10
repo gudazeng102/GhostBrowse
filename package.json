@@ -21,7 +21,7 @@
     "ant-design-vue": "^4.2.6",
     "axios": "^1.7.7",
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.5.0",
+    "better-sqlite3": "^11.10.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.21.1",
@@ -52,11 +52,11 @@
     "concurrently": "^9.1.0",
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
+    "rcedit": "^2.0.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.0.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
-    "vue-tsc": "^2.1.10",
-    "rcedit": "^2.0.0"
+    "vue-tsc": "^2.1.10"
   }
 }

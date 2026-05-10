@@ -18,7 +18,259 @@ import { resolveGeoConfig, getCountryName } from '../utils/geo-config'
 // 创建路由实例
 const router = Router()
 
-// Phase 1.9: 所有窗口路由都需要登录
+// ==================== Phase 3.5: session-tabs（内部调用，不走 JWT 认证） ====================
+// 必须放在 authMiddleware 之前注册，确保主进程调用不受认证拦截
+
+/**
+ * GET /api/v1/profiles/status
+ * 获取所有运行中的窗口 ID 列表（无需认证，供前端实时轮询）
+ */
+router.get('/status', (req: Request, res: Response) => {
+  try {
+    const runningIds = getRunningProfiles()
+    res.json({
+      code: 0,
+      data: { runningIds },
+      message: 'success'
+    })
+  } catch (err: any) {
+    console.error('[Profile API] 查询运行状态失败:', err)
+    res.status(500).json({
+      code: 500,
+      data: null,
+      message: err.message || '查询运行状态失败'
+    })
+  }
+})
+
+/**
+ * GET /api/v1/profiles/:id/session-tabs
+ * Extension 或 Electron 主进程查询窗口的 Session 标签页列表
+ * 不经过 authMiddleware，直接操作数据库
+ */
+router.get('/:id/session-tabs', (req: Request, res: Response) => {
+  console.log(`[DEBUG] GET /:id/session-tabs matched, params: ${JSON.stringify(req.params)}, path: ${req.path}`)
+  try {
+    const { id } = req.params
+    const profileId = Number(id)
+    const db = getDatabase()
+
+    const profileRow = db.prepare('SELECT user_id FROM profiles WHERE id = ?').get(profileId) as { user_id: number } | undefined
+    if (!profileRow) {
+      return res.status(404).json({ code: 404, data: null, message: '窗口不存在' })
+    }
+
+    // 内部调用（X-Internal-Request）不验证 userId，直接返回所有标签页
+    const isInternal = req.headers['x-internal-request'] === 'electron-main'
+    const userId = isInternal ? profileRow.user_id : (req as any).user?.id
+
+    const tabs = db.prepare(`
+      SELECT url, title, active, sort_order
+      FROM profile_session_tabs
+      WHERE profile_id = ? AND user_id = ?
+      ORDER BY sort_order ASC, updated_at DESC
+    `).all(profileId, userId) as { url: string; title: string | null; active: number; sort_order: number }[]
+
+    res.json({ code: 0, data: { tabs }, message: 'success' })
+  } catch (err: any) {
+    console.error('[Profile API] 查询 Session 标签页失败:', err)
+    res.status(500).json({ code: 500, data: null, message: err.message || '查询失败' })
+  }
+})
+
+/**
+ * POST /api/v1/profiles/:id/session-tabs/bulk
+ * CDP 兜底同步：仅在启动时数据库为空时执行一次
+ * Phase 3.5 Rev5: 改为增量 UPSERT + 清理死标签
+ */
+router.post('/:id/session-tabs/bulk', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const profileId = Number(id)
+    const db = getDatabase()
+
+    const profileRow = db.prepare('SELECT user_id FROM profiles WHERE id = ?').get(profileId) as { user_id: number } | undefined
+    if (!profileRow) {
+      return res.status(404).json({ code: 404, data: null, message: '窗口不存在' })
+    }
+    const userId = profileRow.user_id
+    const { tabs } = req.body as { tabs: Array<{ url: string; title?: string; active?: number }> }
+
+    if (!Array.isArray(tabs)) {
+      return res.status(400).json({ code: 400, data: null, message: 'tabs 必须是数组' })
+    }
+
+    const now = Date.now()
+    const validUrls = new Set<string>()
+
+    // 广告域名过滤列表
+    const adPatterns = ['googlesyndication', 'doubleclick', 'google.com/recaptcha', 'gstatic.com', 'google-analytics', 'googletagmanager']
+
+    // DELETE + INSERT（不依赖 UNIQUE 约束）
+    db.prepare('DELETE FROM profile_session_tabs WHERE profile_id = ?').run(profileId)
+
+    db.transaction(() => {
+      tabs.forEach((tab, idx) => {
+        const url = tab.url || ''
+        if (!url.startsWith('http')) return
+        const lowerUrl = url.toLowerCase()
+        const isAd = adPatterns.some(d => lowerUrl.includes(d))
+        if (isAd) return
+
+        validUrls.add(url)
+        db.prepare(`
+          INSERT INTO profile_session_tabs (profile_id, user_id, url, title, active, sort_order, updated_at, source)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'cdp')
+        `).run(profileId, userId, url, tab.title || null, tab.active || 0, idx, now)
+      })
+    })()
+
+    // 清理：删除数据库中存在但本次未上报的 URL（视为已关闭）
+    const existing = db.prepare('SELECT url FROM profile_session_tabs WHERE profile_id = ?').all(profileId) as { url: string }[]
+    const toDelete = existing.filter(e => !validUrls.has(e.url))
+    if (toDelete.length > 0) {
+      const delStmt = db.prepare('DELETE FROM profile_session_tabs WHERE profile_id = ? AND url = ?')
+      toDelete.forEach(d => delStmt.run(profileId, d.url))
+    }
+
+    console.log(`[Profile API] Profile ${profileId} bulk 增量同步: ${validUrls.size} 个标签页，清理 ${toDelete.length} 个死标签`)
+    res.json({ code: 0, data: { count: validUrls.size, deleted: toDelete.length }, message: '批量同步完成' })
+  } catch (err: any) {
+    console.error('[Profile API] 批量同步 Session 失败:', err)
+    res.status(500).json({ code: 500, data: null, message: err.message || '批量同步失败' })
+  }
+})
+
+/**
+ * POST /api/v1/profiles/:id/session-tabs
+ * Extension 心跳上报单个标签页（内部调用，不走 JWT 认证）
+ * Phase 3.5 Rev5: 改为 UPSERT + 广告过滤 + source 字段
+ */
+router.post('/:id/session-tabs', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const profileId = Number(id)
+    const db = getDatabase()
+
+    const profileRow = db.prepare('SELECT user_id FROM profiles WHERE id = ?').get(profileId) as { user_id: number } | undefined
+    if (!profileRow) {
+      return res.status(404).json({ code: 404, data: null, message: '窗口不存在' })
+    }
+    const userId = profileRow.user_id
+    const { url, title, active, action, source } = req.body as {
+      url: string
+      title?: string
+      active?: number
+      action?: string
+      source?: string
+    }
+
+    if (!url || !url.startsWith('http')) {
+      return res.status(400).json({ code: 400, data: null, message: 'URL 无效' })
+    }
+
+    // 广告域名过滤
+    const lowerUrl = url.toLowerCase()
+    const isAd = ['googlesyndication', 'doubleclick', 'google.com/recaptcha', 'gstatic.com', 'google-analytics', 'googletagmanager'].some(d => lowerUrl.includes(d))
+    if (isAd) {
+      return res.json({ code: 0, data: { filtered: true }, message: '广告域名已过滤' })
+    }
+
+    const now = Date.now()
+
+    if (action === 'close') {
+      // 关闭时删除该条
+      db.prepare('DELETE FROM profile_session_tabs WHERE profile_id = ? AND url = ?').run(profileId, url)
+      return res.json({ code: 0, data: { closed: true }, message: '标签页已关闭' })
+    }
+
+    // DELETE + INSERT（不依赖 UNIQUE 约束）
+    db.prepare('DELETE FROM profile_session_tabs WHERE profile_id = ? AND url = ?').run(profileId, url)
+    db.prepare(`
+      INSERT INTO profile_session_tabs (profile_id, user_id, url, title, active, sort_order, updated_at, source)
+      VALUES (?, ?, ?, ?, ?, (
+        SELECT COALESCE(MAX(sort_order), -1) + 1 FROM profile_session_tabs WHERE profile_id = ?
+      ), ?, ?)
+    `).run(profileId, userId, url, title || null, active || 0, profileId, now, source || 'extension')
+
+    // 清理超过 90 秒未更新的死标签
+    const threshold = now - 90000
+    db.prepare('DELETE FROM profile_session_tabs WHERE profile_id = ? AND updated_at < ?').run(profileId, threshold)
+
+    res.json({ code: 0, data: { url, active: active || 0 }, message: '标签页已记录' })
+  } catch (err: any) {
+    console.error('[Profile API] 记录 Session 标签页失败:', err)
+    res.status(500).json({ code: 500, data: null, message: err.message || '记录失败' })
+  }
+})
+
+/**
+ * DELETE /api/v1/profiles/:id/session-tabs
+ * - 传 body.url → 只删除该 URL 的标签页
+ * - 不传 → 清空窗口所有标签页
+ * （内部调用，不走 JWT 认证）
+ */
+router.delete('/:id/session-tabs', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const profileId = Number(id)
+    const db = getDatabase()
+
+    const profileRow = db.prepare('SELECT user_id FROM profiles WHERE id = ?').get(profileId) as { user_id: number } | undefined
+    if (!profileRow) {
+      return res.status(404).json({ code: 404, data: null, message: '窗口不存在' })
+    }
+    const userId = profileRow.user_id
+
+    // ✅ Phase 3.6: 支持 body.url 只删除单个标签页
+    const { url } = req.body as { url?: string }
+
+    if (url) {
+      // 只删除指定 URL
+      const result = db.prepare('DELETE FROM profile_session_tabs WHERE profile_id = ? AND user_id = ? AND url = ?').run(profileId, userId, url)
+      console.log(`[Profile API] 删除单个标签页: profileId=${profileId}, url=${url}, deleted=${result.changes}`)
+      return res.json({ code: 0, data: { deleted: result.changes }, message: '删除成功' })
+    }
+
+    // 不传 url → 清空所有
+    const result = db.prepare('DELETE FROM profile_session_tabs WHERE profile_id = ? AND user_id = ?').run(profileId, userId)
+    console.log(`[Profile API] 清空 Session 标签: profileId=${profileId}, deleted=${result.changes}`)
+    res.json({ code: 0, data: { deleted: result.changes }, message: '清理成功' })
+  } catch (err: any) {
+    console.error('[Profile API] 清空 Session 标签页失败:', err)
+    res.status(500).json({ code: 500, data: null, message: err.message || '清空失败' })
+  }
+})
+
+/**
+ * DELETE /api/v1/profiles/:id/session-tabs/:url
+ * 删除单个 Session 标签页（内部调用，不走 JWT 认证）
+ */
+router.delete('/:id/session-tabs/:url', (req: Request, res: Response) => {
+  try {
+    const { id, url } = req.params
+    const profileId = Number(id)
+    const db = getDatabase()
+
+    const profileRow = db.prepare('SELECT user_id FROM profiles WHERE id = ?').get(profileId) as { user_id: number } | undefined
+    if (!profileRow) {
+      return res.status(404).json({ code: 404, data: null, message: '窗口不存在' })
+    }
+    const userId = profileRow.user_id
+
+    const urlPart = Array.isArray(url) ? url[0] : url
+    const decodedUrl = decodeURIComponent(urlPart)
+    const result = db.prepare('DELETE FROM profile_session_tabs WHERE profile_id = ? AND user_id = ? AND url = ?').run(profileId, userId, decodedUrl)
+
+    console.log(`[Profile API] 删除 Session 标签: profileId=${profileId}, url=${decodedUrl}, changes=${result.changes}`)
+    res.json({ code: 0, data: { deleted: result.changes }, message: '删除成功' })
+  } catch (err: any) {
+    console.error('[Profile API] 删除 Session 标签失败:', err)
+    res.status(500).json({ code: 500, data: null, message: err.message || '删除失败' })
+  }
+})
+
+// Phase 1.9: 大部分路由需要登录（内部调用接口在 authMiddleware 之前）
 router.use(authMiddleware)
 
 // ==================== 类型定义 ====================
@@ -92,20 +344,14 @@ interface ProfileDto {
 
 /**
  * GET /api/v1/profiles/status
- * 获取所有运行中的窗口 ID 列表
+ * 获取所有运行中的窗口 ID 列表（无需认证，供前端实时轮询）
  */
 router.get('/status', (req: Request, res: Response) => {
   try {
-    // 获取运行中的 Profile ID 列表（自动清理已死亡进程）
     const runningIds = getRunningProfiles()
-    
-
-    
     res.json({
       code: 0,
-      data: {
-        runningIds
-      },
+      data: { runningIds },
       message: 'success'
     })
   } catch (err: any) {
@@ -1372,216 +1618,6 @@ router.post('/:id/validate-consistency', (req: AuthRequest, res: Response) => {
       data: null,
       message: err.message || '一致性校验失败'
     })
-  }
-})
-
-// ==================== Phase 3.5: 窗口级 Session 标签页持久化引擎 ====================
-
-/**
- * POST /api/v1/profiles/:id/session-tabs
- * Extension 心跳上报当前标签页信息
- * 使用 INSERT OR REPLACE 策略，以 profile_id + url 为联合唯一键
- */
-router.post('/:id/session-tabs', (req: AuthRequest, res: Response) => {
-  try {
-    const userId = req.user!.userId
-    const { id } = req.params
-    const { url, title, active } = req.body as { url: string; title?: string; active?: number }
-    const db = getDatabase()
-
-    // 验证 profile 存在且属于当前用户
-    const profile = db.prepare('SELECT id FROM profiles WHERE id = ? AND user_id = ?').get(Number(id), userId)
-    if (!profile) {
-      return res.status(404).json({
-        code: 404,
-        data: null,
-        message: '窗口不存在'
-      })
-    }
-
-    if (!url) {
-      return res.status(400).json({
-        code: 400,
-        data: null,
-        message: 'URL 不能为空'
-      })
-    }
-
-    const now = Date.now()
-
-    // 插入或更新记录（以 profile_id + url 为唯一键）
-    const insertStmt = db.prepare(`
-      INSERT INTO profile_session_tabs (profile_id, user_id, url, title, active, sort_order, updated_at)
-      VALUES (?, ?, ?, ?, ?, (
-        SELECT COALESCE(MAX(sort_order), -1) + 1 FROM profile_session_tabs WHERE profile_id = ? AND url = ?
-      ), ?)
-      ON CONFLICT(profile_id, url) DO UPDATE SET
-        title = excluded.title,
-        active = excluded.active,
-        updated_at = excluded.updated_at
-    `)
-    insertStmt.run(Number(id), userId, url, title || null, active || 0, Number(id), url, now)
-
-    // 清理超过 15 秒未更新的记录（视为已关闭的标签页）
-    const threshold = now - 15000
-    db.prepare('DELETE FROM profile_session_tabs WHERE profile_id = ? AND updated_at < ?').run(Number(id), threshold)
-
-    res.json({
-      code: 0,
-      data: { url, active: active || 0 },
-      message: '标签页已记录'
-    })
-  } catch (err: any) {
-    console.error('[Profile API] 记录 Session 标签页失败:', err)
-    res.status(500).json({
-      code: 500,
-      data: null,
-      message: err.message || '记录失败'
-    })
-  }
-})
-
-/**
- * GET /api/v1/profiles/:id/session-tabs
- * 查询某窗口的 Session 标签页列表
- */
-router.get('/:id/session-tabs', (req: AuthRequest, res: Response) => {
-  try {
-    const userId = req.user!.userId
-    const { id } = req.params
-    const db = getDatabase()
-
-    // 验证 profile 存在且属于当前用户
-    const profile = db.prepare('SELECT id FROM profiles WHERE id = ? AND user_id = ?').get(Number(id), userId)
-    if (!profile) {
-      return res.status(404).json({
-        code: 404,
-        data: null,
-        message: '窗口不存在'
-      })
-    }
-
-    // 查询该 profile 的所有标签页
-    const tabs = db.prepare(`
-      SELECT url, title, active, sort_order
-      FROM profile_session_tabs
-      WHERE profile_id = ? AND user_id = ?
-      ORDER BY sort_order ASC, updated_at DESC
-    `).all(Number(id), userId) as { url: string; title: string | null; active: number; sort_order: number }[]
-
-    // ✅ Phase 3.5: 打印查询到的 session 列表
-
-    tabs.forEach((t, i) => {
-
-    })
-
-    res.json({
-      code: 0,
-      data: { tabs },
-      message: 'success'
-    })
-  } catch (err: any) {
-    console.error('[Profile API] 查询 Session 标签页失败:', err)
-    res.status(500).json({
-      code: 500,
-      data: null,
-      message: err.message || '查询失败'
-    })
-  }
-})
-
-/**
- * DELETE /api/v1/profiles/:id/                             
- * 清空某窗口的 Session 标签页记录（清理缓存时调用）
- */
-router.delete('/:id/session-tabs', (req: AuthRequest, res: Response) => {
-  try {
-    const userId = req.user!.userId
-    const { id } = req.params
-    const db = getDatabase()
-
-    // 验证 profile 存在且属于当前用户
-    const profile = db.prepare('SELECT id FROM profiles WHERE id = ? AND user_id = ?').get(Number(id), userId)
-    if (!profile) {
-      return res.status(404).json({
-        code: 404,
-        data: null,
-        message: '窗口不存在'
-      })
-    }
-
-    // 删除该 profile 的所有标签页记录
-    const result = db.prepare('DELETE FROM profile_session_tabs WHERE profile_id = ? AND user_id = ?').run(Number(id), userId)
-
-    res.json({
-      code: 0,
-      data: { deleted: result.changes },
-      message: 'Session 标签页已清空'
-    })
-  } catch (err: any) {
-    console.error('[Profile API] 清空 Session 标签页失败:', err)
-    res.status(500).json({
-      code: 500,
-      data: null,
-      message: err.message || '清空失败'
-    })
-  }
-})
-
-// ==================== Phase 3.5 Rev2: Electron 主进程集中心跳 ====================
-
-/**
- * POST /api/v1/profiles/:id/session-tabs/bulk
- * Electron 主进程每 5 秒批量同步窗口内所有标签页
- * 整表替换：先删该 profile 所有记录，再批量插入新记录
- */
-router.post('/:id/session-tabs/bulk', (req: AuthRequest, res: Response) => {
-  try {
-    const userId = req.user!.userId
-    const { id } = req.params
-    const { tabs } = req.body as { tabs: Array<{ url: string; title?: string; active?: number }> }
-    const db = getDatabase()
-
-    // 验证 profile 存在且属于当前用户
-    const profile = db.prepare('SELECT id FROM profiles WHERE id = ? AND user_id = ?').get(Number(id), userId)
-    if (!profile) {
-      return res.status(404).json({ code: 404, data: null, message: '窗口不存在' })
-    }
-
-    if (!Array.isArray(tabs)) {
-      return res.status(400).json({ code: 400, data: null, message: 'tabs 必须是数组' })
-    }
-
-    const now = Date.now()
-    const profileId = Number(id)
-
-    // 整表替换：先删该 profile 所有记录
-    db.prepare('DELETE FROM profile_session_tabs WHERE profile_id = ? AND user_id = ?').run(profileId, userId)
-
-    // 批量插入新记录
-    if (tabs.length > 0) {
-      const insertStmt = db.prepare(`
-        INSERT INTO profile_session_tabs (profile_id, user_id, url, title, active, sort_order, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `)
-      const insertMany = db.transaction((tabList: Array<{ url: string; title?: string; active?: number }>) => {
-        tabList.forEach((tab, idx) => {
-          insertStmt.run(profileId, userId, tab.url, tab.title || null, tab.active || 0, idx, now)
-        })
-      })
-      insertMany(tabs)
-    }
-
-    console.log(`[Profile API] POST /${id}/session-tabs/bulk 整表替换: ${tabs.length} 个标签页`)
-
-    res.json({
-      code: 0,
-      data: { count: tabs.length },
-      message: '批量同步完成'
-    })
-  } catch (err: any) {
-    console.error('[Profile API] 批量同步 Session 失败:', err)
-    res.status(500).json({ code: 500, data: null, message: err.message || '批量同步失败' })
   }
 })
 

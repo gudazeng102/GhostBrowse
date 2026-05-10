@@ -153,7 +153,6 @@
     <a-modal
       v-model:open="sessionModalVisible"
       title="📑 Session 标签页"
-      :footer="null"
       width="600px"
       :destroyOnClose="true"
     >
@@ -206,7 +205,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { SafetyOutlined, FileTextOutlined } from '@ant-design/icons-vue'
-import { getProfileList, deleteProfile, launchProfile, getProfilesStatus, closeProfile, type ProfileRecord, getSessionTabs, clearSessionTabs, type SessionTabRecord } from '../api/profile'
+import { getProfileList, deleteProfile, launchProfile, getProfilesStatus, closeProfile, type ProfileRecord, getSessionTabs, clearSessionTabs, removeSessionTab, type SessionTabRecord } from '../api/profile'
 import { checkFingerprint } from '../api/fingerprint'
 import FingerprintCheckModal from '../components/FingerprintCheckModal.vue'
 import type { FingerprintCheckResult } from '../../types'
@@ -245,16 +244,23 @@ function handleOpenTab(url: string) {
 }
 
 async function handleRemoveTab(url: string) {
-  // 前端不做单独删除，只刷新列表
-  if (currentSessionProfileId.value) {
-    // 后端使用 INSERT OR REPLACE，关闭标签页后超过 15 秒不上报就会自动删除
-    // 这里只是本地刷新显示，实际记录会在后端清理
-    message.info('标签页会在窗口关闭后自动清理')
+  const profileId = currentSessionProfileId.value
+  if (!profileId) return
+
+  try {
+    await removeSessionTab(profileId, url)
+    message.success('标签页已删除')
+    // 刷新列表
+    sessionTabs.value = sessionTabs.value.filter(tab => tab.url !== url)
+  } catch (err: any) {
+    console.error('[ProfileList] 删除 Session 标签页失败:', err)
+    message.error('删除失败')
   }
 }
 
 async function handleClearSession() {
-  if (currentSessionProfileId.value === null) return
+  const profileId = currentSessionProfileId.value
+  if (profileId === null) return
   
   Modal.confirm({
     title: '确认清理',
@@ -263,7 +269,7 @@ async function handleClearSession() {
     cancelText: '取消',
     async onOk() {
       try {
-        const count = await clearSessionTabs(currentSessionProfileId.value)
+        const count = await clearSessionTabs(profileId)
         message.success(`已清理 ${count} 条记录`)
         sessionTabs.value = []
       } catch (err: any) {
@@ -663,7 +669,7 @@ onMounted(() => {
   loadProfileList()
   loadProfileStatus()
   
-  // 每 5 秒自动刷新状态
+  // 每 60 秒自动刷新状态
   statusInterval = window.setInterval(() => {
     loadProfileStatus()
   }, 5000)

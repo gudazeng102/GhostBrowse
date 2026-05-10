@@ -1987,110 +1987,239 @@
   }
 })();
 
-// ==================== Phase 3.5: 窗口级 Session 标签页持久化引擎 ====================
-// 
-// 职责：每 5 秒心跳上报当前标签页 URL 到后端
-// 策略：使用 INSERT OR REPLACE，以 profile_id + url 为联合唯一键
-// 清理：后端定期删除超过 15 秒未更新的记录（视为已关闭的标签页）
-// 注意：此 IIFE 独立运行，不影响已有指纹注入逻辑
+// ==================== Phase 3.5: 增量式 Session 标签页持久化引擎 ====================
+//
+// 核心变更（解决重复 URL 与 Session Restore 叠加问题）：
+//   1. 事件驱动：URL/标题/可见性变化时立即上报（本地 diff，无变化不发请求）
+//   2. 心跳兜底：每 30 秒 ping 一次，让后端知道标签页仍存活（用于死标签清理）
+//   3. 关闭标记：beforeunload 时 sendBeacon 发送 action='close'，后端可立即删除
+//   4. SPA 兼容：劫持 history.pushState/replaceState，监听 hashchange/popstate
+//   5. 与 Electron CDP 配合：如 launcher.ts 同时运行 CDP 轮询，建议将 CDP 轮询
+//      改为 60 秒一次的校验轮询，或完全废弃，避免双重上报导致重复 URL
+//
+// 后端配合要求：
+//   - POST /api/v1/profiles/:id/session-tabs 需支持 action 字段：
+//     * action='upsert'：插入或更新（以 profile_id + url + source='extension' 为联合键）
+//     * action='close'：删除该条记录（或标记 is_active=0）
+//   - 后端定时任务：删除超过 90 秒未收到心跳/更新的标签页（视为进程已死）
+//   - 如保留 CDP 的 /session-tabs/bulk 接口，建议改为增量 diff 逻辑，或确保
+//     同一 profile 不会同时接收 Extension 增量与 CDP 全量两种上报
+//
+// launcher.ts 必须配合的 3 处修改（详见下方说明）：
+//   A. 启动参数加 '--no-startup-window'（禁用 Chromium 自带 Session Restore）
+//   B. 废弃 CDP 5 秒轮询，或改为 60 秒低频校验
+//   C. 启动恢复逻辑：先检查 browser.pages()，如已有真实标签页则不再从数据库恢复
+
+// ==================== Phase 3.5: 增量式 Session 标签页持久化引擎 ====================
+//
+// 核心变更（解决重复 URL 与 Session Restore 叠加问题）：
+//   1. 事件驱动：URL/标题/可见性变化时立即上报（本地 diff，无变化不发请求）
+//   2. 心跳兜底：每 30 秒 ping 一次，让后端知道标签页仍存活（用于死标签清理）
+//   3. 关闭标记：beforeunload 时 sendBeacon 发送 action='close'，后端可立即删除
+//   4. SPA 兼容：劫持 history.pushState/replaceState，监听 hashchange/popstate
+//   5. 与 Electron CDP 配合：如 launcher.ts 同时运行 CDP 轮询，建议将 CDP 轮询
+//      改为 60 秒一次的校验轮询，或完全废弃，避免双重上报导致重复 URL
+//
+// 后端配合要求：
+//   - POST /api/v1/profiles/:id/session-tabs 需支持 action 字段：
+//     * action='upsert'：插入或更新（以 profile_id + url + source='extension' 为联合键）
+//     * action='close'：删除该条记录（或标记 is_active=0）
+//   - 后端定时任务：删除超过 90 秒未收到心跳/更新的标签页（视为进程已死）
+//   - 如保留 CDP 的 /session-tabs/bulk 接口，建议改为增量 diff 逻辑，或确保
+//     同一 profile 不会同时接收 Extension 增量与 CDP 全量两种上报
+//
+// launcher.ts 必须配合的 3 处修改（详见下方说明）：
+//   A. 启动参数加 '--no-startup-window'（禁用 Chromium 自带 Session Restore）
+//   B. 废弃 CDP 5 秒轮询，或改为 60 秒低频校验
+//   C. 启动恢复逻辑：先检查 browser.pages()，如已有真实标签页则不再从数据库恢复
 
 (function() {
   'use strict';
 
+  // ===== 关键修复：只在主页面（top frame）执行，忽略所有 iframe / 广告 / reCAPTCHA =====
+  if (window.self !== window.top) {
+    return;
+  }
+
   // 获取配置
-  let CONFIG
+  let CONFIG;
   try {
-    CONFIG = typeof window.__GB_CONFIG__ !== 'undefined' 
-      ? window.__GB_CONFIG__ 
-      : {{CONFIG}}
-
+    CONFIG = typeof window.__GB_CONFIG__ !== 'undefined'
+      ? window.__GB_CONFIG__
+      : {{CONFIG}};
   } catch(e) {
-    console.error('[GB Session] ❌ CONFIG 解析失败:', e.message)
-    return
+    console.error('[GB Session] ❌ CONFIG 解析失败:', e.message);
+    return;
   }
 
-  // Phase 3.5: Session 心跳上报间隔（毫秒）
-  const HEARTBEAT_INTERVAL = 5000
-
-  // 获取当前页面是否可见（用于标记 active 状态）
-  function isPageVisible() {
-    return document.visibilityState === 'visible' || document.visibilityState === 'hidden'
+  const profileId = CONFIG.profile_id;
+  if (!profileId) {
+    console.warn('[GhostBrowse Phase 3.5] profile_id 未配置，跳过 Session 持久化');
+    return;
   }
 
-  // 上报当前标签页到后端
-  function reportSessionTab() {
-    const profileId = CONFIG.profile_id
-    if (!profileId) {
-      console.warn('[GhostBrowse Phase 3.5] profile_id 未配置，跳过心跳上报')
-      return
+  // ===== 配置常量 =====
+  const HEARTBEAT_INTERVAL = 30000; // 30 秒心跳（保活 / 后端清理死标签依据）
+  const DEBOUNCE_MS = 800;          // 标题变化防抖（ms）
+  const COOLDOWN_MS = 500;          // 同一状态最短上报间隔（防事件风暴）
+
+  // ===== 运行时状态 =====
+  let lastState = { url: '', title: '', active: 1 };
+  let lastReportAt = 0;
+  let reportTimer = null;
+  let heartbeatTimer = null;
+  let isReporting = false;
+  let isUnloaded = false;
+
+  // ===== 工具函数 =====
+  function getCurrentState() {
+    return {
+      url: window.location.href,
+      title: document.title || '',
+      active: document.visibilityState === 'visible' ? 1 : 0
+    };
+  }
+
+  function stateKey(s) {
+    return `${s.url}::${s.title}::${s.active}`;
+  }
+
+  // ===== 核心上报函数（带并发锁） =====
+  async function doReport(action) {
+    if (isReporting || isUnloaded) return;
+
+    const now = Date.now();
+    const state = getCurrentState();
+
+    // 增量过滤：非心跳且状态未变，跳过
+    if (action === 'upsert' && stateKey(state) === stateKey(lastState)) {
+      return;
     }
 
-    const url = window.location.href
-    const title = document.title || ''
-    const active = isPageVisible() ? 1 : 0
+    // 冷却过滤：防止高频事件连续触发（如 title 频繁更新）
+    if (action === 'upsert' && (now - lastReportAt) < COOLDOWN_MS) {
+      if (reportTimer) clearTimeout(reportTimer);
+      reportTimer = setTimeout(() => doReport('upsert'), COOLDOWN_MS);
+      return;
+    }
 
-    // ✅ Phase 3.5: 打印打开的标签页
+    isReporting = true;
+    lastReportAt = now;
 
+    try {
+      const payload = {
+        url: state.url,
+        title: state.title,
+        active: state.active,
+        action: action,        // 'upsert' | 'close'
+        source: 'extension', // 标识来源，便于后端区分 Extension 与 CDP
+        reportedAt: now
+      };
 
-    // 直接调用后端 API（localhost:3000，同源请求，无 CORS 问题）
-    fetch(`http://localhost:3000/api/v1/profiles/${profileId}/session-tabs`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, title, active })
-    }).then(response => {
-      if (!response.ok) {
-        console.warn(`[GhostBrowse Phase 3.5] 心跳上报失败: ${response.status}`)
+      const res = await fetch(
+        `http://localhost:3000/api/v1/profiles/${profileId}/session-tabs`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      if (res.ok) {
+        lastState = { ...state };
+        if (action === 'close') {
+          isUnloaded = true;
+          if (heartbeatTimer) clearInterval(heartbeatTimer);
+        }
       } else {
-        // ✅ Phase 3.5: 上报成功后查询并打印当前存储的 session 列表
-        return fetch(`http://localhost:3000/api/v1/profiles/${profileId}/session-tabs`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' }
-        }).then(r => r.json()).then(data => {
-          const tabs = data?.data?.tabs || []
-
-          tabs.forEach((t, i) => {
-
-          })
-        }).catch(() => {})
+        console.warn(`[GB Session] 上报失败 HTTP ${res.status}`);
       }
-    }).catch(err => {
+    } catch (err) {
       // 静默失败，不影响页面功能
-      console.warn(`[GhostBrowse Phase 3.5] 心跳上报异常: ${err.message}`)
-    })
+      console.warn(`[GB Session] 上报异常: ${err.message}`);
+    } finally {
+      isReporting = false;
+    }
   }
 
-  // 页面加载完成时立即上报一次
+  // ===== 防抖上报（用于高频事件） =====
+  function debouncedReport() {
+    if (reportTimer) clearTimeout(reportTimer);
+    reportTimer = setTimeout(() => doReport('upsert'), DEBOUNCE_MS);
+  }
+
+  // ===== 心跳上报（强制刷新后端存活时间） =====
+  function heartbeatReport() {
+    doReport('upsert');
+  }
+
+  // ===== 事件监听：精准捕获标签页生命周期 =====
+
+  // 1. 页面初始加载
+  function onInitialLoad() {
+    setTimeout(() => doReport('upsert'), 100);
+  }
+
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    setTimeout(reportSessionTab, 100)
+    onInitialLoad();
   } else {
-    window.addEventListener('DOMContentLoaded', () => {
-      setTimeout(reportSessionTab, 100)
-    })
+    window.addEventListener('DOMContentLoaded', onInitialLoad);
   }
 
-  // 页面获得焦点时上报
-  window.addEventListener('focus', () => {
-    setTimeout(reportSessionTab, 100)
-  })
+  // 2. Hash 路由变化（传统 SPA / 锚点跳转）
+  window.addEventListener('hashchange', () => doReport('upsert'));
 
-  // 页面关闭前上报（尽量发送，但不做强制等待）
+  // 3. History API 路由变化（React Router / Vue Router 等现代 SPA）
+  const origPushState = history.pushState;
+  history.pushState = function(...args) {
+    origPushState.apply(this, args);
+    setTimeout(() => doReport('upsert'), 50);
+  };
+  const origReplaceState = history.replaceState;
+  history.replaceState = function(...args) {
+    origReplaceState.apply(this, args);
+    setTimeout(() => doReport('upsert'), 50);
+  };
+
+  // 4. 浏览器前进/后退（popstate）
+  window.addEventListener('popstate', () => doReport('upsert'));
+
+  // 5. 标题变化（MutationObserver 监听 <title>）
+  const titleEl = document.querySelector('head > title');
+  if (titleEl) {
+    const titleObserver = new MutationObserver(() => debouncedReport());
+    titleObserver.observe(titleEl, { childList: true, subtree: true, characterData: true });
+  }
+
+  // 6. 可见性变化（切换标签页 / 最小化）
+  document.addEventListener('visibilitychange', () => doReport('upsert'));
+
+  // 7. 窗口获得焦点（用户切回此标签页）
+  window.addEventListener('focus', () => doReport('upsert'));
+
+  // 8. 页面关闭前：标记关闭（sendBeacon 可靠发送，不阻塞卸载）
   window.addEventListener('beforeunload', () => {
-    const profileId = CONFIG.profile_id
-    if (!profileId) return
-
-    const url = window.location.href
-    const title = document.title || ''
-
-    // 使用 sendBeacon 发送异步请求（不阻塞页面关闭）
+    const state = getCurrentState();
     navigator.sendBeacon(
       `http://localhost:3000/api/v1/profiles/${profileId}/session-tabs`,
-      JSON.stringify({ url, title, active: 0 })
-    )
-  })
+      JSON.stringify({
+        url: state.url,
+        title: state.title,
+        active: 0,
+        action: 'close',
+        source: 'extension'
+      })
+    );
+    isUnloaded = true;
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+  });
 
-  // 定时心跳上报（每 5 秒）
-  setInterval(reportSessionTab, HEARTBEAT_INTERVAL)
+  // 9. 页面冻结/恢复（移动端/后台标签页）
+  document.addEventListener('freeze', () => doReport('upsert'));
+  document.addEventListener('resume', () => doReport('upsert'));
 
+  // ===== 启动心跳 =====
+  heartbeatTimer = setInterval(heartbeatReport, HEARTBEAT_INTERVAL);
 
 })();
 

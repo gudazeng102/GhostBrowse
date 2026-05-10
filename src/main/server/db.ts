@@ -380,8 +380,8 @@ function migrateFingerprintColumns(): void {
  */
 
 /**
- * Phase 3.5: 窗口级 Session 标签页持久化引擎
- * 创建 profile_session_tabs 表
+ * Phase 3.5 Rev3 Fix: 窗口级 Session 标签页持久化引擎
+ * 创建 profile_session_tabs 表（无唯一约束，允许同一 Profile 打开相同 URL 的多个标签页）
  */
 function createSessionTabsTable(): void {
   if (!db) return
@@ -397,10 +397,23 @@ function createSessionTabsTable(): void {
         active INTEGER DEFAULT 0,
         sort_order INTEGER DEFAULT 0,
         updated_at INTEGER NOT NULL,
-        UNIQUE(profile_id, url)
+        source TEXT DEFAULT 'unknown'
       )
     `
     db!.prepare(sql).run()
+
+    // 创建索引（查询加速 + source 字段索引）
+    db!.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_session_tabs_profile 
+      ON profile_session_tabs(profile_id, sort_order)
+    `).run()
+
+    // Phase 3.5 Rev5: 迁移 source 字段（表已存在时添加新列）
+    const columns = db!.prepare('PRAGMA table_info(profile_session_tabs)').all() as any[]
+    const hasSource = columns.some(col => col.name === 'source')
+    if (!hasSource) {
+      db!.prepare('ALTER TABLE profile_session_tabs ADD COLUMN source TEXT DEFAULT "unknown"').run()
+    }
 
   } catch (err: any) {
     console.error('[DB] profile_session_tabs 表创建失败:', err.message)
