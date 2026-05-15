@@ -1135,6 +1135,38 @@ export function getProfileDebugPort(profileId: number): number {
   return 9000 + profileId
 }
 
+interface CDPTarget {
+  id: string
+  title: string
+  type: string
+  webSocketDebuggerUrl: string
+}
+
+/**
+ * 获取 Chrome 第一个 page target 的 WebSocket URL
+ */
+function getPageWsUrl(debugPort: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    http.get(`http://localhost:${debugPort}/json`, (res) => {
+      let data = ''
+      res.on('data', chunk => data += chunk)
+      res.on('end', () => {
+        try {
+          const targets: CDPTarget[] = JSON.parse(data)
+          const page = targets.find(t => t.type === 'page')
+          if (page?.webSocketDebuggerUrl) {
+            resolve(page.webSocketDebuggerUrl)
+          } else {
+            reject(new Error('未找到可用的 page target'))
+          }
+        } catch (e: any) {
+          reject(new Error('解析 CDP /json 失败: ' + e.message))
+        }
+      })
+    }).on('error', reject)
+  })
+}
+
 /**
  * Phase 4.0: 通过 CDP 导入预置 Cookie
  * 在 Chrome 启动后立即调用，将 profiles.cookie_json 写入浏览器
@@ -1145,7 +1177,6 @@ export async function importPresetCookies(profileId: number, cookieJson: string)
   }
 
   const debugPort = getProfileDebugPort(profileId)
-  const wsUrl = `ws://localhost:${debugPort}/devtools/browser`
 
   try {
     const cookies = JSON.parse(cookieJson) as any[]
@@ -1153,12 +1184,17 @@ export async function importPresetCookies(profileId: number, cookieJson: string)
       return { success: true, message: 'Cookie 数组为空，跳过' }
     }
 
+    const wsUrl = await getPageWsUrl(debugPort)
+    console.log(`[importPresetCookies] Profile ${profileId} CDP page wsUrl=${wsUrl}`)
+
     const ws = new (require('ws'))(wsUrl)
     
     await new Promise<void>((resolve, reject) => {
-      ws.on('open', () => resolve())
-      ws.on('error', (e: any) => reject(e))
-      setTimeout(() => reject(new Error('CDP 连接超时')), 5000)
+      const onOpen = () => { ws.off('open', onOpen); ws.off('error', onError); resolve() }
+      const onError = (e: Error) => { ws.off('open', onOpen); ws.off('error', onError); reject(e) }
+      ws.on('open', onOpen)
+      ws.on('error', onError)
+      setTimeout(() => { ws.off('open', onOpen); ws.off('error', onError); reject(new Error('CDP 连接超时')) }, 5000)
     })
 
     let successCount = 0
@@ -1170,18 +1206,18 @@ export async function importPresetCookies(profileId: number, cookieJson: string)
         await new Promise<void>((resolve, reject) => {
           const id = i + 1
           const timeout = setTimeout(() => reject(new Error(`命令 ${id} 超时`)), 5000)
-          const handler = (data: any) => {
+          const handler = (data: Buffer | ArrayBuffer | Buffer[]) => {
             try {
               const resp = JSON.parse(data.toString())
               if (resp.id === id) {
                 clearTimeout(timeout)
-                ws.removeEventListener('message', handler)
+                ws.off('message', handler)
                 if (resp.error) reject(new Error(resp.error.message))
                 else resolve()
               }
             } catch {}
           }
-          ws.addEventListener('message', handler)
+          ws.on('message', handler)
           ws.send(JSON.stringify({
             id,
             method: 'Network.setCookie',

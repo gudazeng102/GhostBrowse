@@ -717,9 +717,11 @@ async function loadProfileDetail() {
     formState.canvasMode = data.canvasMode
     formState.webglMode = data.webglMode
     formState.mediaDeviceMode = data.mediaDeviceMode
-    // Phase 2.1: 启动页面回显
-    formState.startupUrl = data.startupUrl || ''
-    // Phase 3.0: 指纹参数回显
+      // Phase 2.1: 启动页面回显
+      formState.startupUrl = data.startupUrl || ''
+      // Phase 4.0: Cookie 预置回显
+      formState.cookieJson = (data as any).cookie_json || (data as any).cookieJson || ''
+      // Phase 3.0: 指纹参数回显
     formState.canvasNoiseSeed = data.canvasNoiseSeed || ''
     formState.webglVendor = data.webglVendor || ''
     formState.webglRenderer = data.webglRenderer || ''
@@ -768,6 +770,8 @@ async function handleSubmit() {
       rectsNoiseSeed: formState.rectsNoiseSeed || undefined,
       webglVendor: formState.webglVendor || undefined,
       webglRenderer: formState.webglRenderer || undefined,
+      // Phase 4.0: Cookie 预置（新建和编辑都提交）
+      cookieJson: formState.cookieJson || undefined,
     }
 
     if (isEdit.value && editId.value) {
