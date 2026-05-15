@@ -356,6 +356,8 @@ export interface Profile {
   webglMode: string
   mediaDeviceMode: string
   iconPath?: string
+  // Phase 4.0: Cookie 预置 JSON
+  cookie_json?: string
 }
 
 /** Proxy 配置 */
@@ -908,7 +910,9 @@ export async function launchChrome(
     const homepagePath = app.isPackaged
       ? path.join(process.resourcesPath, 'browser', version, 'homepage.html')
       : path.join(process.cwd(), 'resources', 'browser', version, 'homepage.html')
-    return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://browserleaks.com/webgl'
+   // return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://browserleaks.com/webgl'
+    return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://www.baidu.com'
+
   }
   
   if (startupUrls.length === 0) {
@@ -961,6 +965,19 @@ export async function launchChrome(
       })
       
       const pid = chromeProcess.pid ?? -1
+
+      // ✅ Phase 4.0: 启动成功后注册到进程映射表（无论是否通过 API 调用）
+      registerChromeProcess(profile.id, pid, userDataDir)
+
+      // ✅ Phase 4.0: 启动成功后导入预置 Cookie（非阻塞，不影响启动）
+      if (profile.cookie_json) {
+        console.log(`[BrowserLauncher] Profile ${profile.id} 启动成功，导入预置 Cookie，长度=${profile.cookie_json.length}`)
+        importPresetCookies(profile.id, profile.cookie_json).then(r => {
+          console.log(`[BrowserLauncher] Profile ${profile.id} 预置 Cookie 导入结果: ${r.message}`)
+        }).catch(e => {
+          console.warn(`[BrowserLauncher] Profile ${profile.id} 预置 Cookie 导入失败: ${e.message}`)
+        })
+      }
 
       // ✅ REMOVED: startSessionTabManager 改到 profile.ts 里调用，避免重复启动
       // 原来在这里调用会导致旧进程退出时触发 stop，然后新进程又触发 start
@@ -1028,15 +1045,27 @@ export function unregisterChromeProcess(profileId: number): void {
   profileProcessMap.delete(profileId)
 }
 
-export function getRunningProfiles(): number[] {
+export async function getRunningProfiles(): Promise<number[]> {
   const result: number[] = []
   
-  for (const [profileId, info] of profileProcessMap.entries()) {
+  // 遍历所有可能的 profile（通过 debugPort 9000 + profileId）
+  // 用 CDP 检测替代 process.kill，避免 pid 无效的问题
+  const maxProfileId = 200  // 假设最大 200 个 profile
+  
+  for (let profileId = 1; profileId <= maxProfileId; profileId++) {
+    const debugPort = 9000 + profileId
     try {
-      process.kill(info.pid, 0)
-      result.push(profileId)
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 1000)
+      const res = await fetch(`http://localhost:${debugPort}/json`, {
+        signal: controller.signal
+      })
+      clearTimeout(timeout)
+      if (res.ok) {
+        result.push(profileId)
+      }
     } catch {
-      profileProcessMap.delete(profileId)
+      // CDP 连接失败，说明该 profile 未运行
     }
   }
   
@@ -1093,5 +1122,95 @@ export async function closeChrome(profileId: number): Promise<{ success: boolean
   return {
     success,
     message: success ? '窗口已关闭' : '关闭窗口失败'
+  }
+}
+
+// ==================== Phase 4.0: Cookie 预置支持 ====================
+
+/**
+ * Phase 4.0: 获取 Profile 的 CDP Debug Port
+ * 规则：debugPort = 9000 + profileId
+ */
+export function getProfileDebugPort(profileId: number): number {
+  return 9000 + profileId
+}
+
+/**
+ * Phase 4.0: 通过 CDP 导入预置 Cookie
+ * 在 Chrome 启动后立即调用，将 profiles.cookie_json 写入浏览器
+ */
+export async function importPresetCookies(profileId: number, cookieJson: string): Promise<{ success: boolean; message: string }> {
+  if (!cookieJson || !cookieJson.trim()) {
+    return { success: true, message: '无预置 Cookie，跳过' }
+  }
+
+  const debugPort = getProfileDebugPort(profileId)
+  const wsUrl = `ws://localhost:${debugPort}/devtools/browser`
+
+  try {
+    const cookies = JSON.parse(cookieJson) as any[]
+    if (!Array.isArray(cookies) || cookies.length === 0) {
+      return { success: true, message: 'Cookie 数组为空，跳过' }
+    }
+
+    const ws = new (require('ws'))(wsUrl)
+    
+    await new Promise<void>((resolve, reject) => {
+      ws.on('open', () => resolve())
+      ws.on('error', (e: any) => reject(e))
+      setTimeout(() => reject(new Error('CDP 连接超时')), 5000)
+    })
+
+    let successCount = 0
+    let failCount = 0
+
+    for (let i = 0; i < cookies.length; i++) {
+      const c = cookies[i]
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const id = i + 1
+          const timeout = setTimeout(() => reject(new Error(`命令 ${id} 超时`)), 5000)
+          const handler = (data: any) => {
+            try {
+              const resp = JSON.parse(data.toString())
+              if (resp.id === id) {
+                clearTimeout(timeout)
+                ws.removeEventListener('message', handler)
+                if (resp.error) reject(new Error(resp.error.message))
+                else resolve()
+              }
+            } catch {}
+          }
+          ws.addEventListener('message', handler)
+          ws.send(JSON.stringify({
+            id,
+            method: 'Network.setCookie',
+            params: {
+              name: c.name || '',
+              value: c.value || '',
+              domain: c.domain || '',
+              path: c.path || '/',
+              secure: !!c.secure,
+              httpOnly: !!c.httpOnly,
+              sameSite: c.sameSite || 'unspecified',
+              expires: c.expires ?? -1
+            }
+          }))
+        })
+        successCount++
+      } catch (e: any) {
+        failCount++
+        console.warn(`[importPresetCookies] Cookie 导入失败: ${c.name}`, e.message)
+      }
+    }
+
+    ws.close()
+    return {
+      success: failCount === 0,
+      message: `导入完成：成功 ${successCount}，失败 ${failCount}`
+    }
+  } catch (err: any) {
+    console.error('[importPresetCookies] 导入预置 Cookie 失败:', err)
+    return { success: false, message: err.message || '导入失败' }
   }
 }

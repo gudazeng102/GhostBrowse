@@ -48,6 +48,8 @@ export interface Profile {
   rectsNoiseSeed?: string
   webglVendor?: string
   webglRenderer?: string
+  // Phase 4.0: Cookie 预置 JSON
+  cookie_json?: string
 }
 
 // ==================== Phase 1.8: 认证相关类型 ====================

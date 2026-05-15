@@ -14,6 +14,7 @@ import ProxyList from '../views/ProxyList.vue'
 import ProxyForm from '../views/ProxyForm.vue'
 import ProfileList from '../views/ProfileList.vue'
 import ProfileForm from '../views/ProfileForm.vue'
+import CookieManager from '../views/CookieManager.vue'
 
 // 导入认证页面组件
 import Login from '../views/Login.vue'
@@ -95,6 +96,13 @@ const routes: RouteRecordRaw[] = [
     name: 'ProfileEdit',
     component: ProfileForm,
     meta: { title: '编辑窗口' }
+  },
+  // Phase 4.0: Cookie 管理路由
+  {
+    path: '/profile/:id/cookies',
+    name: 'CookieManager',
+    component: CookieManager,
+    meta: { title: 'Cookie 管理' }
   }
 ]
 

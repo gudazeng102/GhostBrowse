@@ -11,7 +11,7 @@ import * as fs from 'fs'
 import Database from 'better-sqlite3'
 import { getDatabase } from '../db'
 import { authMiddleware, AuthRequest } from '../middleware/auth'
-import { launchChrome, registerChromeProcess, getRunningProfiles, closeChrome, startSessionTabManager } from '../../browser/launcher'
+import { launchChrome, registerChromeProcess, getRunningProfiles, closeChrome, startSessionTabManager, importPresetCookies } from '../../browser/launcher'
 import { detectProxyCountry } from '../utils/proxy-geo'
 import { resolveGeoConfig, getCountryName } from '../utils/geo-config'
 
@@ -25,9 +25,9 @@ const router = Router()
  * GET /api/v1/profiles/status
  * 获取所有运行中的窗口 ID 列表（无需认证，供前端实时轮询）
  */
-router.get('/status', (req: Request, res: Response) => {
+router.get('/status', async (req: Request, res: Response) => {
   try {
-    const runningIds = getRunningProfiles()
+    const runningIds = await getRunningProfiles()
     res.json({
       code: 0,
       data: { runningIds },
@@ -336,33 +336,14 @@ interface ProfileDto {
   rectsNoiseSeed?: string
   webglVendor?: string
   webglRenderer?: string
+  // Phase 4.0: Cookie 预置 JSON
+  cookie_json?: string
 }
 
 // ==================== API 路由 ====================
 
 // ==================== Phase 1.4: 窗口运行状态接口（必须在 /:id 之前定义） ====================
-
-/**
- * GET /api/v1/profiles/status
- * 获取所有运行中的窗口 ID 列表（无需认证，供前端实时轮询）
- */
-router.get('/status', (req: Request, res: Response) => {
-  try {
-    const runningIds = getRunningProfiles()
-    res.json({
-      code: 0,
-      data: { runningIds },
-      message: 'success'
-    })
-  } catch (err: any) {
-    console.error('[Profile API] 查询运行状态失败:', err)
-    res.status(500).json({
-      code: 500,
-      data: null,
-      message: err.message || '查询运行状态失败'
-    })
-  }
-})
+// 注意：/status 路由已在上方定义（无 authMiddleware），无需重复定义
 
 /**
  * GET /api/v1/profiles
@@ -456,8 +437,9 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
         p.language_mode, p.ui_language, p.screen_resolution,
         p.font, p.canvas_mode, p.webgl_mode, p.media_device_mode,
         p.startup_url, p.icon_path, p.created_at, p.updated_at,
-        p.device_name, p.mac_address, p.canvas_noise_seed,
+      p.device_name, p.mac_address, p.canvas_noise_seed,
         p.audio_noise_seed, p.rects_noise_seed, p.webgl_vendor, p.webgl_renderer,
+        p.cookie_json,
         pr.id as pr_id, pr.name as pr_name, pr.type as pr_type,
         pr.host as pr_host, pr.port as pr_port, pr.username as pr_username,
         pr.password as pr_password
@@ -504,6 +486,8 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
       rectsNoiseSeed: row.rects_noise_seed || undefined,
       webglVendor: row.webgl_vendor || undefined,
       webglRenderer: row.webgl_renderer || undefined,
+      // Phase 4.0: Cookie 预置
+      cookie_json: row.cookie_json || undefined,
       proxy: row.pr_id ? {
         id: row.pr_id,
         name: row.pr_name,
@@ -570,7 +554,7 @@ router.post('/', (req: AuthRequest, res: Response) => {
         font, canvas_mode, webgl_mode, media_device_mode,
         startup_url, icon_path, user_id, created_at, updated_at,
         device_name, mac_address, canvas_noise_seed, audio_noise_seed,
-        rects_noise_seed, webgl_vendor, webgl_renderer
+        rects_noise_seed, webgl_vendor, webgl_renderer, cookie_json
       ) VALUES (
         @title, @proxy_id, @chrome_version, @os,
         @webrtc_mode, @timezone_mode, @geolocation_mode,
@@ -578,7 +562,7 @@ router.post('/', (req: AuthRequest, res: Response) => {
         @font, @canvas_mode, @webgl_mode, @media_device_mode,
         @startup_url, @icon_path, @user_id, @created_at, @updated_at,
         @device_name, @mac_address, @canvas_noise_seed, @audio_noise_seed,
-        @rects_noise_seed, @webgl_vendor, @webgl_renderer
+        @rects_noise_seed, @webgl_vendor, @webgl_renderer, @cookie_json
       )
     `).run({
       title: body.title.trim(),
@@ -607,7 +591,8 @@ router.post('/', (req: AuthRequest, res: Response) => {
       audio_noise_seed: body.audioNoiseSeed || null,
       rects_noise_seed: body.rectsNoiseSeed || null,
       webgl_vendor: body.webglVendor || null,
-      webgl_renderer: body.webglRenderer || null
+      webgl_renderer: body.webglRenderer || null,
+      cookie_json: body.cookie_json || null
     })
     
     res.json({
@@ -693,7 +678,8 @@ router.put('/:id', (req: Request, res: Response) => {
         audio_noise_seed = @audio_noise_seed,
         rects_noise_seed = @rects_noise_seed,
         webgl_vendor = @webgl_vendor,
-        webgl_renderer = @webgl_renderer
+        webgl_renderer = @webgl_renderer,
+        cookie_json = @cookie_json
       WHERE id = @id
     `).run({
       id: Number(id),
@@ -721,7 +707,9 @@ router.put('/:id', (req: Request, res: Response) => {
       audio_noise_seed: body.audioNoiseSeed || null,
       rects_noise_seed: body.rectsNoiseSeed || null,
       webgl_vendor: body.webglVendor || null,
-      webgl_renderer: body.webglRenderer || null
+      webgl_renderer: body.webglRenderer || null,
+      // Phase 4.0: Cookie 预置
+      cookie_json: body.cookie_json || null
     })
     
     res.json({
@@ -804,7 +792,7 @@ router.post('/:id/launch', async (req: Request, res: Response) => {
         p.webrtc_mode, p.timezone_mode, p.geolocation_mode,
         p.language_mode, p.ui_language, p.screen_resolution,
         p.font, p.canvas_mode, p.webgl_mode, p.media_device_mode,
-        p.startup_url, p.icon_path,
+        p.startup_url, p.icon_path, p.cookie_json,
         pr.id as pr_id, pr.name as pr_name, pr.type as pr_type,
         pr.host as pr_host, pr.port as pr_port, pr.username as pr_username,
         pr.password as pr_password
@@ -847,7 +835,9 @@ router.post('/:id/launch', async (req: Request, res: Response) => {
       audioNoiseSeed: profileRow.audio_noise_seed || null,
       rectsNoiseSeed: profileRow.rects_noise_seed || null,
       webglVendor: profileRow.webgl_vendor || null,
-      webglRenderer: profileRow.webgl_renderer || null
+      webglRenderer: profileRow.webgl_renderer || null,
+      // Phase 4.0: Cookie 预置 JSON
+      cookie_json: profileRow.cookie_json || undefined
     }
     
     // 3. 构建 Proxy 对象（如果有代理）
@@ -879,6 +869,16 @@ router.post('/:id/launch', async (req: Request, res: Response) => {
     // Phase 3.5 Rev2: 启动 Session Tab Manager（Electron 主进程轮询 CDP，每 5 秒同步到后端）
     const debugPort = 9000 + profile.id
     startSessionTabManager(profile.id, debugPort)
+    
+    // Phase 4.0: 启动成功后导入预置 Cookie
+    if (profileRow.cookie_json) {
+      console.log(`[Profile API] Profile ${profile.id} 导入预置 Cookie，长度=${profileRow.cookie_json.length}`)
+      importPresetCookies(profile.id, profileRow.cookie_json).then(r => {
+        console.log(`[Profile API] 预置 Cookie 导入结果: ${r.message}`)
+      }).catch(e => {
+        console.warn(`[Profile API] 预置 Cookie 导入失败: ${e.message}`)
+      })
+    }
     
     res.json({
       code: 0,

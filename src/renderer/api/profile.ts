@@ -48,6 +48,8 @@ export interface ProfileRecord {
   rectsNoiseSeed?: string
   webglVendor?: string
   webglRenderer?: string
+  // Phase 4.0: Cookie 预置
+  cookieJson?: string
 }
 
 /** 创建/更新 Profile 请求体 */
@@ -75,6 +77,8 @@ export interface ProfileDto {
   rectsNoiseSeed?: string
   webglVendor?: string
   webglRenderer?: string
+  // Phase 4.0: Cookie 预置
+  cookieJson?: string
 }
 
 /** Chrome 启动结果 */

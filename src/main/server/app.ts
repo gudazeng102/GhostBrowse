@@ -16,6 +16,7 @@ import profileRouter from './routes/profile'
 import systemRouter from './routes/system'
 import authRouter from './routes/auth'
 import fingerprintRouter from './routes/fingerprint'
+import cookieManagerRouter from './routes/cookie-manager'
 
 // Express 应用实例
 let app: Express | null = null
@@ -97,6 +98,9 @@ export function createApp(): Express {
 
   // ==================== Phase 2.0: 指纹检测 API ====================
   app.use('/api/v1/fingerprint', fingerprintRouter)
+
+  // ==================== Phase 4.0: Cookie 管理 API（CDP 实时 Cookie） ====================
+  app.use('/api/v1/cookie-manager', cookieManagerRouter)
 
   // ==================== 捕获所有路由，返回 index.html (SPA 支持) ====================
   app.get('*', (req: Request, res: Response) => {

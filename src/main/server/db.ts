@@ -180,6 +180,22 @@ function runMigrations(): void {
   createCookieBackupsTable()
   migrateFingerprintColumns()
   createSessionTabsTable()
+  migrateCookieJsonColumn()
+}
+
+function migrateCookieJsonColumn(): void {
+  if (!db) return
+
+  try {
+    const columns = db!.prepare('PRAGMA table_info(profiles)').all() as any[]
+    const hasCookieJson = columns.some(col => col.name === 'cookie_json')
+    if (!hasCookieJson) {
+      db!.prepare('ALTER TABLE profiles ADD COLUMN cookie_json TEXT').run()
+      console.log('[DB] profiles 表已添加 cookie_json 字段')
+    }
+  } catch (err: any) {
+    console.error('[DB] cookie_json 字段迁移失败:', err.message)
+  }
 }
 
 

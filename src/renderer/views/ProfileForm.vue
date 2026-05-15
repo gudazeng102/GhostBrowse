@@ -327,6 +327,35 @@
         </div>
       </a-card>
 
+      <!-- Phase 4.0: Cookie 预置卡片 -->
+      <a-card :bordered="false" style="margin-bottom: 16px;">
+        <template #title>
+          <span>
+            🍪 Cookie 预置
+            <a-tooltip title="设置窗口启动时自动导入的 Cookie，支持 JSON 数组格式。">
+              <QuestionCircleOutlined style="margin-left: 6px; color: #999; cursor: help;" />
+            </a-tooltip>
+          </span>
+        </template>
+        <a-form-item name="cookieJson" style="margin-bottom: 8px;">
+          <a-textarea
+            v-model:value="formState.cookieJson"
+            placeholder='JSON 数组格式，例如：[&#10;  { "name": "session_id", "value": "abc123", "domain": ".example.com", "path": "/" }&#10;]'
+            :rows="4"
+            style="font-family: monospace;"
+          />
+        </a-form-item>
+        <div style="margin-top: 8px;">
+          <a-space>
+            <a-button size="small" @click="goToCookieManager">
+              🍪 管理 Cookie
+            </a-button>
+            <span style="color: #888; font-size: 12px;">
+              点击前往 Cookie 管理页面，可实时查看/导入/清空运行中窗口的 Cookie
+            </span>
+          </a-space>
+        </div>
+      </a-card>
 
       <!-- 按钮区域 -->
       <div class="form-actions">
@@ -645,8 +674,10 @@ const formState: any = reactive({
   rectsNoiseSeed: '',
   webglVendor: '',
   webglRenderer: '',
-  deviceName: '',
+      deviceName: '',
   macAddress: '',
+  // Phase 4.0: Cookie 预置
+  cookieJson: '',
 })
 
 // 表单校验规则
@@ -763,6 +794,15 @@ function handleBack() {
 // 取消（已改为调用 handleBack）
 function handleCancel() {
   handleBack()
+}
+
+// Phase 4.0: 跳转到 Cookie 管理页面
+function goToCookieManager() {
+  if (!editId.value) {
+    message.warning('请先保存窗口后再管理 Cookie')
+    return
+  }
+  router.push(`/profile/${editId.value}/cookies`)
 }
 
 // Phase 2.1: 快速填充启动页面 URL
