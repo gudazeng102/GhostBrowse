@@ -327,34 +327,88 @@
         </div>
       </a-card>
 
-      <!-- Phase 4.0: Cookie 预置卡片 -->
+      <!-- 导入 Cookie 卡片 -->
       <a-card :bordered="false" style="margin-bottom: 16px;">
         <template #title>
           <span>
-            🍪 Cookie 预置
-            <a-tooltip title="设置窗口启动时自动导入的 Cookie，支持 JSON 数组格式。">
+            📥 导入 Cookie
+            <a-tooltip title="窗口运行时可导入 Cookie，支持 JSON 数组格式。">
               <QuestionCircleOutlined style="margin-left: 6px; color: #999; cursor: help;" />
             </a-tooltip>
           </span>
         </template>
-        <a-form-item name="cookieJson" style="margin-bottom: 8px;">
-          <a-textarea
-            v-model:value="formState.cookieJson"
-            placeholder='JSON 数组格式，例如：[&#10;  { "name": "session_id", "value": "abc123", "domain": ".example.com", "path": "/" }&#10;]'
-            :rows="4"
-            style="font-family: monospace;"
+        <a-space direction="vertical" :size="12" style="width: 100%;">
+          <!-- 导入方式选择 -->
+          <a-radio-group v-model:value="importMode">
+            <a-radio value="json">📄 JSON 文件导入</a-radio>
+            <a-radio value="paste">📋 粘贴 JSON 文本</a-radio>
+          </a-radio-group>
+
+          <!-- JSON 文件导入 -->
+          <div v-if="importMode === 'json'">
+            <a-upload
+              :before-upload="beforeUploadCookieFile"
+              :max-count="1"
+              accept=".json"
+            >
+              <a-button>
+                <UploadOutlined /> 选择 JSON 文件
+              </a-button>
+            </a-upload>
+            <div v-if="importFileJson" style="margin-top: 8px; color: #52c41a;">
+              文件已加载：{{ importFileJson.length }} 字符
+            </div>
+            <div style="margin-top: 8px; color: #888; font-size: 12px;">
+              支持 JSON 数组格式的 Cookie 文件
+            </div>
+          </div>
+
+          <!-- 粘贴 JSON -->
+          <div v-else>
+            <a-textarea
+              v-model:value="formState.cookieText"
+              :placeholder="cookiePlaceholder"
+              :rows="4"
+              style="font-family: monospace;"
+            />
+            <div style="margin-top: 8px; color: #888; font-size: 12px;">
+              支持 JSON 数组格式，每项需包含 name、value、domain 字段
+            </div>
+          </div>
+
+          <!-- 导入按钮 -->
+          <div>
+            <a-space>
+              <a-button
+                type="primary"
+                :loading="importing"
+                :disabled="!canImport"
+                @click="handleImportCookie"
+              >
+                🚀 导入 Cookie
+              </a-button>
+              <a-button size="small" @click="goToCookieManager">
+                🍪 管理 Cookie
+              </a-button>
+            </a-space>
+          </div>
+
+          <!-- 导入结果 -->
+          <a-alert
+            v-if="importResult"
+            :type="importResult.success ? 'success' : 'error'"
+            :message="importResult.message"
+            show-icon
           />
-        </a-form-item>
-        <div style="margin-top: 8px;">
-          <a-space>
-            <a-button size="small" @click="goToCookieManager">
-              🍪 管理 Cookie
-            </a-button>
-            <span style="color: #888; font-size: 12px;">
-              点击前往 Cookie 管理页面，可实时查看/导入/清空运行中窗口的 Cookie
-            </span>
-          </a-space>
-        </div>
+
+          <!-- 提示 -->
+          <div v-if="!isProfileRunning" style="color: #52c41a;">
+            ✅ 窗口未运行，点击导入将保存为预置 Cookie，启动后自动导入
+          </div>
+          <div v-else style="color: #52c41a;">
+            ✅ 窗口运行中，点击导入将实时写入浏览器并保存为预置
+          </div>
+        </a-space>
       </a-card>
 
       <!-- 按钮区域 -->
@@ -437,12 +491,13 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { LeftOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
+import { LeftOutlined, QuestionCircleOutlined, UploadOutlined } from '@ant-design/icons-vue'
 import type { FormInstance } from 'ant-design-vue'
 import { getProxyList, type ProxyRecord } from '../api/proxy'
 import { getProfileDetail, createProfile, updateProfile, type ProfileDto, type ProfileRecord, type WebRtcMode } from '../api/profile'
 import { BulbOutlined, SyncOutlined, ChromeOutlined } from '@ant-design/icons-vue'
 import { smartConfigProfile, generateFingerprint } from '../api/profile'
+import request from '../api/request'
 
 // Phase 3.0: 生成新指纹相关状态和函数
 const generating = ref(false)
@@ -651,6 +706,29 @@ const submitting = ref(false)
 const proxyList = ref<ProxyRecord[]>([])
 
 // 表单数据（使用 any 类型避免 font 字段类型冲突）
+// 导入 Cookie 相关状态
+const importMode = ref('paste')
+const importFileJson = ref<string | null>(null)
+const importing = ref(false)
+const importResult = ref<{ success: boolean; message: string } | null>(null)
+
+// 窗口运行状态
+const isProfileRunning = ref(false)
+
+// 计算属性
+const cookiePlaceholder = computed(() => {
+  return '粘贴 JSON 数组，例如：\n[\n  {\n    "name": "session_id",\n    "value": "abc123",\n    "domain": ".example.com",\n    "path": "/"\n  }\n]'
+})
+
+const canImport = computed(() => {
+  if (importMode.value === 'paste') {
+    return formState.cookieText.trim().length > 0
+  } else {
+    return importFileJson.value !== null
+  }
+})
+
+// 表单数据
 const formState: any = reactive({
   title: '',
   proxyId: undefined,
@@ -678,6 +756,7 @@ const formState: any = reactive({
   macAddress: '',
   // Phase 4.0: Cookie 预置
   cookieJson: '',
+  cookieText: '',
 })
 
 // 表单校验规则
@@ -721,6 +800,7 @@ async function loadProfileDetail() {
       formState.startupUrl = data.startupUrl || ''
       // Phase 4.0: Cookie 预置回显
       formState.cookieJson = (data as any).cookie_json || (data as any).cookieJson || ''
+      formState.cookieText = (data as any).cookie_json || (data as any).cookieJson || ''
       // Phase 3.0: 指纹参数回显
     formState.canvasNoiseSeed = data.canvasNoiseSeed || ''
     formState.webglVendor = data.webglVendor || ''
@@ -771,15 +851,44 @@ async function handleSubmit() {
       webglVendor: formState.webglVendor || undefined,
       webglRenderer: formState.webglRenderer || undefined,
       // Phase 4.0: Cookie 预置（新建和编辑都提交）
-      cookieJson: formState.cookieJson || undefined,
+      cookieJson: formState.cookieText || formState.cookieJson || undefined,
     }
+
+    const hasCookieText = formState.cookieText?.trim().length > 0
 
     if (isEdit.value && editId.value) {
       await updateProfile(editId.value, submitData)
-      message.success('修改成功')
+
+      // Phase 4.0 Fix: 保存时自动导入 Cookie（运行中实时导入，未运行则存为预置）
+      if (hasCookieText) {
+        if (isProfileRunning.value) {
+          try {
+            const cookies = JSON.parse(formState.cookieText)
+            const res = await request.post(`/cookie-manager/${editId.value}/live-cookies/import`, { cookies })
+            const json = res.data
+            if (json.code === 0) {
+              message.success('配置已保存，Cookie 已实时导入浏览器')
+            } else {
+              message.warning('配置已保存，实时导入失败: ' + json.message)
+            }
+          } catch (e: any) {
+            message.warning('配置已保存，Cookie 实时导入失败')
+          }
+        } else {
+          message.success('配置已保存，预置 Cookie 已更新，启动窗口后自动生效')
+        }
+      } else {
+        message.success('修改成功')
+      }
     } else {
       await createProfile(submitData)
-      message.success('创建成功')
+
+      // Phase 4.0 Fix: 新建窗口已包含 cookieJson，明确提示用户
+      if (hasCookieText) {
+        message.success('窗口创建成功，预置 Cookie 已保存，启动后自动生效')
+      } else {
+        message.success('创建成功')
+      }
     }
     router.push('/profile')
   } catch (error: any) {
@@ -809,6 +918,99 @@ function goToCookieManager() {
   router.push(`/profile/${editId.value}/cookies`)
 }
 
+// 导入 Cookie 文件
+function beforeUploadCookieFile(file: File) {
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    importFileJson.value = e.target?.result as string
+  }
+  reader.readAsText(file)
+  return false
+}
+
+// 执行导入 Cookie
+async function handleImportCookie() {
+  // 1. 解析 Cookie 数据
+  let cookies: any[] = []
+  try {
+    if (importMode.value === 'paste') {
+      cookies = JSON.parse(formState.cookieText)
+    } else if (importFileJson.value) {
+      cookies = JSON.parse(importFileJson.value)
+    }
+  } catch (e) {
+    message.error('JSON 格式错误: ' + (e as Error).message)
+    return
+  }
+
+  if (!Array.isArray(cookies) || cookies.length === 0) {
+    message.warning('Cookie 数据为空')
+    return
+  }
+
+  // 2. 新建模式：缓存到表单，创建时自动提交
+  if (!editId.value) {
+    importResult.value = {
+      success: true,
+      message: `已缓存 ${cookies.length} 条 Cookie，创建窗口后将自动保存`
+    }
+    return
+  }
+
+  importing.value = true
+  importResult.value = null
+
+  try {
+    // 先保存为预置
+    await updateProfile(editId.value, { title: formState.title, cookieJson: formState.cookieText } as any)
+
+    // 如果窗口运行中，额外实时导入
+    if (isProfileRunning.value) {
+      try {
+        const res = await request.post(`/cookie-manager/${editId.value}/live-cookies/import`, { cookies })
+        const json = res.data
+        importResult.value = {
+          success: json.code === 0,
+          message: json.code === 0
+            ? `已保存预置并实时导入 ${cookies.length} 条 Cookie 到浏览器`
+            : `预置已保存，实时导入失败: ${json.message}`
+        }
+      } catch (liveErr: any) {
+        importResult.value = {
+          success: true,
+          message: `预置已保存，实时导入失败: ${liveErr.response?.data?.message || liveErr.message}`
+        }
+      }
+    } else {
+      importResult.value = {
+        success: true,
+        message: `已保存 ${cookies.length} 条预置 Cookie，启动窗口后自动导入`
+      }
+    }
+  } catch (e: any) {
+    importResult.value = { success: false, message: '保存失败: ' + (e.response?.data?.message || e.message) }
+  } finally {
+    importing.value = false
+  }
+}
+
+// 加载窗口运行状态
+async function loadProfileStatus() {
+  if (!editId.value) {
+    isProfileRunning.value = false
+    return
+  }
+
+  try {
+    const api = await import('../api/profile')
+    const statusRes = await api.getProfilesStatus()
+    isProfileRunning.value = statusRes.runningIds?.includes(editId.value) || false
+  } catch (e: any) {
+    console.error('加载窗口状态失败:', e)
+    isProfileRunning.value = false
+  }
+}
+
 // Phase 2.1: 快速填充启动页面 URL
 function fillUrl(url: string) {
   formState.startupUrl = url
@@ -823,6 +1025,7 @@ onMounted(async () => {
   await loadProxyList()
   if (isEdit.value) {
     loadProfileDetail()
+    loadProfileStatus()
   }
 })
 </script>

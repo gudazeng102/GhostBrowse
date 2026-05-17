@@ -911,7 +911,8 @@ export async function launchChrome(
       ? path.join(process.resourcesPath, 'browser', version, 'homepage.html')
       : path.join(process.cwd(), 'resources', 'browser', version, 'homepage.html')
    // return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://browserleaks.com/webgl'
-    return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://www.baidu.com'
+   // return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://www.baidu.com'
+    return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://www.google.com'
 
   }
   
@@ -1168,8 +1169,25 @@ function getPageWsUrl(debugPort: number): Promise<string> {
 }
 
 /**
+ * Phase 4.0 Fix: 轮询等待 CDP page target 就绪
+ */
+async function waitForPageWsUrl(debugPort: number, maxWaitMs: number = 30000): Promise<string> {
+  const start = Date.now()
+  const interval = 1000
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      const url = await getPageWsUrl(debugPort)
+      return url
+    } catch {
+      await new Promise(r => setTimeout(r, interval))
+    }
+  }
+  throw new Error(`等待 CDP 就绪超时（${maxWaitMs}ms）`)
+}
+
+/**
  * Phase 4.0: 通过 CDP 导入预置 Cookie
- * 在 Chrome 启动后立即调用，将 profiles.cookie_json 写入浏览器
+ * 在 Chrome 启动后调用，将 profiles.cookie_json 写入浏览器
  */
 export async function importPresetCookies(profileId: number, cookieJson: string): Promise<{ success: boolean; message: string }> {
   if (!cookieJson || !cookieJson.trim()) {
@@ -1184,69 +1202,106 @@ export async function importPresetCookies(profileId: number, cookieJson: string)
       return { success: true, message: 'Cookie 数组为空，跳过' }
     }
 
-    const wsUrl = await getPageWsUrl(debugPort)
-    console.log(`[importPresetCookies] Profile ${profileId} CDP page wsUrl=${wsUrl}`)
-
-    const ws = new (require('ws'))(wsUrl)
-    
-    await new Promise<void>((resolve, reject) => {
-      const onOpen = () => { ws.off('open', onOpen); ws.off('error', onError); resolve() }
-      const onError = (e: Error) => { ws.off('open', onOpen); ws.off('error', onError); reject(e) }
-      ws.on('open', onOpen)
-      ws.on('error', onError)
-      setTimeout(() => { ws.off('open', onOpen); ws.off('error', onError); reject(new Error('CDP 连接超时')) }, 5000)
-    })
-
-    let successCount = 0
-    let failCount = 0
-
-    for (let i = 0; i < cookies.length; i++) {
-      const c = cookies[i]
+    // 整体重试：最多2次（首次 + 1次重试），确保 CDP 就绪后再导入
+    let lastError: any = null
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        await new Promise<void>((resolve, reject) => {
-          const id = i + 1
-          const timeout = setTimeout(() => reject(new Error(`命令 ${id} 超时`)), 5000)
-          const handler = (data: Buffer | ArrayBuffer | Buffer[]) => {
-            try {
-              const resp = JSON.parse(data.toString())
-              if (resp.id === id) {
-                clearTimeout(timeout)
-                ws.off('message', handler)
-                if (resp.error) reject(new Error(resp.error.message))
-                else resolve()
-              }
-            } catch {}
-          }
-          ws.on('message', handler)
-          ws.send(JSON.stringify({
-            id,
-            method: 'Network.setCookie',
-            params: {
-              name: c.name || '',
-              value: c.value || '',
-              domain: c.domain || '',
-              path: c.path || '/',
-              secure: !!c.secure,
-              httpOnly: !!c.httpOnly,
-              sameSite: c.sameSite || 'unspecified',
-              expires: c.expires ?? -1
-            }
-          }))
-        })
-        successCount++
+        const result = await doImportPresetCookies(debugPort, cookies)
+        return result
       } catch (e: any) {
-        failCount++
-        console.warn(`[importPresetCookies] Cookie 导入失败: ${c.name}`, e.message)
+        lastError = e
+        console.warn(`[importPresetCookies] Profile ${profileId} 尝试 ${attempt + 1} 失败: ${e.message}`)
+        if (attempt < 1) {
+          console.log(`[importPresetCookies] 等待 3 秒后重试...`)
+          await new Promise(r => setTimeout(r, 3000))
+        }
       }
     }
-
-    ws.close()
-    return {
-      success: failCount === 0,
-      message: `导入完成：成功 ${successCount}，失败 ${failCount}`
-    }
+    throw lastError
   } catch (err: any) {
     console.error('[importPresetCookies] 导入预置 Cookie 失败:', err)
     return { success: false, message: err.message || '导入失败' }
+  }
+}
+
+async function doImportPresetCookies(debugPort: number, cookies: any[]): Promise<{ success: boolean; message: string }> {
+  const wsUrl = await waitForPageWsUrl(debugPort, 30000)
+  console.log(`[importPresetCookies] CDP page wsUrl=${wsUrl}`)
+
+  const ws = new (require('ws'))(wsUrl)
+  
+  await new Promise<void>((resolve, reject) => {
+    const onOpen = () => { ws.off('open', onOpen); ws.off('error', onError); resolve() }
+    const onError = (e: Error) => { ws.off('open', onOpen); ws.off('error', onError); reject(e) }
+    ws.on('open', onOpen)
+    ws.on('error', onError)
+    setTimeout(() => { ws.off('open', onOpen); ws.off('error', onError); reject(new Error('CDP 连接超时')) }, 5000)
+  })
+
+  // Phase 4.0 Fix: 启用 Network Domain，确保 setCookie 正常工作
+  await new Promise<void>((resolve, reject) => {
+    const id = 0
+    const timeout = setTimeout(() => reject(new Error('Network.enable 超时')), 5000)
+    const handler = (data: Buffer | ArrayBuffer | Buffer[]) => {
+      try {
+        const resp = JSON.parse(data.toString())
+        if (resp.id === id) {
+          clearTimeout(timeout)
+          ws.off('message', handler)
+          resolve()
+        }
+      } catch {}
+    }
+    ws.on('message', handler)
+    ws.send(JSON.stringify({ id, method: 'Network.enable', params: {} }))
+  })
+
+  let successCount = 0
+  let failCount = 0
+
+  for (let i = 0; i < cookies.length; i++) {
+    const c = cookies[i]
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const id = i + 1
+        const timeout = setTimeout(() => reject(new Error(`命令 ${id} 超时`)), 5000)
+        const handler = (data: Buffer | ArrayBuffer | Buffer[]) => {
+          try {
+            const resp = JSON.parse(data.toString())
+            if (resp.id === id) {
+              clearTimeout(timeout)
+              ws.off('message', handler)
+              if (resp.error) reject(new Error(resp.error.message))
+              else resolve()
+            }
+          } catch {}
+        }
+        ws.on('message', handler)
+        ws.send(JSON.stringify({
+          id,
+          method: 'Network.setCookie',
+          params: {
+            name: c.name || '',
+            value: c.value || '',
+            domain: c.domain || '',
+            path: c.path || '/',
+            secure: !!c.secure,
+            httpOnly: !!c.httpOnly,
+            sameSite: c.sameSite || 'unspecified',
+            expires: c.expires ?? -1
+          }
+        }))
+      })
+      successCount++
+    } catch (e: any) {
+      failCount++
+      console.warn(`[importPresetCookies] Cookie 导入失败: ${c.name}`, e.message)
+    }
+  }
+
+  ws.close()
+  return {
+    success: failCount === 0,
+    message: `导入完成：成功 ${successCount}，失败 ${failCount}`
   }
 }

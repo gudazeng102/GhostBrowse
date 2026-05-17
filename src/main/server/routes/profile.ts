@@ -338,6 +338,7 @@ interface ProfileDto {
   webglRenderer?: string
   // Phase 4.0: Cookie 预置 JSON
   cookie_json?: string
+  cookieJson?: string
 }
 
 // ==================== API 路由 ====================
@@ -363,6 +364,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
         p.language_mode, p.ui_language, p.screen_resolution,
         p.font, p.canvas_mode, p.webgl_mode, p.media_device_mode,
         p.startup_url, p.icon_path, p.created_at, p.updated_at,
+        p.cookie_json,
         pr.id as pr_id, pr.name as pr_name, pr.type as pr_type,
         pr.host as pr_host, pr.port as pr_port, pr.username as pr_username
       FROM profiles p
@@ -394,6 +396,9 @@ router.get('/', (req: AuthRequest, res: Response) => {
       iconPath: row.icon_path || undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      // Phase 4.0: Cookie 预置（同时返回两种命名）
+      cookie_json: row.cookie_json || undefined,
+      cookieJson: row.cookie_json || undefined,
       // 关联的代理信息
       proxy: row.pr_id ? {
         id: row.pr_id,
@@ -486,8 +491,9 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
       rectsNoiseSeed: row.rects_noise_seed || undefined,
       webglVendor: row.webgl_vendor || undefined,
       webglRenderer: row.webgl_renderer || undefined,
-      // Phase 4.0: Cookie 预置
+      // Phase 4.0: Cookie 预置（同时返回两种命名）
       cookie_json: row.cookie_json || undefined,
+      cookieJson: row.cookie_json || undefined,
       proxy: row.pr_id ? {
         id: row.pr_id,
         name: row.pr_name,
@@ -592,7 +598,7 @@ router.post('/', (req: AuthRequest, res: Response) => {
       rects_noise_seed: body.rectsNoiseSeed || null,
       webgl_vendor: body.webglVendor || null,
       webgl_renderer: body.webglRenderer || null,
-      cookie_json: body.cookie_json || null
+      cookie_json: body.cookieJson || body.cookie_json || null
     })
     
     res.json({
@@ -709,7 +715,7 @@ router.put('/:id', (req: Request, res: Response) => {
       webgl_vendor: body.webglVendor || null,
       webgl_renderer: body.webglRenderer || null,
       // Phase 4.0: Cookie 预置
-      cookie_json: body.cookie_json || null
+      cookie_json: body.cookieJson || body.cookie_json || null
     })
     
     res.json({

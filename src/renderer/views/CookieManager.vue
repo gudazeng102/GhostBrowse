@@ -104,7 +104,7 @@
         </a-card>
       </a-tab-pane>
 
-      <!-- Tab 2: 导入预置 Cookie -->
+      <!-- Tab 2: 导入 Cookie -->
       <a-tab-pane key="import" tab="📥 导入 Cookie">
         <a-card :bordered="false">
           <a-space direction="vertical" :size="16" style="width: 100%;">
@@ -163,36 +163,6 @@
           </a-space>
         </a-card>
       </a-tab-pane>
-
-      <!-- Tab 3: 预置 Cookie 配置 -->
-      <a-tab-pane key="preset" tab="💾 预置 Cookie">
-        <a-card :bordered="false">
-          <a-form layout="vertical">
-            <a-form-item label="预置 Cookie JSON">
-              <a-textarea
-                v-model:value="presetCookieJson"
-                placeholder="在此输入预置 Cookie JSON，用于窗口启动时自动导入"
-                :rows="6"
-                style="font-family: monospace;"
-              />
-            </a-form-item>
-            <a-form-item label="说明">
-              <a-typography-paragraph type="secondary">
-                预置 Cookie 会在窗口启动时自动通过 CDP 导入到浏览器中。
-                支持 JSON 数组格式，每项需包含 name、value、domain 字段。
-              </a-typography-paragraph>
-            </a-form-item>
-            <a-space>
-              <a-button type="primary" @click="savePreset" :loading="saving">
-                保存预置
-              </a-button>
-              <a-button @click="loadPreset">
-                加载当前
-              </a-button>
-            </a-space>
-          </a-form>
-        </a-card>
-      </a-tab-pane>
     </a-tabs>
   </div>
 </template>
@@ -241,10 +211,6 @@ const importFileJson = ref<string | null>(null)
 const importing = ref(false)
 const importResult = ref<{ success: boolean; message: string } | null>(null)
 
-// 预置 Cookie
-const presetCookieJson = ref('')
-const saving = ref(false)
-
 // ==================== 计算属性 ====================
 
 const cookiePlaceholder = computed(() => {
@@ -282,8 +248,7 @@ async function loadProfileDetail() {
     const api = await import('../api/profile')
     const res = await api.getProfileDetail(profileId.value)
     profileTitle.value = res.title || ''
-    presetCookieJson.value = (res as any).cookie_json || res.cookieJson || ''
-    
+
     // ✅ Phase 4.0: 通过 /profiles/status 接口获取运行状态
     const statusRes = await api.getProfilesStatus()
     console.log('[CookieManager] getProfilesStatus 返回:', JSON.stringify(statusRes))
@@ -420,31 +385,6 @@ async function handleImport() {
   } finally {
     importing.value = false
   }
-}
-
-/**
- * 保存预置 Cookie
- */
-async function savePreset() {
-  saving.value = true
-  try {
-    const api = await import('../api/profile')
-    await api.updateProfile(profileId.value, {
-      cookieJson: presetCookieJson.value
-    } as any)
-    message.success('预置 Cookie 已保存')
-  } catch (e: any) {
-    message.error('保存失败: ' + (e.response?.data?.message || e.message))
-  } finally {
-    saving.value = false
-  }
-}
-
-/**
- * 加载当前预置
- */
-function loadPreset() {
-  message.info('当前预置 Cookie 已加载到文本框')
 }
 
 // ==================== 工具函数 ====================
