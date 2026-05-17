@@ -15,12 +15,126 @@
  * 注意：此文件为模板，实际运行时 launcher.ts 会将 {{CONFIG}} 替换为真实配置
  */
 
+// ==================== Phase 4.0 Fix: RTCPeerConnection 立即劫持（document_start 时机）====================
+// 必须在页面任何脚本执行前完成，防止检测脚本缓存原始引用
+(function() {
+  'use strict';
+  
+  const OriginalRTCPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+  if (OriginalRTCPeerConnection) {
+    function FakeRTCPeerConnection(config, constraints) {
+      if (config && config.iceServers) {
+        config.iceServers = [];
+      }
+      const pc = new OriginalRTCPeerConnection(config, constraints);
+      
+      const originalCreateOffer = pc.createOffer.bind(pc);
+      pc.createOffer = function(options) {
+        return originalCreateOffer(options).then(offer => {
+          if (offer && offer.sdp) {
+            offer.sdp = offer.sdp.replace(/(a=candidate:[^\r\n]*?(\d{1,3}\.){3}\d{1,3}[^\r\n]*?\r\n)/g, '');
+            offer.sdp = offer.sdp.replace(/(a=rtcp:[^\r\n]*?(\d{1,3}\.){3}\d{1,3}[^\r\n]*?\r\n)/g, '');
+          }
+          return offer;
+        });
+      };
+      
+      const originalCreateAnswer = pc.createAnswer.bind(pc);
+      pc.createAnswer = function(options) {
+        return originalCreateAnswer(options).then(answer => {
+          if (answer && answer.sdp) {
+            answer.sdp = answer.sdp.replace(/(a=candidate:[^\r\n]*?(\d{1,3}\.){3}\d{1,3}[^\r\n]*?\r\n)/g, '');
+            answer.sdp = answer.sdp.replace(/(a=rtcp:[^\r\n]*?(\d{1,3}\.){3}\d{1,3}[^\r\n]*?\r\n)/g, '');
+          }
+          return answer;
+        });
+      };
+      
+      return pc;
+    }
+    
+    FakeRTCPeerConnection.prototype = OriginalRTCPeerConnection.prototype;
+    window.RTCPeerConnection = FakeRTCPeerConnection;
+    window.webkitRTCPeerConnection = FakeRTCPeerConnection;
+  }
+})();
+
 (function() {
   'use strict';
   
   // 获取配置（运行时由 launcher.ts 替换）
   const config = {{CONFIG}};
   
+  // ==================== Phase 4.0 Fix: navigator.userAgentData 覆盖（document_start 时机）====================
+  // Chrome 120+ 检测站大量改用 Client Hints，必须在页面脚本执行前完成覆盖
+  const chromeVersionForHints = config.chrome_version || '128';
+  const platformForHints = config.os === 'mac' ? 'macOS' : config.os === 'linux' ? 'Linux' : config.os === 'android' ? 'Android' : 'Windows';
+  const platformVersionMap = {
+    'windows': '15.0.0', 'mac': '14.0.0', 'linux': '6.0.0', 'android': '14.0.0', 'ios': '17.0.0'
+  };
+  const platformVersion = platformVersionMap[config.os] || '15.0.0';
+  const architecture = config.os === 'android' || config.os === 'ios' ? 'arm' : 'x86';
+  const bitness = '64';
+  const mobile = config.os === 'android' || config.os === 'ios';
+  const brandVersion = String(chromeVersionForHints).replace(/^Chrome\s*/i, '').trim();
+  const uaFullVersion = `${brandVersion}.0.6099.130`;
+
+  const fakeUserAgentData = {
+    brands: [
+      { brand: 'Chromium', version: brandVersion },
+      { brand: 'Not.A/Brand', version: '24' },
+      { brand: 'Google Chrome', version: brandVersion }
+    ],
+    mobile: mobile,
+    platform: platformForHints,
+    formFactors: [],
+    getHighEntropyValues: function(hints) {
+      const result = {};
+      if (hints.includes('architecture')) result.architecture = architecture;
+      if (hints.includes('bitness')) result.bitness = bitness;
+      if (hints.includes('brands')) result.brands = this.brands;
+      if (hints.includes('formFactors')) result.formFactors = this.formFactors;
+      if (hints.includes('fullVersionList')) {
+        result.fullVersionList = [
+          { brand: 'Chromium', version: uaFullVersion },
+          { brand: 'Not.A/Brand', version: '24.0.0.0' },
+          { brand: 'Google Chrome', version: uaFullVersion }
+        ];
+      }
+      if (hints.includes('mobile')) result.mobile = mobile;
+      if (hints.includes('model')) result.model = '';
+      if (hints.includes('platform')) result.platform = platformForHints;
+      if (hints.includes('platformVersion')) result.platformVersion = platformVersion;
+      if (hints.includes('uaFullVersion')) result.uaFullVersion = uaFullVersion;
+      if (hints.includes('wow64')) result.wow64 = false;
+      return Promise.resolve(result);
+    },
+    toJSON: function() {
+      return {
+        brands: this.brands,
+        mobile: this.mobile,
+        platform: this.platform,
+        formFactors: this.formFactors
+      };
+    }
+  };
+
+  // 无条件覆盖（Chrome 原生有 userAgentData，必须用 defineProperty 重写）
+  Object.defineProperty(navigator, 'userAgentData', {
+    get: function() { return fakeUserAgentData; },
+    configurable: true,
+    enumerable: true
+  });
+
+  // Phase 4.0 Fix: Content Script 已配置为 world: MAIN，无需再通过 script 标签注入
+  // 直接在此处覆盖 navigator.platform（避免硬编码，使用 config.os 映射）
+  const platformValue = config.os === 'mac' ? 'MacIntel' : config.os === 'linux' ? 'Linux x86_64' : config.os === 'android' ? 'Linux armv8l' : config.os === 'ios' ? 'iPhone' : 'Win32';
+  Object.defineProperty(navigator, 'platform', {
+    get: () => platformValue,
+    configurable: true,
+    enumerable: true
+  });
+
   // ==================== 0. WebDriver 反检测（替代 --disable-blink-features） ====================
   Object.defineProperty(navigator, 'webdriver', {
     get: () => undefined,
@@ -345,25 +459,69 @@
     }
   }
   
-  // ==================== 4. 时区 - 基于配置 ====================
+  // ==================== 4. 时区 - 基于配置（Phase 4.1 增强）====================
   if (config.timezone_mode === 'ip' && config.timezone) {
+    const timezone = config.timezone;
+    // 优先使用 launcher 传入的精确偏移量，否则查表
+    const timezoneOffset = config.timezone_offset !== undefined
+      ? config.timezone_offset
+      : ({
+        'Asia/Shanghai': -480, 'Asia/Tokyo': -540, 'Asia/Seoul': -540,
+        'Asia/Singapore': -480, 'Asia/Bangkok': -420, 'Asia/Kolkata': -330,
+        'Asia/Dubai': -240, 'Asia/Taipei': -480, 'Asia/Hong_Kong': -480,
+        'Europe/Berlin': 60, 'Europe/London': 0, 'Europe/Paris': 60,
+        'Europe/Moscow': 180, 'Europe/Rome': 60, 'Europe/Madrid': 60,
+        'Europe/Amsterdam': 60, 'Europe/Stockholm': 60, 'Europe/Warsaw': 60,
+        'Europe/Vienna': 60, 'Europe/Zurich': 60, 'Europe/Brussels': 60,
+        'Europe/Copenhagen': 60, 'Europe/Oslo': 60, 'Europe/Helsinki': 120,
+        'America/New_York': 300, 'America/Los_Angeles': 480, 'America/Chicago': 360,
+        'America/Denver': 420, 'America/Phoenix': 420, 'America/Toronto': 300,
+        'America/Vancouver': 480, 'America/Montreal': 300, 'America/Miami': 300,
+        'America/Dallas': 360, 'America/Seattle': 480, 'America/Boston': 300,
+        'America/Sao_Paulo': 180, 'America/Mexico_City': 360, 'America/Bogota': 300,
+        'America/Lima': 300, 'America/Santiago': 240, 'America/Buenos_Aires': 180,
+        'Australia/Sydney': -600, 'Australia/Melbourne': -600, 'Australia/Perth': -480,
+        'Australia/Brisbane': -600, 'Australia/Adelaide': -570,
+        'Pacific/Auckland': -720, 'Pacific/Fiji': -720,
+        'Africa/Johannesburg': -120, 'Africa/Cairo': -120,
+        'America/Halifax': 240, 'America/Anchorage': 540,
+        'Asia/Jakarta': -420, 'Asia/Manila': -480, 'Asia/Kuala_Lumpur': -480,
+        'Asia/Istanbul': 180, 'Asia/Tehran': 210, 'Asia/Riyadh': -180,
+        'Atlantic/Reykjavik': 0
+      }[timezone]);
+
     const originalDateTimeFormat = Intl.DateTimeFormat;
     Intl.DateTimeFormat = function(locales, options) {
-      return new originalDateTimeFormat(locales, { ...options, timeZone: config.timezone });
+      return new originalDateTimeFormat(locales, { ...options, timeZone: timezone });
     };
-    
+
     // 覆盖 Date 的一些方法
     const originalGetTimezoneOffset = Date.prototype.getTimezoneOffset;
     Date.prototype.getTimezoneOffset = function() {
-      // 计算配置时区的偏移量
-      const tzOffset = {
-        'Asia/Shanghai': -480,
-        'America/New_York': 300,
-        'Europe/London': 0,
-        'Asia/Tokyo': -540
-      };
-      return tzOffset[config.timezone] !== undefined ? tzOffset[config.timezone] : originalGetTimezoneOffset.call(this);
+      if (timezoneOffset !== undefined) {
+        return timezoneOffset;
+      }
+      return originalGetTimezoneOffset.call(this);
     };
+
+    // 覆盖 Date.prototype 上所有涉及时区的方法（toLocaleString 族）
+    const dateMethodsToWrap = [
+      'toLocaleString', 'toLocaleDateString', 'toLocaleTimeString',
+      'toString', 'toTimeString', 'toDateString'
+    ];
+    dateMethodsToWrap.forEach(methodName => {
+      const original = Date.prototype[methodName];
+      if (typeof original === 'function') {
+        Date.prototype[methodName] = function(...args) {
+          if (args[1] && typeof args[1] === 'object') {
+            args[1].timeZone = timezone;
+          } else if (methodName.startsWith('toLocale')) {
+            args[1] = { ...(args[1] || {}), timeZone: timezone };
+          }
+          return original.apply(this, args);
+        };
+      }
+    });
   }
   
   // ==================== 5. 地理位置 - 基于配置 ====================
@@ -864,6 +1022,46 @@
       return origQuery(parameters);
     };
   }
+
+  // ============ Phase 3.1 维度 4b: 无条件确保 navigator.plugins / mimeTypes 方法存在 ============
+  // Chrome 某些版本/配置下 PluginArray 原生方法可能缺失，检测站会据此判定异常
+  try {
+    const protoPlugins = navigator.plugins;
+    if (protoPlugins && typeof protoPlugins.item !== 'function') {
+      Object.defineProperty(protoPlugins, 'item', {
+        value: function(index) { return this[index >= 0 && index < this.length ? index : undefined]; },
+        writable: true, configurable: true
+      });
+    }
+    if (protoPlugins && typeof protoPlugins.namedItem !== 'function') {
+      Object.defineProperty(protoPlugins, 'namedItem', {
+        value: function(name) { for (let i = 0; i < this.length; i++) { if (this[i].name === name) return this[i]; } return null; },
+        writable: true, configurable: true
+      });
+    }
+    if (protoPlugins && typeof protoPlugins.refresh !== 'function') {
+      Object.defineProperty(protoPlugins, 'refresh', {
+        value: function() {},
+        writable: true, configurable: true
+      });
+    }
+  } catch(e) {}
+
+  try {
+    const protoMime = navigator.mimeTypes;
+    if (protoMime && typeof protoMime.item !== 'function') {
+      Object.defineProperty(protoMime, 'item', {
+        value: function(index) { return this[index >= 0 && index < this.length ? index : undefined]; },
+        writable: true, configurable: true
+      });
+    }
+    if (protoMime && typeof protoMime.namedItem !== 'function') {
+      Object.defineProperty(protoMime, 'namedItem', {
+        value: function(name) { for (let i = 0; i < this.length; i++) { if (this[i].type === name) return this[i]; } return null; },
+        writable: true, configurable: true
+      });
+    }
+  } catch(e) {}
 
   // ============ Phase 3.1 维度 18: navigator.webdriver 最终确认 ============
   // 确保即使之前被覆盖，这里也是 undefined
@@ -1446,6 +1644,20 @@
   const deviceName = CONFIG.device_name || 'USER-' + Math.random().toString(36).substring(2, 10).toUpperCase();
   const chromeVersion = CONFIG.chrome_version || '128';
 
+  // Phase 4.0 Fix: 使用 CONFIG.os 映射 platform，避免硬编码
+  const platformMap3 = {
+    'windows': 'Windows', 'mac': 'macOS', 'linux': 'Linux',
+    'android': 'Android', 'ios': 'iOS'
+  };
+  const platformVersionMap3 = {
+    'windows': '15.0.0', 'mac': '14.0.0', 'linux': '6.0.0',
+    'android': '14.0.0', 'ios': '17.0.0'
+  };
+  const platformStr3 = platformMap3[CONFIG.os] || 'Windows';
+  const platformVer3 = platformVersionMap3[CONFIG.os] || '15.0.0';
+  const arch3 = CONFIG.os === 'android' || CONFIG.os === 'ios' ? 'arm' : 'x86';
+  const isMobile3 = CONFIG.os === 'android' || CONFIG.os === 'ios';
+
   // 劫持 navigator.userAgentData（Chrome 90+ User-Agent Client Hints API）
   if (!navigator.userAgentData) {
     Object.defineProperty(navigator, 'userAgentData', {
@@ -1455,10 +1667,10 @@
           { brand: 'Google Chrome', version: chromeVersion },
           { brand: 'Not;A=Brand', version: '99' }
         ],
-        mobile: false,
-        platform: 'Windows',
-        platformVersion: '10.0',
-        architecture: 'x86',
+        mobile: isMobile3,
+        platform: platformStr3,
+        platformVersion: platformVer3,
+        architecture: arch3,
         bitness: '64',
         model: '',
         uaFullVersion: `${chromeVersion}.0.0.0`,
@@ -1469,9 +1681,9 @@
         ],
         getHighEntropyValues: function(hints) {
           return Promise.resolve({
-            platform: 'Windows',
-            platformVersion: '10.0',
-            architecture: 'x86',
+            platform: platformStr3,
+            platformVersion: platformVer3,
+            architecture: arch3,
             bitness: '64',
             model: '',
             uaFullVersion: `${chromeVersion}.0.0.0`,
@@ -1485,8 +1697,9 @@
   }
 
   // navigator.platform
+  const platformValue3 = CONFIG.os === 'mac' ? 'MacIntel' : CONFIG.os === 'linux' ? 'Linux x86_64' : CONFIG.os === 'android' ? 'Linux armv8l' : CONFIG.os === 'ios' ? 'iPhone' : 'Win32';
   Object.defineProperty(navigator, 'platform', {
-    get: () => 'Win32',
+    get: () => platformValue3,
     configurable: true,
     enumerable: true
   });
@@ -2221,5 +2434,177 @@
   // ===== 启动心跳 =====
   heartbeatTimer = setInterval(heartbeatReport, HEARTBEAT_INTERVAL);
 
+})();
+
+// ==================== Phase 4.0 Fix: Worker / SharedWorker 拦截 ====================
+// Worker 运行在独立全局上下文，Content Script 无法直接注入。
+// 方案：拦截 Worker 构造函数，通过 Blob URL 包装原始脚本，前置注入代码。
+(function() {
+  'use strict';
+
+  const OriginalWorker = window.Worker;
+  const OriginalSharedWorker = window.SharedWorker;
+  const OriginalURLCreateObjectURL = window.URL.createObjectURL;
+  const OriginalURLRevokeObjectURL = window.URL.revokeObjectURL;
+
+  // 生成注入前缀代码（与主页面一致的反检测环境）
+  function buildWorkerInjectPrefix() {
+    return `
+      // GhostBrowse Worker 环境注入
+      (function() {
+        'use strict';
+        // 覆盖 navigator.userAgentData
+        if (typeof navigator !== 'undefined') {
+          Object.defineProperty(navigator, 'userAgentData', {
+            get: function() {
+              return {
+                brands: [{ brand: 'Chromium', version: '128' }, { brand: 'Not.A/Brand', version: '24' }, { brand: 'Google Chrome', version: '128' }],
+                mobile: false,
+                platform: 'Windows',
+                getHighEntropyValues: function(hints) {
+                  return Promise.resolve({
+                    architecture: 'x86', bitness: '64', brands: this.brands,
+                    fullVersionList: [{ brand: 'Chromium', version: '128.0.6099.130' }, { brand: 'Not.A/Brand', version: '24.0.0.0' }, { brand: 'Google Chrome', version: '128.0.6099.130' }],
+                    mobile: false, model: '', platform: 'Windows', platformVersion: '15.0.0',
+                    uaFullVersion: '128.0.6099.130', wow64: false
+                  });
+                },
+                toJSON: function() { return { brands: this.brands, mobile: this.mobile, platform: this.platform }; }
+              };
+            },
+            configurable: true
+          });
+          Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
+          Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+          Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4, configurable: true });
+          Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
+          Object.defineProperty(navigator, 'language', { get: () => 'zh-CN', configurable: true });
+          Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'en-US', 'en'], configurable: true });
+        }
+        // 禁用 WebRTC in Worker
+        if (typeof self !== 'undefined') {
+          self.RTCPeerConnection = undefined;
+          self.webkitRTCPeerConnection = undefined;
+        }
+      })();
+    `;
+  }
+
+  if (OriginalWorker) {
+    window.Worker = function(scriptURL, options) {
+      try {
+        // 如果是 Blob URL 或 data URL，直接创建
+        if (String(scriptURL).startsWith('blob:') || String(scriptURL).startsWith('data:')) {
+          return new OriginalWorker(scriptURL, options);
+        }
+        // 同源 Worker：尝试 fetch 并包装
+        const prefix = buildWorkerInjectPrefix();
+        // 使用 importScripts 方式注入（跨域 Worker 可用）
+        const wrappedScript = prefix + '\nimportScripts("' + String(scriptURL).replace(/"/g, '\\"') + '");';
+        const blob = new Blob([wrappedScript], { type: 'application/javascript' });
+        const blobURL = OriginalURLCreateObjectURL(blob);
+        const worker = new OriginalWorker(blobURL, options);
+        // 延迟释放 Blob URL（避免 Worker 尚未加载完成 URL 被回收）
+        setTimeout(() => { try { OriginalURLRevokeObjectURL(blobURL); } catch(e) {} }, 5000);
+        return worker;
+      } catch (e) {
+        // 包装失败时回退到原始 Worker
+        return new OriginalWorker(scriptURL, options);
+      }
+    };
+    window.Worker.prototype = OriginalWorker.prototype;
+  }
+
+  if (OriginalSharedWorker) {
+    window.SharedWorker = function(scriptURL, nameOrOptions) {
+      try {
+        if (String(scriptURL).startsWith('blob:') || String(scriptURL).startsWith('data:')) {
+          return new OriginalSharedWorker(scriptURL, nameOrOptions);
+        }
+        const prefix = buildWorkerInjectPrefix();
+        const wrappedScript = prefix + '\nimportScripts("' + String(scriptURL).replace(/"/g, '\\"') + '");';
+        const blob = new Blob([wrappedScript], { type: 'application/javascript' });
+        const blobURL = OriginalURLCreateObjectURL(blob);
+        const worker = new OriginalSharedWorker(blobURL, nameOrOptions);
+        setTimeout(() => { try { OriginalURLRevokeObjectURL(blobURL); } catch(e) {} }, 5000);
+        return worker;
+      } catch (e) {
+        return new OriginalSharedWorker(scriptURL, nameOrOptions);
+      }
+    };
+    window.SharedWorker.prototype = OriginalSharedWorker.prototype;
+  }
+})();
+
+// ==================== Phase 4.1: toString 伪装修复 ====================
+// 检测站通过检查函数 toString 是否包含 [native code] 来识别注入
+// 此代码在文件末尾执行，修复所有 Content Script 注入函数的 toString
+(function() {
+  'use strict';
+
+  function fixToString(fn, name) {
+    if (typeof fn !== 'function') return;
+    // 使用 Function.prototype.toString.call 获取原始 toString 输出
+    const orig = Function.prototype.toString.call.bind(Function.prototype.toString);
+    fn.toString = function() {
+      try {
+        const str = orig(this);
+        if (typeof str === 'string' && !str.includes('[native code]')) {
+          return 'function ' + (name || fn.name || '') + '() { [native code] }';
+        }
+        return str;
+      } catch(e) {
+        return 'function ' + (name || fn.name || '') + '() { [native code] }';
+      }
+    };
+  }
+
+  const targets = [
+    ['HTMLCanvasElement.prototype.getContext', HTMLCanvasElement.prototype.getContext],
+    ['CanvasRenderingContext2D.prototype.fillText', CanvasRenderingContext2D.prototype.fillText],
+    ['CanvasRenderingContext2D.prototype.strokeText', CanvasRenderingContext2D.prototype.strokeText],
+    ['CanvasRenderingContext2D.prototype.measureText', CanvasRenderingContext2D.prototype.measureText],
+    ['CanvasRenderingContext2D.prototype.isPointInPath', CanvasRenderingContext2D.prototype.isPointInPath],
+    ['CanvasRenderingContext2D.prototype.getImageData', CanvasRenderingContext2D.prototype.getImageData],
+    ['WebGLRenderingContext.prototype.getParameter', WebGLRenderingContext.prototype.getParameter],
+    ['WebGLRenderingContext.prototype.getExtension', WebGLRenderingContext.prototype.getExtension],
+    ['WebGLRenderingContext.prototype.getSupportedExtensions', WebGLRenderingContext.prototype.getSupportedExtensions],
+    ['WebGLRenderingContext.prototype.readPixels', WebGLRenderingContext.prototype.readPixels],
+    ['WebGL2RenderingContext.prototype.getParameter', window.WebGL2RenderingContext?.prototype.getParameter],
+    ['WebGL2RenderingContext.prototype.getExtension', window.WebGL2RenderingContext?.prototype.getExtension],
+    ['AudioBuffer.prototype.copyFromChannel', AudioBuffer.prototype.copyFromChannel],
+    ['AnalyserNode.prototype.getFloatFrequencyData', AnalyserNode.prototype.getFloatFrequencyData],
+    ['AnalyserNode.prototype.getByteFrequencyData', AnalyserNode.prototype.getByteFrequencyData],
+    ['AnalyserNode.prototype.getByteTimeDomainData', AnalyserNode.prototype.getByteTimeDomainData],
+    ['Element.prototype.getBoundingClientRect', Element.prototype.getBoundingClientRect],
+    ['Element.prototype.getClientRects', Element.prototype.getClientRects],
+    ['Range.prototype.getBoundingClientRect', Range.prototype.getBoundingClientRect],
+    ['Range.prototype.getClientRects', Range.prototype.getClientRects],
+    ['Date.prototype.getTimezoneOffset', Date.prototype.getTimezoneOffset],
+    ['Intl.DateTimeFormat', Intl.DateTimeFormat],
+    ['window.scrollTo', window.scrollTo],
+    ['window.scrollBy', window.scrollBy],
+    ['history.pushState', history.pushState],
+    ['history.replaceState', history.replaceState],
+    ['EventTarget.prototype.dispatchEvent', EventTarget.prototype.dispatchEvent],
+    ['HTMLElement.prototype.click', HTMLElement.prototype.click],
+    ['Notification.requestPermission', Notification.requestPermission],
+    ['navigator.geolocation.getCurrentPosition', navigator.geolocation.getCurrentPosition],
+    ['navigator.geolocation.watchPosition', navigator.geolocation.watchPosition],
+    ['navigator.mediaDevices.enumerateDevices', navigator.mediaDevices?.enumerateDevices],
+    ['navigator.mediaDevices.getUserMedia', navigator.mediaDevices?.getUserMedia],
+    ['navigator.permissions.query', navigator.permissions.query],
+    ['CSS.supports', CSS.supports],
+    ['speechSynthesis.getVoices', speechSynthesis.getVoices],
+    ['navigator.plugins.item', navigator.plugins?.item],
+    ['navigator.plugins.namedItem', navigator.plugins?.namedItem],
+    ['navigator.plugins.refresh', navigator.plugins?.refresh],
+    ['navigator.mimeTypes.item', navigator.mimeTypes?.item],
+    ['navigator.mimeTypes.namedItem', navigator.mimeTypes?.namedItem],
+  ];
+
+  targets.forEach(([name, fn]) => {
+    if (typeof fn === 'function') fixToString(fn, name.split('.').pop());
+  });
 })();
 

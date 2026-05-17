@@ -20,6 +20,8 @@ import * as http from 'http'
 import * as net from 'net'
 import * as tls from 'tls'
 import { getDatabase } from '../server/db'
+import { detectProxyCountry } from '../server/utils/proxy-geo'
+import { resolveGeoConfig } from '../server/utils/geo-config'
 
 // ==================== Phase 3.5 Rev4: Session Tab Manager（Electron 主进程集中心跳）====================
 
@@ -657,9 +659,70 @@ function getExtensionTemplateDir(): string {
   }
 }
 
+// ==================== Phase 4.1: 时区偏移量计算辅助函数 ====================
+
+/**
+ * 根据时区名称计算标准偏移量（分钟）
+ * 返回值：UTC - 本地时间的分钟差（正值表示时区在 UTC 以西，如 EST=300）
+ */
+function getTimezoneOffset(tzName: string): number {
+  try {
+    const now = new Date()
+    // 使用 Intl.DateTimeFormat 精确计算时区偏移
+    const tzFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: tzName,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false
+    })
+    const utcFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false
+    })
+    
+    const tzParts = tzFormatter.formatToParts(now)
+    const utcParts = utcFormatter.formatToParts(now)
+    
+    const getPart = (parts: any[], type: string) => parseInt(parts.find(p => p.type === type)?.value || '0', 10)
+    
+    const tzDate = new Date(
+      getPart(tzParts, 'year'), getPart(tzParts, 'month') - 1, getPart(tzParts, 'day'),
+      getPart(tzParts, 'hour'), getPart(tzParts, 'minute'), getPart(tzParts, 'second')
+    )
+    const utcDate = new Date(
+      getPart(utcParts, 'year'), getPart(utcParts, 'month') - 1, getPart(utcParts, 'day'),
+      getPart(utcParts, 'hour'), getPart(utcParts, 'minute'), getPart(utcParts, 'second')
+    )
+    
+    return Math.round((utcDate.getTime() - tzDate.getTime()) / 60000)
+  } catch (e) {
+    console.warn(`[BrowserLauncher] 计算时区偏移量失败: ${tzName}`, e)
+    // 常见时区兜底映射
+    const fallbackOffsets: Record<string, number> = {
+      'Asia/Shanghai': -480, 'Asia/Tokyo': -540, 'Asia/Seoul': -540,
+      'Asia/Singapore': -480, 'Asia/Bangkok': -420, 'Asia/Kolkata': -330,
+      'Asia/Dubai': -240, 'Europe/Berlin': 60, 'Europe/London': 0,
+      'Europe/Paris': 60, 'Europe/Moscow': 180, 'Europe/Rome': 60,
+      'Europe/Madrid': 60, 'Europe/Amsterdam': 60, 'Europe/Stockholm': 60,
+      'Europe/Warsaw': 60, 'America/New_York': 300, 'America/Los_Angeles': 480,
+      'America/Chicago': 360, 'America/Toronto': 300, 'America/Vancouver': 480,
+      'America/Sao_Paulo': 180, 'America/Mexico_City': 360,
+      'Australia/Sydney': -600, 'Australia/Melbourne': -600
+    }
+    return fallbackOffsets[tzName] !== undefined ? fallbackOffsets[tzName] : -480
+  }
+}
+
 // ==================== Extension 动态生成 ====================
 
-function generateExtension(profile: Profile, proxy: Proxy | null): string {
+function generateExtension(
+  profile: Profile,
+  proxy: Proxy | null,
+  detectedTimezone?: string,
+  detectedTimezoneOffset?: number
+): string {
   const tempDir = path.join(os.tmpdir(), `ghostbrowse-ext-${profile.id}`)
   
   if (fs.existsSync(tempDir)) {
@@ -675,9 +738,16 @@ function generateExtension(profile: Profile, proxy: Proxy | null): string {
   const contentScriptPath = path.join(getExtensionTemplateDir(), 'content-script.js')
   let contentScript = fs.readFileSync(contentScriptPath, 'utf-8')
   
+  // Phase 4.1: 使用检测到的时区（如果 timezoneMode='ip' 且检测成功）
+  const timezone = detectedTimezone || 'Asia/Shanghai'
+  const timezoneOffset = detectedTimezoneOffset !== undefined ? detectedTimezoneOffset : -480
+  
   // Phase 3.2: 追加指纹噪声种子字段到 config
   const config = {
     profile_id: profile.id,
+    // Phase 4.0: 传递浏览器版本和操作系统，供 userAgentData 使用
+    chrome_version: profile.chromeVersion || '128',
+    os: profile.os || 'windows',
     canvas_mode: profile.canvasMode || 'noise',
     webgl_mode: profile.webglMode || 'mock',
     webrtc_mode: profile.webrtcMode || 'replace',
@@ -686,7 +756,8 @@ function generateExtension(profile: Profile, proxy: Proxy | null): string {
     media_device_mode: profile.mediaDeviceMode || 'mock',
     screen_resolution: profile.screenResolution || '1920x1080',
     ui_language: profile.uiLanguage || 'zh-CN',
-    timezone: 'Asia/Shanghai',
+    timezone: timezone,
+    timezone_offset: timezoneOffset,
     latitude: 39.9042,
     longitude: 116.4074,
     proxy_ip: proxy?.host || null,
@@ -765,8 +836,28 @@ export async function launchChrome(
     fs.mkdirSync(userDataDir, { recursive: true })
   }
 
+  // === Phase 4.1: 时区跟随代理IP（如果 timezoneMode='ip'）===
+  let detectedTimezone: string | undefined
+  let detectedTimezoneOffset: number | undefined
+
+  if (profile.timezoneMode === 'ip' && proxy) {
+    try {
+      const countryCode = await detectProxyCountry(proxy)
+      if (countryCode) {
+        const geoConfig = resolveGeoConfig(countryCode)
+        detectedTimezone = geoConfig.timezone
+        detectedTimezoneOffset = getTimezoneOffset(detectedTimezone)
+        console.log(`[BrowserLauncher] 代理IP国家检测: ${countryCode} → 时区: ${detectedTimezone}, 偏移: ${detectedTimezoneOffset}分钟`)
+      } else {
+        console.warn('[BrowserLauncher] 代理国家检测失败，使用时区兜底值 Asia/Shanghai')
+      }
+    } catch (e: any) {
+      console.warn('[BrowserLauncher] 时区跟随代理IP检测失败:', e.message)
+    }
+  }
+
   // === 生成指纹注入 Extension ===
-  const extensionPath = generateExtension(profile, proxy)
+  const extensionPath = generateExtension(profile, proxy, detectedTimezone, detectedTimezoneOffset)
   
   // === 构建代理参数 ===
   let proxyServer = ''
@@ -930,6 +1021,7 @@ export async function launchChrome(
     `--window-size=${windowWidth},${windowHeight}`,
     `--window-position=${positionX},${positionY}`,
     `--remote-debugging-port=${debugPort}`,
+    `--remote-allow-origins=`,
     `--disable-features=IsolateOrigins,site-per-process`,
     `--enable-features=ChromeExtensionsOnChromeURLs`,
     `--no-first-run`,
@@ -937,9 +1029,14 @@ export async function launchChrome(
     `--disable-dev-shm-usage`,
     `--disable-extensions-except=${extensionPath}`,
     `--load-extension=${extensionPath}`,
-    `--use-angle=swiftshader`,
     `--disable-gpu-sandbox`
   ]
+
+  // Phase 4.0 Fix: Chrome 128+ 废弃 SwiftShader，低版本保留软件渲染
+  const chromeVerNum = parseInt(version) || 128
+  if (chromeVerNum < 128) {
+    args.push(`--use-angle=swiftshader`)
+  }
 
   if (shouldMaximize) {
     args.push(`--start-maximized`)
@@ -1008,16 +1105,16 @@ export async function launchChrome(
       chromeProcess.stdout?.on('data', (data) => {
         const log = data.toString().trim()
         if (log) {
-          // console.log(`[Chrome stdout] ${log}`)
+           console.log(`[Chrome stdout] ${log}`)
         }
       })
       
-      chromeProcess.stderr?.on('data', (data) => {
-        const log = data.toString().trim()
-        if (log && !log.includes('DevTools listening')) {
-          console.warn(`[Chrome stderr] ${log}`)
-        }
-      })
+      // chromeProcess.stderr?.on('data', (data) => {
+      //   const log = data.toString().trim()
+      //   if (log && !log.includes('DevTools listening')) {
+      //     console.warn(`[Chrome stderr] ${log}`)
+      //   }
+      // })
       
       resolve({
         pid,
