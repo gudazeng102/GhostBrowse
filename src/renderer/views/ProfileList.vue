@@ -143,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { SafetyOutlined } from '@ant-design/icons-vue'
@@ -242,13 +242,14 @@ const statusLoading = ref(false)
 // 运行中的窗口 ID 列表
 const runningIds = ref<number[]>([])
 
-// 分页配置
-const pagination = ref({
+// 分页配置（使用 reactive 而非 ref，避免 a-table 内部副本不同步）
+const pagination = reactive({
   current: 1,
   pageSize: 10,
   total: 0,
   showSizeChanger: true,
   showQuickJumper: true,
+  pageSizeOptions: ['10', '20', '50', '100'],
   showTotal: (total: number) => `共 ${total} 条`
 })
 
@@ -281,11 +282,15 @@ function getWebRtcColor(mode: string): string {
   return colorMap[mode] || 'default'
 }
 
-// 表格变化处理
+// 表格变化处理：a-table @change 签名为 (pagination, filters, sorter, extra)
 function handleTableChange(pag: any) {
-  pagination.value.current = pag.current
-  pagination.value.pageSize = pag.pageSize
-  loadProfileList()
+  // 当 pageSize 改变时，跳回第一页
+  if (pag.pageSize !== pagination.pageSize) {
+    pagination.current = 1
+  } else {
+    pagination.current = pag.current
+  }
+  pagination.pageSize = pag.pageSize
 }
 
 // 加载窗口列表
@@ -294,7 +299,7 @@ async function loadProfileList() {
   try {
     const list = await getProfileList()
     profileList.value = list
-    pagination.value.total = list.length
+    pagination.total = list.length
   } catch (error) {
     console.error('加载窗口列表失败:', error)
     message.error('加载数据失败')

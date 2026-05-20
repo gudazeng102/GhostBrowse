@@ -48,9 +48,10 @@
             :columns="columns"
             :data-source="cookieList"
             :loading="loading"
-            :pagination="{ pageSize: 10, size: 'small' }"
+            :pagination="cookiePagination"
             row-key="name"
             size="small"
+            @change="handleCookieTableChange"
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'name'">
@@ -168,7 +169,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { LeftOutlined, ReloadOutlined, DeleteOutlined, CopyOutlined, UploadOutlined } from '@ant-design/icons-vue'
@@ -203,6 +204,33 @@ const activeTab = ref('live')
 const cookieList = ref<CookieItem[]>([])
 const loading = ref(false)
 const clearing = ref(false)
+
+// Cookie 表格分页配置
+const cookiePagination = reactive({
+  current: 1,
+  pageSize: 10,
+  total: 0,
+  size: 'small',
+  showSizeChanger: true,
+  showQuickJumper: true,
+  pageSizeOptions: ['10', '20', '50', '100'],
+  showTotal: (total: number) => `共 ${total} 条`
+})
+
+function handleCookieTableChange(pag: any) {
+  // pageSize 变化时回到第一页
+  if (pag.pageSize !== cookiePagination.pageSize) {
+    cookiePagination.current = 1
+  } else {
+    cookiePagination.current = pag.current
+  }
+  cookiePagination.pageSize = pag.pageSize
+}
+
+// cookieList 变化时同步 total
+watch(cookieList, (list) => {
+  cookiePagination.total = list.length
+})
 
 // 导入
 const importMode = ref('paste')

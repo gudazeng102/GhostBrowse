@@ -93,7 +93,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { getProxyList, deleteProxy, batchDeleteProxy, type ProxyRecord } from '../api/proxy'
@@ -149,13 +149,14 @@ const searchKeyword = ref('')
 // 加载状态
 const loading = ref(false)
 
-// 分页配置
-const pagination = ref({
+// 分页配置（使用 reactive，避免 a-table 内部副本不同步）
+const pagination = reactive({
   current: 1,
   pageSize: 10,
   total: 0,
   showSizeChanger: true,
   showQuickJumper: true,
+  pageSizeOptions: ['10', '20', '50', '100'],
   showTotal: (total: number) => `共 ${total} 条`
 })
 
@@ -183,15 +184,19 @@ function getTypeColor(type: string): string {
 
 // 搜索
 function handleSearch() {
-  pagination.value.current = 1
+  pagination.current = 1
   loadProxyList()
 }
 
 // 表格变化处理
+// 表格变化处理：a-table @change 签名为 (pagination, filters, sorter, extra)
 function handleTableChange(pag: any) {
-  pagination.value.current = pag.current
-  pagination.value.pageSize = pag.pageSize
-  loadProxyList()
+  if (pag.pageSize !== pagination.pageSize) {
+    pagination.current = 1
+  } else {
+    pagination.current = pag.current
+  }
+  pagination.pageSize = pag.pageSize
 }
 
 // 加载代理列表
@@ -200,7 +205,7 @@ async function loadProxyList() {
   try {
     const list = await getProxyList(searchKeyword.value)
     proxyList.value = list
-    pagination.value.total = list.length
+    pagination.total = list.length
   } catch (error) {
     console.error('加载代理列表失败:', error)
     message.error('加载数据失败')
