@@ -22,6 +22,7 @@ import * as tls from 'tls'
 import { getDatabase } from '../server/db'
 import { detectProxyCountry } from '../server/utils/proxy-geo'
 import { resolveGeoConfig } from '../server/utils/geo-config'
+import { saveProfileCookieJson } from '../server/services/cookie-snapshot'
 
 // ==================== Phase 3.5 Rev4: Session Tab Manager（Electron 主进程集中心跳）====================
 
@@ -37,6 +38,7 @@ const profileTabManagers = new Map<number, {
   tabs: TabInfo[]
   syncTimer: NodeJS.Timeout | null
   pollTimer: NodeJS.Timeout | null
+  cookieSyncTimer: NodeJS.Timeout | null  // ✅ Phase 4.1: 30 秒一次的 Cookie 快照
   debugPort: number
   pageTargets: Map<string, { url: string; title: string | null }>  // targetId -> tab info
 }>()
@@ -162,6 +164,7 @@ export function startSessionTabManager(profileId: number, debugPort: number) {
     tabs: [] as TabInfo[],
     syncTimer: null as NodeJS.Timeout | null,
     pollTimer: null as NodeJS.Timeout | null,
+    cookieSyncTimer: null as NodeJS.Timeout | null,  // ✅ Phase 4.1: 30 秒一次的 Cookie 快照
     debugPort,
     pageTargets: new Map()
   }
@@ -303,6 +306,19 @@ export function startSessionTabManager(profileId: number, debugPort: number) {
 
   manager.pollTimer = pollTimer
 
+  // ✅ Phase 4.1: 每 30 秒抓取一次实时 Cookie 写回 profiles.cookie_json
+  // 静默失败，不影响主流程；窗口关闭时由 closeProfile 兜底再写一次
+  const cookieSyncTimer = setInterval(async () => {
+    const m = profileTabManagers.get(profileId)
+    if (!m) return
+    try {
+      await saveProfileCookieJson(profileId, { silent: true })
+    } catch {
+      // saveProfileCookieJson 内部已 silent，这里二次兜底
+    }
+  }, 30000)
+  manager.cookieSyncTimer = cookieSyncTimer
+
   console.log(`[SessionManager] Profile ${profileId} Session Tab Manager 已启动，debugPort=${debugPort}`)
 }
 
@@ -321,6 +337,10 @@ export async function stopSessionTabManager(profileId: number) {
   if (manager.syncTimer) {
     clearInterval(manager.syncTimer)
     manager.syncTimer = null
+  }
+  if (manager.cookieSyncTimer) {
+    clearInterval(manager.cookieSyncTimer)
+    manager.cookieSyncTimer = null
   }
   
   // ✅ FIX: await 最后一次同步，确保关闭前数据一定落库
@@ -1383,13 +1403,42 @@ export function closeProfile(profileId: number): boolean {
   }
 }
 
+/**
+ * ✅ Phase 4.1: 异步关闭窗口（带 Cookie 快照）
+ * 在 SIGTERM 之前先抓一次 Cookie 写回 cookie_json，确保下次启动能回灌
+ *
+ * 时序：
+ *   1. saveProfileCookieJson(silent=true)  - 整体超时 ~6s，失败只 warn
+ *   2. closeProfile(profileId)              - 同步路径不变（SIGTERM + 1s 后 SIGKILL）
+ */
+async function closeProfileWithCookieSnapshot(profileId: number): Promise<boolean> {
+  if (!profileProcessMap.has(profileId)) return false
+
+  // 1) 先抓最后一次 Cookie（带 6s 总超时，避免拖延关闭流程）
+  try {
+    await Promise.race([
+      saveProfileCookieJson(profileId, { silent: true }),
+      new Promise<number>(resolve => setTimeout(() => {
+        console.warn(`[BrowserLauncher] Profile ${profileId} 关闭前 Cookie 快照超时（6s），跳过`)
+        resolve(0)
+      }, 6000))
+    ])
+  } catch (e: any) {
+    console.warn(`[BrowserLauncher] Profile ${profileId} 关闭前 Cookie 快照异常: ${e.message}`)
+  }
+
+  // 2) 真正杀进程
+  return closeProfile(profileId)
+}
+
 export async function closeChrome(profileId: number): Promise<{ success: boolean; message?: string }> {
   const info = profileProcessMap.get(profileId)
   if (!info) {
     return { success: false, message: '窗口未运行' }
   }
-  
-  const success = closeProfile(profileId)
+
+  // ✅ Phase 4.1: 先做 Cookie 快照，再杀进程
+  const success = await closeProfileWithCookieSnapshot(profileId)
   return {
     success,
     message: success ? '窗口已关闭' : '关闭窗口失败'

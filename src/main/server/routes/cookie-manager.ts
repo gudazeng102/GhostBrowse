@@ -11,6 +11,7 @@ import { Router, Request, Response } from 'express'
 import WebSocket from 'ws'
 import http from 'http'
 import { getProfileDebugPort, isProfileRunning } from '../../browser/launcher'
+import { saveProfileCookieJson } from '../services/cookie-snapshot'
 
 const router = Router()
 
@@ -551,6 +552,45 @@ router.delete('/:id/cookies', async (req: Request, res: Response) => {
       message = '浏览器未运行或 CDP 未就绪，请稍后重试'
     }
     
+    res.status(500).json({
+      code: 500,
+      data: null,
+      message
+    })
+  }
+})
+
+/**
+ * POST /api/v1/cookie-manager/:id/save-to-profile
+ * 把当前浏览器实时 Cookie 抓取并保存到 profiles.cookie_json
+ * 用于前端"💾 保存到本窗口配置"按钮
+ */
+router.post('/:id/save-to-profile', async (req: Request, res: Response) => {
+  try {
+    const profileId = parseInt(String(req.params.id))
+
+    if (!isProfileRunning(profileId)) {
+      return res.status(400).json({
+        code: 400,
+        data: null,
+        message: '窗口未运行，请先启动窗口'
+      })
+    }
+
+    // silent=false → 失败抛出，让前端拿到准确错误信息
+    const count = await saveProfileCookieJson(profileId, { silent: false })
+
+    res.json({
+      code: 0,
+      data: { count },
+      message: `已保存 ${count} 条 Cookie 到本窗口配置`
+    })
+  } catch (err: any) {
+    console.error('[CookieManager] 保存 Cookie 到 profile 失败:', err)
+    let message = '保存失败：' + (err.message || '未知错误')
+    if (err.message?.includes('ECONNREFUSED') || err.message?.includes('连接超时')) {
+      message = '浏览器未运行或 CDP 未就绪，请稍后重试'
+    }
     res.status(500).json({
       code: 500,
       data: null,

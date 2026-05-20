@@ -29,6 +29,11 @@
               <a-button @click="loadCookies" :loading="loading">
                 <ReloadOutlined /> 刷新
               </a-button>
+              <a-tooltip title="把当前浏览器实时 Cookie 抓取并保存到本窗口配置，下次启动可自动回灌">
+                <a-button type="primary" @click="handleSaveToProfile" :loading="savingToProfile">
+                  💾 保存到本窗口配置
+                </a-button>
+              </a-tooltip>
               <a-button @click="clearCookies" danger :loading="clearing">
                 🗑️ 清空全部
               </a-button>
@@ -204,6 +209,7 @@ const activeTab = ref('live')
 const cookieList = ref<CookieItem[]>([])
 const loading = ref(false)
 const clearing = ref(false)
+const savingToProfile = ref(false)
 
 // Cookie 表格分页配置
 const cookiePagination = reactive({
@@ -309,6 +315,33 @@ async function loadCookies() {
     message.error('获取 Cookie 失败: ' + (e.response?.data?.message || e.message))
   } finally {
     loading.value = false
+  }
+}
+
+/**
+ * 保存当前浏览器实时 Cookie 到 profiles.cookie_json
+ * 下次启动该窗口时会自动回灌（importPresetCookies）
+ */
+async function handleSaveToProfile() {
+  if (!isRunning.value) {
+    message.warning('窗口未运行，请先启动窗口')
+    return
+  }
+
+  savingToProfile.value = true
+  try {
+    const res = await request.post(`/cookie-manager/${profileId.value}/save-to-profile`)
+    const json = res.data
+    if (json.code === 0) {
+      const count = json.data?.count ?? 0
+      message.success(`已保存 ${count} 条 Cookie 到本窗口配置`)
+    } else {
+      message.error(json.message || '保存失败')
+    }
+  } catch (e: any) {
+    message.error('保存失败: ' + (e.response?.data?.message || e.message))
+  } finally {
+    savingToProfile.value = false
   }
 }
 
