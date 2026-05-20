@@ -1077,6 +1077,15 @@ export async function launchChrome(
         })
       }
 
+      // ✅ Phase 4.2 关键：启动 CDP 时区覆盖（这是 AdsPower/Puppeteer/Playwright 的标准做法）
+      // V8 不读 Windows 的 TZ 环境变量，所以必须通过 CDP Emulation.setTimezoneOverride
+      const timezoneToApply = detectedTimezone || (profile as any).timezone
+      if (timezoneToApply) {
+        installTimezoneOverride(profile.id, timezoneToApply).catch(e => {
+          console.warn(`[BrowserLauncher] Profile ${profile.id} CDP 时区覆盖失败: ${e.message}`)
+        })
+      }
+
       // ✅ REMOVED: startSessionTabManager 改到 profile.ts 里调用，避免重复启动
       // 原来在这里调用会导致旧进程退出时触发 stop，然后新进程又触发 start
       // 现在统一由 profile.ts 的 launch 成功回调调用一次
@@ -1089,6 +1098,9 @@ export async function launchChrome(
       chromeProcess.on('exit', async (code, signal) => {
         // Phase 3.5 Rev4: 停止 Session Tab Manager
         await stopSessionTabManager(profile.id)
+
+        // Phase 4.2: 停止 CDP 时区覆盖
+        stopTimezoneOverride(profile.id)
 
         if (localProxyServer) {
           localProxyServer.close()
@@ -1137,6 +1149,167 @@ export function registerChromeProcess(profileId: number, pid: number, userDataDi
 
 export function getChromeProcessPid(profileId: number): number {
   return profileProcessMap.get(profileId)?.pid ?? -1
+}
+
+// ==================== Phase 4.2: CDP 时区覆盖 ====================
+
+/**
+ * 通过 CDP Emulation.setTimezoneOverride 在浏览器进程内强制覆盖时区
+ * Windows V8 不读 TZ 环境变量，唯一可靠方案是 CDP（Puppeteer/Playwright/AdsPower 标准做法）
+ */
+const timezoneOverrideCleanup = new Map<number, () => void>()
+
+export async function installTimezoneOverride(profileId: number, timezone: string): Promise<void> {
+  if (!timezone) return
+
+  const debugPort = 9000 + profileId
+  const maxWaitMs = 30000
+  const startTs = Date.now()
+
+  // 等待 browser-level CDP 就绪
+  let browserWsUrl: string | null = null
+  while (Date.now() - startTs < maxWaitMs) {
+    try {
+      const res = await fetch(`http://localhost:${debugPort}/json/version`)
+      if (res.ok) {
+        const data = await res.json() as any
+        if (data?.webSocketDebuggerUrl) {
+          browserWsUrl = data.webSocketDebuggerUrl
+          break
+        }
+      }
+    } catch {}
+    await new Promise(r => setTimeout(r, 500))
+  }
+
+  if (!browserWsUrl) {
+    console.warn(`[Timezone] Profile ${profileId} CDP browser endpoint 未就绪，时区覆盖失败`)
+    return
+  }
+
+  const WebSocket = require('ws')
+  const ws = new WebSocket(browserWsUrl)
+  let cmdId = 0
+  const pendingCmds = new Map<number, (resp: any) => void>()
+  const sessionTimezoneApplied = new Set<string>()
+
+  function send(method: string, params: any = {}, sessionId?: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const id = ++cmdId
+      pendingCmds.set(id, resolve)
+      const msg: any = { id, method, params }
+      if (sessionId) msg.sessionId = sessionId
+      ws.send(JSON.stringify(msg), (err: Error | undefined) => {
+        if (err) {
+          pendingCmds.delete(id)
+          reject(err)
+        }
+      })
+      setTimeout(() => {
+        if (pendingCmds.has(id)) {
+          pendingCmds.delete(id)
+          reject(new Error(`CDP ${method} timeout`))
+        }
+      }, 5000)
+    })
+  }
+
+  async function applyTimezone(sessionId: string) {
+    if (sessionTimezoneApplied.has(sessionId)) return
+    try {
+      await send('Emulation.setTimezoneOverride', { timezoneId: timezone }, sessionId)
+      sessionTimezoneApplied.add(sessionId)
+      console.log(`[Timezone] Profile ${profileId} session=${sessionId.slice(0, 8)} 已应用时区: ${timezone}`)
+    } catch (e: any) {
+      // service_worker / shared_worker 等不支持 Emulation 域，静默忽略
+    }
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const onOpen = () => { ws.off('error', onError); resolve() }
+    const onError = (e: Error) => { ws.off('open', onOpen); reject(e) }
+    ws.on('open', onOpen)
+    ws.on('error', onError)
+    setTimeout(() => reject(new Error('CDP browser connect timeout')), 5000)
+  }).catch(err => {
+    console.warn(`[Timezone] Profile ${profileId} CDP 连接失败: ${err.message}`)
+    throw err
+  })
+
+  ws.on('message', (data: Buffer) => {
+    try {
+      const msg = JSON.parse(data.toString())
+      if (msg.id && pendingCmds.has(msg.id)) {
+        const handler = pendingCmds.get(msg.id)!
+        pendingCmds.delete(msg.id)
+        handler(msg)
+      }
+      if (msg.method === 'Target.attachedToTarget') {
+        const sessionId = msg.params?.sessionId
+        const targetType = msg.params?.targetInfo?.type
+        if (sessionId && (targetType === 'page' || targetType === 'iframe' || targetType === 'webview')) {
+          applyTimezone(sessionId)
+        }
+      }
+    } catch {}
+  })
+
+  ws.on('close', () => {
+    console.log(`[Timezone] Profile ${profileId} CDP 连接关闭`)
+  })
+  ws.on('error', (e: Error) => {
+    console.warn(`[Timezone] Profile ${profileId} CDP 错误: ${e.message}`)
+  })
+
+  try {
+    await send('Target.setAutoAttach', {
+      autoAttach: true,
+      waitForDebuggerOnStart: false,
+      flatten: true
+    })
+    console.log(`[Timezone] Profile ${profileId} CDP auto-attach 已启用，时区: ${timezone}`)
+  } catch (e: any) {
+    console.warn(`[Timezone] Profile ${profileId} setAutoAttach 失败: ${e.message}`)
+  }
+
+  // 兜底：定期对所有 page target 手动 attach + setTimezone
+  const refreshTimer = setInterval(async () => {
+    if (ws.readyState !== WebSocket.OPEN) {
+      clearInterval(refreshTimer)
+      return
+    }
+    try {
+      const res = await fetch(`http://localhost:${debugPort}/json`)
+      if (!res.ok) return
+      const targets = await res.json() as any[]
+      for (const t of targets) {
+        if (t.type !== 'page' || !t.id) continue
+        try {
+          const attachResp: any = await send('Target.attachToTarget', {
+            targetId: t.id,
+            flatten: true
+          }).catch(() => null)
+          if (attachResp?.result?.sessionId) {
+            await applyTimezone(attachResp.result.sessionId)
+          }
+        } catch {}
+      }
+    } catch {}
+  }, 10000)
+
+  const cleanup = () => {
+    clearInterval(refreshTimer)
+    try { ws.close() } catch {}
+  }
+  timezoneOverrideCleanup.set(profileId, cleanup)
+}
+
+export function stopTimezoneOverride(profileId: number) {
+  const fn = timezoneOverrideCleanup.get(profileId)
+  if (fn) {
+    try { fn() } catch {}
+    timezoneOverrideCleanup.delete(profileId)
+  }
 }
 
 export function unregisterChromeProcess(profileId: number): void {
