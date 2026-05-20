@@ -1138,7 +1138,7 @@ router.post('/generate-fingerprint', async (req: AuthRequest, res: Response) => 
       chromeVersion,
       userAgent: buildUserAgent(chromeVersion),
       os: 'Windows',
-      webrtcMode: 'disable',
+      webrtcMode: 'forward',
       timezoneMode: 'ip',
       geolocationMode: 'ip',
       languageMode: 'ip',

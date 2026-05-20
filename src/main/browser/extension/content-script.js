@@ -15,233 +15,34 @@
  * 注意：此文件为模板，实际运行时 launcher.ts 会将 {{CONFIG}} 替换为真实配置
  */
 
-// ==================== 反检测工具函数（所有 IIFE 共享）====================
 (function() {
   'use strict';
-
-  // 缓存原生 getter 的 toString 结果，用于伪造 native code
-  const _nativeCodeCache = {};
-
-  function cacheNativeToString(name, obj, prop) {
-    try {
-      const desc = Object.getOwnPropertyDescriptor(obj, prop);
-      if (desc && desc.get && typeof desc.get === 'function') {
-        _nativeCodeCache[name] = Function.prototype.toString.call(desc.get);
-      } else if (desc && typeof desc.value === 'function') {
-        _nativeCodeCache[name] = Function.prototype.toString.call(desc.value);
-      }
-    } catch(e) {}
-  }
-
-  // 在覆盖前缓存原生 toString
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    cacheNativeToString('languages', Navigator.prototype, 'languages');
-    cacheNativeToString('userAgentData', Navigator.prototype, 'userAgentData');
-    cacheNativeToString('hardwareConcurrency', Navigator.prototype, 'hardwareConcurrency');
-    cacheNativeToString('deviceMemory', Navigator.prototype, 'deviceMemory');
-    cacheNativeToString('bluetooth', Navigator.prototype, 'bluetooth');
-    cacheNativeToString('connection', Navigator.prototype, 'connection');
-    cacheNativeToString('permissions', Navigator.prototype, 'permissions');
-    cacheNativeToString('clipboard', Navigator.prototype, 'clipboard');
-    cacheNativeToString('credentials', Navigator.prototype, 'credentials');
-    cacheNativeToString('keyboard', Navigator.prototype, 'keyboard');
-    cacheNativeToString('mediaCapabilities', Navigator.prototype, 'mediaCapabilities');
-    cacheNativeToString('wakeLock', Navigator.prototype, 'wakeLock');
-    cacheNativeToString('scheduling', Navigator.prototype, 'scheduling');
-    cacheNativeToString('presentation', Navigator.prototype, 'presentation');
-  }
-
-  // 创建看起来像原生 getter 的函数
-  window.__GB_nativeGetter = function(name, fn) {
-    const getter = function() { return fn.call(this); };
-    const cached = _nativeCodeCache[name];
-    getter.toString = function() { 
-      return cached || 'function get ' + name + '() { [native code] }'; 
-    };
-    // 同时修复 Function.prototype.toString.call 的返回
-    return getter;
-  };
-
-  // 创建看起来像原生函数的函数
-  window.__GB_nativeFn = function(name, fn) {
-    fn.toString = function() { 
-      return 'function ' + name + '() { [native code] }'; 
-    };
-    return fn;
-  };
-})();
-
-// ==================== Phase 4.0 Fix: RTCPeerConnection 立即劫持（document_start 时机）====================
-// 必须在页面任何脚本执行前完成，防止检测脚本缓存原始引用
-(function() {
-  'use strict';
-
-  const OriginalRTCPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
-  if (OriginalRTCPeerConnection) {
-    function FakeRTCPeerConnection(config, constraints) {
-      if (config && config.iceServers) {
-        config.iceServers = [];
-      }
-      const pc = new OriginalRTCPeerConnection(config, constraints);
-
-      const originalCreateOffer = pc.createOffer.bind(pc);
-      pc.createOffer = function(options) {
-        return originalCreateOffer(options).then(offer => {
-          if (offer && offer.sdp) {
-            offer.sdp = offer.sdp.replace(/(a=candidate:[^\r\n]*?(\d{1,3}\.){3}\d{1,3}[^\r\n]*?\r\n)/g, '');
-            offer.sdp = offer.sdp.replace(/(a=rtcp:[^\r\n]*?(\d{1,3}\.){3}\d{1,3}[^\r\n]*?\r\n)/g, '');
-          }
-          return offer;
-        });
-      };
-
-      const originalCreateAnswer = pc.createAnswer.bind(pc);
-      pc.createAnswer = function(options) {
-        return originalCreateAnswer(options).then(answer => {
-          if (answer && answer.sdp) {
-            answer.sdp = answer.sdp.replace(/(a=candidate:[^\r\n]*?(\d{1,3}\.){3}\d{1,3}[^\r\n]*?\r\n)/g, '');
-            answer.sdp = answer.sdp.replace(/(a=rtcp:[^\r\n]*?(\d{1,3}\.){3}\d{1,3}[^\r\n]*?\r\n)/g, '');
-          }
-          return answer;
-        });
-      };
-
-      return pc;
-    }
-
-    FakeRTCPeerConnection.prototype = OriginalRTCPeerConnection.prototype;
-    window.RTCPeerConnection = FakeRTCPeerConnection;
-    window.webkitRTCPeerConnection = FakeRTCPeerConnection;
-  }
-})();
-
-(function() {
-  'use strict';
-
+  
   // 获取配置（运行时由 launcher.ts 替换）
   const config = {{CONFIG}};
-
-  // ==================== Phase 4.0 Fix: navigator.userAgentData 覆盖（document_start 时机）====================
-  // Chrome 120+ 检测站大量改用 Client Hints，必须在页面脚本执行前完成覆盖
-  const chromeVersionForHints = config.chrome_version || '128';
-  const platformForHints = config.os === 'mac' ? 'macOS' : config.os === 'linux' ? 'Linux' : config.os === 'android' ? 'Android' : 'Windows';
-  const platformVersionMap = {
-    'windows': '15.0.0', 'mac': '14.0.0', 'linux': '6.0.0', 'android': '14.0.0', 'ios': '17.0.0'
-  };
-  const platformVersion = platformVersionMap[config.os] || '15.0.0';
-  const architecture = config.os === 'android' || config.os === 'ios' ? 'arm' : 'x86';
-  const bitness = '64';
-  const mobile = config.os === 'android' || config.os === 'ios';
-  const brandVersion = String(chromeVersionForHints).replace(/^Chrome\s*/i, '').trim();
-  const uaFullVersion = brandVersion + '.0.6099.130';
-
-  // 使用 NavigatorUAData 原型创建对象，确保 instanceof 和 constructor.name 正确
-  let fakeUserAgentData;
-  if (typeof NavigatorUAData !== 'undefined') {
-    fakeUserAgentData = Object.create(NavigatorUAData.prototype);
-  } else {
-    fakeUserAgentData = {};
-  }
-
-  Object.assign(fakeUserAgentData, {
-    brands: [
-      { brand: 'Chromium', version: brandVersion },
-      { brand: 'Not.A/Brand', version: '24' },
-      { brand: 'Google Chrome', version: brandVersion }
-    ],
-    mobile: mobile,
-    platform: platformForHints,
-    formFactors: [],
-    getHighEntropyValues: function(hints) {
-      const result = {};
-      if (hints.includes('architecture')) result.architecture = architecture;
-      if (hints.includes('bitness')) result.bitness = bitness;
-      if (hints.includes('brands')) result.brands = this.brands;
-      if (hints.includes('formFactors')) result.formFactors = this.formFactors;
-      if (hints.includes('fullVersionList')) {
-        result.fullVersionList = [
-          { brand: 'Chromium', version: uaFullVersion },
-          { brand: 'Not.A/Brand', version: '24.0.0.0' },
-          { brand: 'Google Chrome', version: uaFullVersion }
-        ];
-      }
-      if (hints.includes('mobile')) result.mobile = mobile;
-      if (hints.includes('model')) result.model = '';
-      if (hints.includes('platform')) result.platform = platformForHints;
-      if (hints.includes('platformVersion')) result.platformVersion = platformVersion;
-      if (hints.includes('uaFullVersion')) result.uaFullVersion = uaFullVersion;
-      if (hints.includes('wow64')) result.wow64 = false;
-      return Promise.resolve(result);
-    },
-    toJSON: function() {
-      return {
-        brands: this.brands,
-        mobile: this.mobile,
-        platform: this.platform,
-        formFactors: this.formFactors
-      };
-    }
-  });
-
-  // 覆盖 Navigator.prototype.userAgentData getter（更自然，所有 navigator 实例继承）
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origDesc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgentData');
-    if (origDesc && origDesc.get) {
-      const getter = window.__GB_nativeGetter('userAgentData', function() { return fakeUserAgentData; });
-      Object.defineProperty(Navigator.prototype, 'userAgentData', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    } else {
-      Object.defineProperty(navigator, 'userAgentData', {
-        value: fakeUserAgentData,
-        writable: true,
-        configurable: true,
-        enumerable: true
-      });
-    }
-  }
-
-  // Phase 4.0 Fix: 直接覆盖 navigator.platform（数据属性，和真实 Chrome 一致）
-  const platformValue = config.os === 'mac' ? 'MacIntel' : config.os === 'linux' ? 'Linux x86_64' : config.os === 'android' ? 'Linux armv8l' : config.os === 'ios' ? 'iPhone' : 'Win32';
-  Object.defineProperty(navigator, 'platform', {
-    value: platformValue,
-    writable: true,
-    configurable: true,
-    enumerable: true
-  });
-
+  
   // ==================== 0. WebDriver 反检测（替代 --disable-blink-features） ====================
-  // 策略：优先删除自有属性（真实 Chrome 没有 webdriver 自有属性）
-  // 若删除失败，设为数据属性 value: undefined（比访问器属性更自然）
-  if ('webdriver' in navigator) {
-    try {
-      delete navigator.webdriver;
-    } catch(e) {}
-  }
-  if ('webdriver' in navigator) {
-    Object.defineProperty(navigator, 'webdriver', {
-      value: undefined,
-      writable: true,
-      configurable: true,
-      enumerable: false
+  Object.defineProperty(navigator, 'webdriver', {
+    get: () => undefined,
+    configurable: true
+  });
+  
+  // 清理 chrome 对象上的自动化痕迹
+  if (window.chrome) {
+    Object.defineProperty(window.chrome, 'runtime', {
+      get: () => undefined,
+      configurable: true
     });
   }
-
-  // 清理 Navigator.prototype 上的 webdriver（某些 ChromeDriver 版本会污染原型）
-  try {
-    delete Navigator.prototype.webdriver;
-  } catch(e) {}
-
-  // 覆盖 Permissions API 中的 query 行为（保持实例方法替换，toString 在 Phase 4.1 修复）
+  
+  // 覆盖 Permissions API 中的 query 行为
   const originalQuery = window.navigator.permissions.query;
   window.navigator.permissions.query = (parameters) => (
     parameters.name === 'notifications' 
       ? Promise.resolve({ state: Notification.permission }) 
       : originalQuery(parameters)
   );
-
+  
   // ==================== 1. Canvas 指纹 - 添加噪声 ====================
   if (config.canvas_mode === 'noise') {
     const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
@@ -265,7 +66,7 @@
       }
       return originalToDataURL.apply(this, args);
     };
-
+    
     // 同时 hook getContext
     const originalGetContext = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function(contextType, ...args) {
@@ -287,7 +88,7 @@
       return ctx;
     };
   }
-
+  
   // ==================== 3. WebRTC - 四种模式（与 AdsPower 保持一致） ====================
   // 
   // WebRTC 模式说明：
@@ -301,7 +102,7 @@
   // 恶意网站可以通过自托管 STUN 服务器获取用户的真实本地 IP。
   // Forward 模式通过劫持 RTCPeerConnection，强制将所有 iceServers 替换为
   // Google 公共 STUN 服务器，从而阻止自托管 STUN 探测真实 IP。
-
+  
   // real 模式：不做任何处理，让网站看到真实的本地 IP
   if (config.webrtc_mode === 'real') {
     // 不劫持 RTCPeerConnection，保持原样
@@ -310,7 +111,7 @@
     // 完全禁用 WebRTC
     delete window.RTCPeerConnection;
     delete window.webkitRTCPeerConnection;
-
+    
     // 禁用 MediaDevices
     if (navigator.mediaDevices) {
       navigator.mediaDevices.getUserMedia = function() {
@@ -326,7 +127,7 @@
     if (OriginalRTCPeerConnection) {
       window.RTCPeerConnection = function(...args) {
         const pc = new OriginalRTCPeerConnection(...args);
-
+        
         const originalAddEventListener = pc.addEventListener.bind(pc);
         pc.addEventListener = function(type, listener, options) {
           if (type === 'icecandidate') {
@@ -345,33 +146,33 @@
           }
           return originalAddEventListener(type, listener, options);
         };
-
+        
         // Hook createOffer/createAnswer
         const originalCreateOffer = pc.createOffer.bind(pc);
         pc.createOffer = function(...args) {
           return originalCreateOffer(...args);
         };
-
+        
         return pc;
       };
-
+      
       // 复制原型方法
       window.RTCPeerConnection.prototype = OriginalRTCPeerConnection.prototype;
-
+      
       // 如果有 onicecandidate，也需要包装
       const originalSet = Object.getOwnPropertyDescriptor(window.RTCPeerConnection.prototype, 'onicecandidate');
     }
   } else if (config.webrtc_mode === 'forward') {
     // Phase 1.6: Forward 模式 - 强制通过 Google 公共 STUN 服务器
     // Phase 1.7: 完善 Forward 模式 - 增加私有 IP 过滤
-
+    
     const OriginalRTCPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection;
     const OriginalRTCIceCandidate = window.RTCIceCandidate;
-
+    
     if (OriginalRTCPeerConnection) {
       const _OrigRTCPeerConnection = OriginalRTCPeerConnection;
       const _OrigRTCIceCandidate = OriginalRTCIceCandidate;
-
+      
       // ==================== 辅助函数：判断是否为私有 IP ====================
       function isPrivateIP(ipString) {
         if (!ipString) return false;
@@ -379,7 +180,7 @@
         const privateIPRegex = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.)/;
         return privateIPRegex.test(ipString);
       }
-
+      
       // ==================== 辅助函数：从 candidate 字符串中提取 IP ====================
       function extractIPFromCandidate(candidate) {
         if (!candidate) return null;
@@ -401,7 +202,7 @@
         }
         return null;
       }
-
+      
       // ==================== 劫持 RTCIceCandidate 构造函数 ====================
       // 如果网站直接构造 ICE candidate，阻止私有 IP
       if (OriginalRTCIceCandidate) {
@@ -420,7 +221,7 @@
         window.RTCIceCandidate.prototype = OriginalRTCIceCandidate.prototype;
         window.RTCIceCandidate.prototype.constructor = window.RTCIceCandidate;
       }
-
+      
       // ==================== 劫持 RTCPeerConnection 构造函数 ====================
       window.RTCPeerConnection = function(config, ...rest) {
         const GOOGLE_STUN_SERVERS = [
@@ -430,15 +231,15 @@
           { urls: 'stun:stun3.l.google.com:19302' },
           { urls: 'stun:stun4.l.google.com:19302' }
         ];
-
+        
         const forwardConfig = {
           ...config,
           iceServers: GOOGLE_STUN_SERVERS,
           iceTransportPolicy: 'all'
         };
-
+        
         const pc = new _OrigRTCPeerConnection(forwardConfig, ...rest);
-
+        
         // ==================== 劫持 addEventListener，过滤 icecandidate 事件 ====================
         const originalAddEventListener = pc.addEventListener.bind(pc);
         pc.addEventListener = function(type, listener, options) {
@@ -463,7 +264,7 @@
           }
           return originalAddEventListener(type, listener, options);
         };
-
+        
         // ==================== 劫持 onicecandidate 属性 ====================
         const originalDescriptor = Object.getOwnPropertyDescriptor(_OrigRTCPeerConnection.prototype, 'onicecandidate');
         if (originalDescriptor && originalDescriptor.set) {
@@ -494,7 +295,7 @@
             configurable: true
           });
         }
-
+        
         // ==================== 劫持 createOffer/createAnswer，替换 SDP 中的私有 IP ====================
         const originalCreateOffer = pc.createOffer.bind(pc);
         pc.createOffer = function(...args) {
@@ -510,7 +311,7 @@
             return { ...sdp, sdp: filteredSdp };
           });
         };
-
+        
         const originalCreateAnswer = pc.createAnswer.bind(pc);
         pc.createAnswer = function(...args) {
           return originalCreateAnswer(...args).then(sdp => {
@@ -524,103 +325,52 @@
             return { ...sdp, sdp: filteredSdp };
           });
         };
-
+        
 
         return pc;
       };
-
+      
       window.RTCPeerConnection.prototype = _OrigRTCPeerConnection.prototype;
       window.RTCPeerConnection.prototype.constructor = window.RTCPeerConnection;
-
+      
       Object.keys(_OrigRTCPeerConnection).forEach(key => {
         try {
           window.RTCPeerConnection[key] = _OrigRTCPeerConnection[key];
         } catch (e) {}
       });
-
+      
       if (window.webkitRTCPeerConnection) {
         window.webkitRTCPeerConnection = window.RTCPeerConnection;
       }
     }
   }
-
-  // ==================== 4. 时区 - 基于配置（Phase 4.1 增强）====================
+  
+  // ==================== 4. 时区 - 基于配置 ====================
   if (config.timezone_mode === 'ip' && config.timezone) {
-    const timezone = config.timezone;
-    // 优先使用 launcher 传入的精确偏移量，否则查表
-    const timezoneOffset = config.timezone_offset !== undefined
-      ? config.timezone_offset
-      : ({
-        'Asia/Shanghai': -480, 'Asia/Tokyo': -540, 'Asia/Seoul': -540,
-        'Asia/Singapore': -480, 'Asia/Bangkok': -420, 'Asia/Kolkata': -330,
-        'Asia/Dubai': -240, 'Asia/Taipei': -480, 'Asia/Hong_Kong': -480,
-        'Europe/Berlin': 60, 'Europe/London': 0, 'Europe/Paris': 60,
-        'Europe/Moscow': 180, 'Europe/Rome': 60, 'Europe/Madrid': 60,
-        'Europe/Amsterdam': 60, 'Europe/Stockholm': 60, 'Europe/Warsaw': 60,
-        'Europe/Vienna': 60, 'Europe/Zurich': 60, 'Europe/Brussels': 60,
-        'Europe/Copenhagen': 60, 'Europe/Oslo': 60, 'Europe/Helsinki': 120,
-        'America/New_York': 300, 'America/Los_Angeles': 480, 'America/Chicago': 360,
-        'America/Denver': 420, 'America/Phoenix': 420, 'America/Toronto': 300,
-        'America/Vancouver': 480, 'America/Montreal': 300, 'America/Miami': 300,
-        'America/Dallas': 360, 'America/Seattle': 480, 'America/Boston': 300,
-        'America/Sao_Paulo': 180, 'America/Mexico_City': 360, 'America/Bogota': 300,
-        'America/Lima': 300, 'America/Santiago': 240, 'America/Buenos_Aires': 180,
-        'Australia/Sydney': -600, 'Australia/Melbourne': -600, 'Australia/Perth': -480,
-        'Australia/Brisbane': -600, 'Australia/Adelaide': -570,
-        'Pacific/Auckland': -720, 'Pacific/Fiji': -720,
-        'Africa/Johannesburg': -120, 'Africa/Cairo': -120,
-        'America/Halifax': 240, 'America/Anchorage': 540,
-        'Asia/Jakarta': -420, 'Asia/Manila': -480, 'Asia/Kuala_Lumpur': -480,
-        'Asia/Istanbul': 180, 'Asia/Tehran': 210, 'Asia/Riyadh': -180,
-        'Atlantic/Reykjavik': 0
-      }[timezone]);
-
     const originalDateTimeFormat = Intl.DateTimeFormat;
-    const FakeDateTimeFormat = function(locales, options) {
-      return new originalDateTimeFormat(locales, { ...options, timeZone: timezone });
+    Intl.DateTimeFormat = function(locales, options) {
+      return new originalDateTimeFormat(locales, { ...options, timeZone: config.timezone });
     };
-    FakeDateTimeFormat.prototype = originalDateTimeFormat.prototype;
-    FakeDateTimeFormat.supportedLocalesOf = originalDateTimeFormat.supportedLocalesOf;
-    // 修复 toString
-    FakeDateTimeFormat.toString = function() {
-      try { return originalDateTimeFormat.toString(); } catch(e) { return 'function DateTimeFormat() { [native code] }'; }
-    };
-    Intl.DateTimeFormat = FakeDateTimeFormat;
-
+    
     // 覆盖 Date 的一些方法
     const originalGetTimezoneOffset = Date.prototype.getTimezoneOffset;
     Date.prototype.getTimezoneOffset = function() {
-      if (timezoneOffset !== undefined) {
-        return timezoneOffset;
-      }
-      return originalGetTimezoneOffset.call(this);
+      // 计算配置时区的偏移量
+      const tzOffset = {
+        'Asia/Shanghai': -480,
+        'America/New_York': 300,
+        'Europe/London': 0,
+        'Asia/Tokyo': -540
+      };
+      return tzOffset[config.timezone] !== undefined ? tzOffset[config.timezone] : originalGetTimezoneOffset.call(this);
     };
-
-    // 覆盖 Date.prototype 上所有涉及时区的方法（toLocaleString 族）
-    const dateMethodsToWrap = [
-      'toLocaleString', 'toLocaleDateString', 'toLocaleTimeString',
-      'toString', 'toTimeString', 'toDateString'
-    ];
-    dateMethodsToWrap.forEach(methodName => {
-      const original = Date.prototype[methodName];
-      if (typeof original === 'function') {
-        Date.prototype[methodName] = function(...args) {
-          if (args[1] && typeof args[1] === 'object') {
-            args[1].timeZone = timezone;
-          } else if (methodName.startsWith('toLocale')) {
-            args[1] = { ...(args[1] || {}), timeZone: timezone };
-          }
-          return original.apply(this, args);
-        };
-      }
-    });
   }
-
+  
   // ==================== 5. 地理位置 - 基于配置 ====================
   if (config.geolocation_mode === 'ip') {
     const mockLatitude = config.latitude || 39.9042;  // 默认北京
     const mockLongitude = config.longitude || 116.4074;
-
+    
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition = function(success, error, options) {
         success({
@@ -636,11 +386,11 @@
           timestamp: Date.now()
         });
       };
-
+      
       navigator.geolocation.watchPosition = navigator.geolocation.getCurrentPosition;
     }
   }
-
+  
   // ==================== 6. 媒体设备 - 固定列表 ====================
   if (config.media_device_mode === 'mock') {
     const mockDevices = [
@@ -648,102 +398,84 @@
       { deviceId: 'default-video-input', kind: 'videoinput', label: '内置摄像头', groupId: 'default-video' },
       { deviceId: 'default-audio-output', kind: 'audiooutput', label: '默认扬声器', groupId: 'default-audio' }
     ];
-
+    
     if (navigator.mediaDevices) {
       navigator.mediaDevices.enumerateDevices = function() {
         return Promise.resolve(mockDevices.map(d => ({ ...d })));
       };
     }
   }
-
+  
   // ==================== 7. 屏幕分辨率 - 覆盖 screen 对象 ====================
   if (config.screen_resolution) {
     const [width, height] = config.screen_resolution.split('x').map(Number);
-
+    
     Object.defineProperty(window.screen, 'width', { 
       value: width, 
-      writable: true,
+      writable: false,
       configurable: true
     });
-
+    
     Object.defineProperty(window.screen, 'height', { 
       value: height, 
-      writable: true,
+      writable: false,
       configurable: true
     });
-
+    
     Object.defineProperty(window.screen, 'availWidth', { 
       value: width, 
-      writable: true,
+      writable: false,
       configurable: true
     });
-
+    
     Object.defineProperty(window.screen, 'availHeight', { 
       value: height - 40, // 减去任务栏高度
-      writable: true,
+      writable: false,
       configurable: true
     });
-
+    
     Object.defineProperty(window.screen, 'availTop', { 
       value: 0, 
-      writable: true,
+      writable: false,
       configurable: true
     });
-
+    
     Object.defineProperty(window.screen, 'availLeft', { 
       value: 0, 
-      writable: true,
+      writable: false,
       configurable: true
     });
   }
-
+  
   // ==================== 8. 语言设置 ====================
   if (config.ui_language) {
-    // language 作为数据属性覆盖（真实 Chrome 中 language 是数据属性）
     Object.defineProperty(navigator, 'language', { 
       value: config.ui_language,
-      writable: true,
-      configurable: true,
-      enumerable: true
+      writable: false,
+      configurable: true
     });
-
-    // languages 覆盖 Navigator.prototype getter
-    const languages = [config.ui_language, config.ui_language.split('-')[0], 'en-US', 'en'];
-    if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-      const origDesc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'languages');
-      if (origDesc && origDesc.get) {
-        const getter = window.__GB_nativeGetter('languages', function() { return languages; });
-        Object.defineProperty(Navigator.prototype, 'languages', {
-          get: getter,
-          configurable: true,
-          enumerable: true
-        });
-      } else {
-        Object.defineProperty(navigator, 'languages', { 
-          value: languages,
-          writable: true,
-          configurable: true,
-          enumerable: true
-        });
-      }
-    }
-
+    
+    Object.defineProperty(navigator, 'languages', { 
+      value: [config.ui_language, 'en-US', 'en'],
+      writable: false,
+      configurable: true
+    });
+    
     // 覆盖 chrome.language
     if (typeof chrome !== 'undefined' && chrome.i18n) {
       // chrome.i18n.getUILanguage() 只读，无法直接覆盖
     }
   }
-
+  
   // ==================== 9. User Agent（可选，后续扩展） ====================
   if (config.user_agent) {
     Object.defineProperty(navigator, 'userAgent', { 
       value: config.user_agent,
       writable: true,
-      configurable: true,
-      enumerable: true
+      configurable: true
     });
   }
-
+  
 
 })();
 
@@ -759,15 +491,8 @@
 
   // ============ Phase 3.1 维度 1: 清理 ChromeDriver 遗留变量 ============
   // ChromeDriver 会注入 $cdc_ 和 $chrome_ 变量，这是最强的 Bot 信号
-  // 使用 getOwnPropertyNames + getOwnPropertySymbols 覆盖不可枚举的情况
   try {
-    const allKeys = [
-      ...Object.getOwnPropertyNames(window),
-      ...Object.getOwnPropertySymbols(window).map(s => typeof s === 'symbol' ? s.toString() : s)
-    ];
-    const cdcVars = allKeys.filter(k => 
-      (typeof k === 'string' && (k.startsWith('cdc_') || k.startsWith('$chrome_')))
-    );
+    const cdcVars = Object.keys(window).filter(k => k.startsWith('cdc_') || k.startsWith('$chrome_'));
     cdcVars.forEach(v => {
       try { delete window[v]; } catch(e) {}
     });
@@ -782,17 +507,18 @@
   // chrome.runtime（扩展程序 API）
   if (!window.chrome.runtime) {
     Object.defineProperty(window.chrome, 'runtime', {
-      value: {
-        id: '',
-        manifest: { name: 'GhostBrowse', version: '1.0', manifest_version: 3 },
-        getManifest: function() { return this.manifest; },
-        getURL: function(path) { return 'chrome-extension://fake-id/' + path; },
-        connect: function() { return { onMessage: { addListener: function() {} }, postMessage: function() {} }; },
-        sendMessage: function(msg, cb) { if (cb) setTimeout(cb, 0); },
-        onInstalled: { addListener: function() {} },
-        onUpdateAvailable: { addListener: function() {} }
+      get: function() {
+        return {
+          id: '',
+          manifest: { name: 'GhostBrowse', version: '1.0', manifest_version: 3 },
+          getManifest: function() { return this.manifest; },
+          getURL: function(path) { return 'chrome-extension://fake-id/' + path; },
+          connect: function() { return { onMessage: { addListener: function() {} }, postMessage: function() {} }; },
+          sendMessage: function(msg, cb) { if (cb) setTimeout(cb, 0); },
+          onInstalled: { addListener: function() {} },
+          onUpdateAvailable: { addListener: function() {} }
+        };
       },
-      writable: true,
       configurable: true
     });
   }
@@ -843,152 +569,101 @@
 
   // ============ Phase 3.1 维度 3: navigator.plugins ============
   // 真实 Chrome 有 3-5 个插件：PDF Viewer、Widevine、Native Client
-  // 使用 PluginArray 原型，确保 instanceof 和 constructor.name 正确
-  const mockPlugins = [
-    {
-      name: 'Chrome PDF Viewer',
-      filename: 'internal-pdf-viewer',
-      description: 'Portable Document Format',
-      version: '',
-      length: 2,
-      item: function(i) { return this[i]; },
-      namedItem: function(name) { 
-        for (let i = 0; i < this.length; i++) {
-          if (this[i].name === name) return this[i];
+  if (!navigator.plugins || navigator.plugins.length === 0) {
+    const mockPlugins = [
+      {
+        name: 'Chrome PDF Viewer',
+        filename: 'internal-pdf-viewer',
+        description: 'Portable Document Format',
+        version: '',
+        length: 2,
+        item: function(i) { return this[i]; },
+        namedItem: function(name) { 
+          for (let i = 0; i < this.length; i++) {
+            if (this[i].name === name) return this[i];
+          }
+          return null;
         }
-        return null;
-      }
-    },
-    {
-      name: 'Widevine Content Decryption Module',
-      filename: 'widevinecdmadapter.dll',
-      description: 'Widevine Content Decryption Module',
-      version: '4.10.2209.0',
-      length: 0,
-      item: function(i) { return this[i]; },
-      namedItem: function() { return null; }
-    },
-    {
-      name: 'Native Client',
-      filename: 'internal-nacl-plugin',
-      description: 'Native Client module',
-      version: '',
-      length: 2,
-      item: function(i) { return this[i]; },
-      namedItem: function(name) {
-        for (let i = 0; i < this.length; i++) {
-          if (this[i].name === name) return this[i];
+      },
+      {
+        name: 'Widevine Content Decryption Module',
+        filename: 'widevinecdmadapter.dll',
+        description: 'Widevine Content Decryption Module',
+        version: '4.10.2209.0',
+        length: 0,
+        item: function(i) { return this[i]; },
+        namedItem: function() { return null; }
+      },
+      {
+        name: 'Native Client',
+        filename: 'internal-nacl-plugin',
+        description: 'Native Client module',
+        version: '',
+        length: 2,
+        item: function(i) { return this[i]; },
+        namedItem: function(name) {
+          for (let i = 0; i < this.length; i++) {
+            if (this[i].name === name) return this[i];
+          }
+          return null;
         }
-        return null;
       }
-    }
-  ];
+    ];
 
-  // 添加 PluginArray 原型方法
-  mockPlugins.refresh = function() {};
-  mockPlugins.item = function(index) { return this[index >= 0 && index < this.length ? index : undefined]; };
-  mockPlugins.namedItem = function(name) {
-    for (let i = 0; i < this.length; i++) {
-      if (this[i].name === name) return this[i];
-    }
-    return null;
-  };
-  Object.defineProperty(mockPlugins, 'length', { value: 3, writable: false, configurable: true });
+    // 添加 PluginArray 原型方法
+    mockPlugins.refresh = function() {};
+    mockPlugins.item = function(index) { return this[index < 0 || index >= this.length ? undefined : this[index]]; };
+    mockPlugins.namedItem = function(name) {
+      for (let i = 0; i < this.length; i++) {
+        if (this[i].name === name) return this[i];
+      }
+      return null;
+    };
+    Object.defineProperty(mockPlugins, 'length', { value: 3, writable: false, configurable: true });
 
-  // 使用 PluginArray 原型
-  if (typeof PluginArray !== 'undefined') {
-    Object.setPrototypeOf(mockPlugins, PluginArray.prototype);
-  }
+    Object.defineProperty(navigator, 'plugins', {
+      get: function() { return mockPlugins; },
+      configurable: true,
+      enumerable: true
+    });
 
-  // 覆盖 Navigator.prototype.plugins getter
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origDesc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'plugins');
-    if (origDesc && origDesc.get) {
-      const getter = window.__GB_nativeGetter('plugins', function() { return mockPlugins; });
-      Object.defineProperty(Navigator.prototype, 'plugins', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    } else {
-      Object.defineProperty(navigator, 'plugins', {
-        value: mockPlugins,
-        writable: true,
-        configurable: true,
-        enumerable: true
-      });
-    }
-  }
+    // ============ Phase 3.1 维度 4: navigator.mimeTypes ============
+    const mockMimeTypes = [
+      { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[0] },
+      { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[0] },
+      { type: 'application/x-nacl', suffixes: '', description: 'Native Client executable', enabledPlugin: mockPlugins[2] }
+    ];
+    mockMimeTypes.length = 3;
+    mockMimeTypes.item = function(index) { return this[index < 0 || index >= this.length ? undefined : this[index]]; };
+    mockMimeTypes.namedItem = function(name) {
+      for (let i = 0; i < this.length; i++) {
+        if (this[i].type === name) return this[i];
+      }
+      return null;
+    };
 
-  // ============ Phase 3.1 维度 4: navigator.mimeTypes ============
-  const mockMimeTypes = [
-    { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[0] },
-    { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: mockPlugins[0] },
-    { type: 'application/x-nacl', suffixes: '', description: 'Native Client executable', enabledPlugin: mockPlugins[2] }
-  ];
-  mockMimeTypes.length = 3;
-  mockMimeTypes.item = function(index) { return this[index >= 0 && index < this.length ? index : undefined]; };
-  mockMimeTypes.namedItem = function(name) {
-    for (let i = 0; i < this.length; i++) {
-      if (this[i].type === name) return this[i];
-    }
-    return null;
-  };
-
-  // 使用 MimeTypeArray 原型
-  if (typeof MimeTypeArray !== 'undefined') {
-    Object.setPrototypeOf(mockMimeTypes, MimeTypeArray.prototype);
-  }
-
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origDesc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'mimeTypes');
-    if (origDesc && origDesc.get) {
-      const getter = window.__GB_nativeGetter('mimeTypes', function() { return mockMimeTypes; });
-      Object.defineProperty(Navigator.prototype, 'mimeTypes', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    } else {
-      Object.defineProperty(navigator, 'mimeTypes', {
-        value: mockMimeTypes,
-        writable: true,
-        configurable: true,
-        enumerable: true
-      });
-    }
+    Object.defineProperty(navigator, 'mimeTypes', {
+      get: function() { return mockMimeTypes; },
+      configurable: true,
+      enumerable: true
+    });
   }
 
   // ============ Phase 3.1 维度 5: navigator.languages ============
   // 真实浏览器有 2-4 个语言，空数组是 Bot 信号
-  // 始终覆盖，确保和 language 一致
   const uiLang = config.ui_language || 'zh-CN';
   const baseLang = uiLang.split('-')[0];
   const languages = [uiLang, baseLang, 'en-US', 'en'];
-
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origDesc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'languages');
-    if (origDesc && origDesc.get) {
-      const getter = window.__GB_nativeGetter('languages', function() { return languages; });
-      Object.defineProperty(Navigator.prototype, 'languages', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    } else {
-      Object.defineProperty(navigator, 'languages', {
-        value: languages,
-        writable: true,
-        configurable: true,
-        enumerable: true
-      });
-    }
+  if (!navigator.languages || navigator.languages.length <= 1) {
+    Object.defineProperty(navigator, 'languages', {
+      get: function() { return languages; },
+      configurable: true,
+      enumerable: true
+    });
   }
-
-  // 同步更新 language（数据属性）
+  // 同步更新 language
   Object.defineProperty(navigator, 'language', {
-    value: uiLang,
-    writable: true,
+    get: function() { return uiLang; },
     configurable: true,
     enumerable: true
   });
@@ -1000,50 +675,41 @@
   if (resolution.includes('3840') || resolution.includes('2560')) cores = 8;
   if (resolution.includes('1366') || resolution.includes('1280')) cores = 2;
 
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origHc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'hardwareConcurrency');
-    if (origHc && origHc.get) {
-      const getter = window.__GB_nativeGetter('hardwareConcurrency', function() { return cores; });
-      Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    }
+  if (!navigator.hardwareConcurrency || navigator.hardwareConcurrency < 2) {
+    Object.defineProperty(navigator, 'hardwareConcurrency', {
+      get: function() { return cores; },
+      configurable: true,
+      enumerable: true
+    });
+  }
 
-    const origDm = Object.getOwnPropertyDescriptor(Navigator.prototype, 'deviceMemory');
-    if (origDm && origDm.get) {
-      const getter = window.__GB_nativeGetter('deviceMemory', function() { return 8; });
-      Object.defineProperty(Navigator.prototype, 'deviceMemory', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    }
+  if (!navigator.deviceMemory || navigator.deviceMemory < 1) {
+    Object.defineProperty(navigator, 'deviceMemory', {
+      get: function() { return 8; },
+      configurable: true,
+      enumerable: true
+    });
   }
 
   // ============ Phase 3.1 维度 7: navigator.vendor / maxTouchPoints ============
-  // vendor 是数据属性
   Object.defineProperty(navigator, 'vendor', {
-    value: 'Google Inc.',
-    writable: true,
+    get: function() { return 'Google Inc.'; },
     configurable: true,
     enumerable: true
   });
 
-  // maxTouchPoints 是数据属性
-  Object.defineProperty(navigator, 'maxTouchPoints', {
-    value: 0,
-    writable: true,
-    configurable: true,
-    enumerable: true
-  });
+  if (!navigator.maxTouchPoints || navigator.maxTouchPoints < 0) {
+    Object.defineProperty(navigator, 'maxTouchPoints', {
+      get: function() { return 0; }, // 桌面端
+      configurable: true,
+      enumerable: true
+    });
+  }
 
   // ============ Phase 3.1 维度 8: window.devicePixelRatio ============
   if (typeof window.devicePixelRatio === 'undefined' || window.devicePixelRatio < 1) {
     Object.defineProperty(window, 'devicePixelRatio', {
-      value: 1,
-      writable: true,
+      get: function() { return 1; }, // 普通屏
       configurable: true
     });
   }
@@ -1052,38 +718,33 @@
   const [screenW, screenH] = (config.screen_resolution || '1920x1080').split('x').map(Number);
   if (!window.outerWidth || window.outerWidth < screenW) {
     Object.defineProperty(window, 'outerWidth', {
-      value: screenW,
-      writable: true,
+      get: function() { return screenW; },
       configurable: true
     });
   }
   if (!window.outerHeight || window.outerHeight < screenH) {
     Object.defineProperty(window, 'outerHeight', {
-      value: screenH + 40,
-      writable: true,
+      get: function() { return screenH + 40; }, // 标题栏+工具栏约 40px
       configurable: true
     });
   }
   if (!window.innerWidth) {
     Object.defineProperty(window, 'innerWidth', {
-      value: screenW,
-      writable: true,
+      get: function() { return screenW; },
       configurable: true
     });
   }
   if (!window.innerHeight) {
     Object.defineProperty(window, 'innerHeight', {
-      value: screenH,
-      writable: true,
+      get: function() { return screenH; },
       configurable: true
     });
   }
 
   // ============ Phase 3.1 维度 10: navigator.connection ============
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origConn = Object.getOwnPropertyDescriptor(Navigator.prototype, 'connection');
-    if (origConn && origConn.get) {
-      const getter = window.__GB_nativeGetter('connection', function() {
+  if (!navigator.connection) {
+    Object.defineProperty(navigator, 'connection', {
+      get: function() {
         return {
           effectiveType: '4g',
           downlink: 10,
@@ -1095,24 +756,22 @@
           addEventListener: function() {},
           removeEventListener: function() {}
         };
-      });
-      Object.defineProperty(Navigator.prototype, 'connection', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    }
+      },
+      configurable: true,
+      enumerable: true
+    });
   }
 
   // ============ Phase 3.1 维度 11: window.performance.memory ============
   if (window.performance && !window.performance.memory) {
     Object.defineProperty(window.performance, 'memory', {
-      value: {
-        usedJSHeapSize: 12000000,
-        totalJSHeapSize: 22000000,
-        jsHeapSizeLimit: 2190000000
+      get: function() {
+        return {
+          usedJSHeapSize: 12000000,
+          totalJSHeapSize: 22000000,
+          jsHeapSizeLimit: 2190000000
+        };
       },
-      writable: true,
       configurable: true
     });
   }
@@ -1120,13 +779,11 @@
   // ============ Phase 3.1 维度 12: screen.colorDepth / pixelDepth ============
   if (window.screen && !window.screen.colorDepth) {
     Object.defineProperty(window.screen, 'colorDepth', {
-      value: 24,
-      writable: true,
+      get: function() { return 24; },
       configurable: true
     });
     Object.defineProperty(window.screen, 'pixelDepth', {
-      value: 24,
-      writable: true,
+      get: function() { return 24; },
       configurable: true
     });
   }
@@ -1135,15 +792,13 @@
   if (window.screen) {
     if (!window.screen.availLeft) {
       Object.defineProperty(window.screen, 'availLeft', {
-        value: 0,
-        writable: true,
+        get: function() { return 0; },
         configurable: true
       });
     }
     if (!window.screen.availTop) {
       Object.defineProperty(window.screen, 'availTop', {
-        value: 0,
-        writable: true,
+        get: function() { return 0; },
         configurable: true
       });
     }
@@ -1154,19 +809,17 @@
   const timezone = config.timezone || 'Asia/Shanghai';
   if (window.Intl && window.Intl.DateTimeFormat) {
     const OrigDateTimeFormat = window.Intl.DateTimeFormat;
-    const FakeDateTimeFormat = function(locales, options) {
+    window.Intl.DateTimeFormat = function(locales, options) {
       const opts = Object.assign({}, options);
       if (opts.timeZone === undefined) {
         opts.timeZone = timezone;
       }
       return new OrigDateTimeFormat(locales, opts);
     };
-    FakeDateTimeFormat.prototype = OrigDateTimeFormat.prototype;
-    FakeDateTimeFormat.supportedLocalesOf = OrigDateTimeFormat.supportedLocalesOf;
-    FakeDateTimeFormat.toString = function() {
-      try { return OrigDateTimeFormat.toString(); } catch(e) { return 'function DateTimeFormat() { [native code] }'; }
+    window.Intl.DateTimeFormat.prototype = OrigDateTimeFormat.prototype;
+    window.Intl.DateTimeFormat.supportedLocalesOf = function(locales, options) {
+      return OrigDateTimeFormat.supportedLocalesOf(locales, options);
     };
-    window.Intl.DateTimeFormat = FakeDateTimeFormat;
   }
 
   // ============ Phase 3.1 维度 15: CSS.supports 伪装 ============
@@ -1184,8 +837,7 @@
   // ============ Phase 3.1 维度 16: Notification.permission ============
   if (window.Notification) {
     Object.defineProperty(Notification, 'permission', {
-      value: 'default',
-      writable: true,
+      get: function() { return 'default'; },
       configurable: true
     });
   }
@@ -1213,66 +865,17 @@
     };
   }
 
-  // ============ Phase 3.1 维度 4b: 无条件确保 navigator.plugins / mimeTypes 方法存在 ============
-  // Chrome 某些版本/配置下 PluginArray 原生方法可能缺失，检测站会据此判定异常
-  try {
-    const protoPlugins = navigator.plugins;
-    if (protoPlugins && typeof protoPlugins.item !== 'function') {
-      Object.defineProperty(protoPlugins, 'item', {
-        value: function(index) { return this[index >= 0 && index < this.length ? index : undefined]; },
-        writable: true, configurable: true
-      });
-    }
-    if (protoPlugins && typeof protoPlugins.namedItem !== 'function') {
-      Object.defineProperty(protoPlugins, 'namedItem', {
-        value: function(name) { for (let i = 0; i < this.length; i++) { if (this[i].name === name) return this[i]; } return null; },
-        writable: true, configurable: true
-      });
-    }
-    if (protoPlugins && typeof protoPlugins.refresh !== 'function') {
-      Object.defineProperty(protoPlugins, 'refresh', {
-        value: function() {},
-        writable: true, configurable: true
-      });
-    }
-  } catch(e) {}
-
-  try {
-    const protoMime = navigator.mimeTypes;
-    if (protoMime && typeof protoMime.item !== 'function') {
-      Object.defineProperty(protoMime, 'item', {
-        value: function(index) { return this[index >= 0 && index < this.length ? index : undefined]; },
-        writable: true, configurable: true
-      });
-    }
-    if (protoMime && typeof protoMime.namedItem !== 'function') {
-      Object.defineProperty(protoMime, 'namedItem', {
-        value: function(name) { for (let i = 0; i < this.length; i++) { if (this[i].type === name) return this[i]; } return null; },
-        writable: true, configurable: true
-      });
-    }
-  } catch(e) {}
-
   // ============ Phase 3.1 维度 18: navigator.webdriver 最终确认 ============
   // 确保即使之前被覆盖，这里也是 undefined
-  // 策略：优先删除自有属性，不创建访问器属性
-  if ('webdriver' in navigator) {
-    try {
-      delete navigator.webdriver;
-    } catch(e) {}
-  }
-  if ('webdriver' in navigator) {
-    Object.defineProperty(navigator, 'webdriver', {
-      value: undefined,
-      writable: true,
-      configurable: true,
-      enumerable: false
-    });
-  }
+  Object.defineProperty(navigator, 'webdriver', {
+    get: function() { return undefined; },
+    configurable: true,
+    enumerable: true
+  });
 
-  // 清理 Navigator.prototype 上的 webdriver
+  // 清理 __proto__ 上的 webdriver
   try {
-    delete Navigator.prototype.webdriver;
+    delete navigator.__proto__.webdriver;
   } catch(e) {}
 
 
@@ -1423,7 +1026,7 @@
     0x80E9: 4294967295,                                           // MAX_ELEMENTS_INDICES
     0x80E8: 4294967295,                                           // MAX_ELEMENTS_VERTICES
     0x846D: [1, isNvidia ? 2047 : 255],                          // ALIASED_POINT_SIZE_RANGE
-    0x846E: [1, isNvidia ? 2047 : 1],                             // ALIASED_LINE_WIDTH_RANGE
+    0x846E: [1, isNvidia ? 2047 : 1],                            // ALIASED_LINE_WIDTH_RANGE
     0x0D52: 8, 0x0D53: 8, 0x0D54: 8, 0x0D55: 8,                 // RGBA_BITS
     0x0D56: 24, 0x0D57: 8, 0x0D50: 4,                            // DEPTH/STENCIL/SUBPIXEL_BITS
     0x80A8: 1, 0x80A9: 4,                                         // SAMPLE_BUFFERS / SAMPLES
@@ -1745,6 +1348,7 @@
           return windowsFonts.includes(fontName);
         },
         load: function(family, text) { return Promise.resolve([]); },
+        ready: Promise.resolve(fontSet),
         size: windowsFonts.length,
         add: function() {}, delete: function() { return false; }, clear: function() {},
         forEach: function(cb) { windowsFonts.forEach(f => cb({ family: f })); },
@@ -1754,12 +1358,6 @@
         has: function(family) { return windowsFonts.includes(family); },
         [Symbol.iterator]: function* () { for (const f of windowsFonts) yield [{ family: f }, { family: f }]; }
       };
-      // 对象创建完成后再绑定 ready，避免 TDZ 循环引用
-      Object.defineProperty(fontSet, 'ready', {
-        value: Promise.resolve(fontSet),
-        writable: false,
-        configurable: true
-      });
       return fontSet;
     },
     configurable: true
@@ -1824,8 +1422,8 @@
 
   // 阻止 voiceschanged 事件覆盖
   Object.defineProperty(window.speechSynthesis, 'onvoiceschanged', {
-    value: null,
-    writable: true,
+    get: () => null,
+    set: () => {},
     configurable: true
   });
 
@@ -1848,37 +1446,62 @@
   const deviceName = CONFIG.device_name || 'USER-' + Math.random().toString(36).substring(2, 10).toUpperCase();
   const chromeVersion = CONFIG.chrome_version || '128';
 
-  // Phase 4.0 Fix: 使用 CONFIG.os 映射 platform，避免硬编码
-  const platformMap3 = {
-    'windows': 'Windows', 'mac': 'macOS', 'linux': 'Linux',
-    'android': 'Android', 'ios': 'iOS'
-  };
-  const platformVersionMap3 = {
-    'windows': '15.0.0', 'mac': '14.0.0', 'linux': '6.0.0',
-    'android': '14.0.0', 'ios': '17.0.0'
-  };
-  const platformStr3 = platformMap3[CONFIG.os] || 'Windows';
-  const platformVer3 = platformVersionMap3[CONFIG.os] || '15.0.0';
-  const arch3 = CONFIG.os === 'android' || CONFIG.os === 'ios' ? 'arm' : 'x86';
-  const isMobile3 = CONFIG.os === 'android' || CONFIG.os === 'ios';
+  // 劫持 navigator.userAgentData（Chrome 90+ User-Agent Client Hints API）
+  if (!navigator.userAgentData) {
+    Object.defineProperty(navigator, 'userAgentData', {
+      get: () => ({
+        brands: [
+          { brand: 'Chromium', version: chromeVersion },
+          { brand: 'Google Chrome', version: chromeVersion },
+          { brand: 'Not;A=Brand', version: '99' }
+        ],
+        mobile: false,
+        platform: 'Windows',
+        platformVersion: '10.0',
+        architecture: 'x86',
+        bitness: '64',
+        model: '',
+        uaFullVersion: `${chromeVersion}.0.0.0`,
+        fullVersionList: [
+          { brand: 'Chromium', version: `${chromeVersion}.0.0.0` },
+          { brand: 'Google Chrome', version: `${chromeVersion}.0.0.0` },
+          { brand: 'Not;A=Brand', version: '99.0.0.0' }
+        ],
+        getHighEntropyValues: function(hints) {
+          return Promise.resolve({
+            platform: 'Windows',
+            platformVersion: '10.0',
+            architecture: 'x86',
+            bitness: '64',
+            model: '',
+            uaFullVersion: `${chromeVersion}.0.0.0`,
+            fullVersionList: this.fullVersionList
+          });
+        }
+      }),
+      configurable: true,
+      enumerable: true
+    });
+  }
 
-  // Phase 4.0 已经覆盖了 Navigator.prototype.userAgentData，这里不再重复覆盖
-  // 只做补充：确保 userAgentData 的 brands 版本和 chromeVersion 一致
-
-  // navigator.platform（数据属性）
-  const platformValue3 = CONFIG.os === 'mac' ? 'MacIntel' : CONFIG.os === 'linux' ? 'Linux x86_64' : CONFIG.os === 'android' ? 'Linux armv8l' : CONFIG.os === 'ios' ? 'iPhone' : 'Win32';
+  // navigator.platform
   Object.defineProperty(navigator, 'platform', {
-    value: platformValue3,
-    writable: true,
+    get: () => 'Win32',
     configurable: true,
     enumerable: true
   });
 
   // navigator.oscpu（Firefox 专有，Chrome 应为 undefined）
-  // 不覆盖，让原生 undefined 暴露（真实 Chrome 中不存在）
+  Object.defineProperty(navigator, 'oscpu', {
+    get: () => undefined,
+    configurable: true
+  });
 
   // navigator.cpuClass（IE 遗留，Chrome 应为 undefined）
-  // 不覆盖，让原生 undefined 暴露
+  Object.defineProperty(navigator, 'cpuClass', {
+    get: () => undefined,
+    configurable: true
+  });
 
   // ============ Phase 3.3 维度 2: WebRTC 深度清理 ============
   // 在 disable 模式下，彻底删除所有 WebRTC 相关对象
@@ -1901,8 +1524,8 @@
           delete window[ctor];
         } catch(e) {
           Object.defineProperty(window, ctor, {
-            value: undefined,
-            writable: true,
+            get: () => undefined,
+            set: () => {},
             configurable: true
           });
         }
@@ -1941,7 +1564,7 @@
   const timezone = CONFIG.timezone || 'Asia/Shanghai';
   const OriginalDateTimeFormat = Intl.DateTimeFormat;
 
-  const FakeDateTimeFormat3 = function(locales, options) {
+  Intl.DateTimeFormat = function(locales, options) {
     const opts = Object.assign({}, options, { timeZone: timezone });
     const instance = new OriginalDateTimeFormat(locales, opts);
 
@@ -1972,12 +1595,8 @@
 
     return instance;
   };
-  FakeDateTimeFormat3.prototype = OriginalDateTimeFormat.prototype;
-  FakeDateTimeFormat3.supportedLocalesOf = OriginalDateTimeFormat.supportedLocalesOf.bind(OriginalDateTimeFormat);
-  FakeDateTimeFormat3.toString = function() {
-    try { return OriginalDateTimeFormat.toString(); } catch(e) { return 'function DateTimeFormat() { [native code] }'; }
-  };
-  Intl.DateTimeFormat = FakeDateTimeFormat3;
+  Intl.DateTimeFormat.prototype = OriginalDateTimeFormat.prototype;
+  Intl.DateTimeFormat.supportedLocalesOf = OriginalDateTimeFormat.supportedLocalesOf.bind(Intl.DateTimeFormat);
 
   // 全局 resolvedOptions 劫持
   const originalProtoResolvedOptions = OriginalDateTimeFormat.prototype.resolvedOptions;
@@ -2031,168 +1650,93 @@
   };
 
   // ============ Phase 3.3 维度 5: navigator 对象补充 ============
-  // 补全可能被检测的缺失属性（覆盖 Navigator.prototype getter）
+  // 补全可能被检测的缺失属性
 
-  // pdfViewerEnabled - 数据属性
-  Object.defineProperty(navigator, 'pdfViewerEnabled', { 
-    value: true, 
-    writable: true, 
-    configurable: true, 
-    enumerable: true 
-  });
+  Object.defineProperty(navigator, 'pdfViewerEnabled', { get: () => true, configurable: true, enumerable: true });
+  Object.defineProperty(navigator, 'bluetooth', { get: () => undefined, configurable: true });
 
-  // bluetooth - 不覆盖，让原生值暴露（真实 Chrome 中可能是 Bluetooth 对象或 undefined）
-  // 如果必须覆盖，需要模拟 Bluetooth 对象，这里选择不覆盖更安全
-
-  // clipboard - Navigator.prototype getter
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origClip = Object.getOwnPropertyDescriptor(Navigator.prototype, 'clipboard');
-    if (origClip && origClip.get) {
-      const getter = window.__GB_nativeGetter('clipboard', function() {
-        return {
-          read: () => Promise.reject(new DOMException('Permission denied')),
-          readText: () => Promise.reject(new DOMException('Permission denied')),
-          write: () => Promise.reject(new DOMException('Permission denied')),
-          writeText: () => Promise.reject(new DOMException('Permission denied'))
-        };
-      });
-      Object.defineProperty(Navigator.prototype, 'clipboard', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    }
+  if (!navigator.clipboard) {
+    Object.defineProperty(navigator, 'clipboard', {
+      get: () => ({
+        read: () => Promise.reject(new DOMException('Permission denied')),
+        readText: () => Promise.reject(new DOMException('Permission denied')),
+        write: () => Promise.reject(new DOMException('Permission denied')),
+        writeText: () => Promise.reject(new DOMException('Permission denied'))
+      }),
+      configurable: true
+    });
   }
 
-  // credentials - Navigator.prototype getter
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origCred = Object.getOwnPropertyDescriptor(Navigator.prototype, 'credentials');
-    if (origCred && origCred.get) {
-      const getter = window.__GB_nativeGetter('credentials', function() {
-        return {
-          get: () => Promise.resolve(null),
-          create: () => Promise.reject(new DOMException('Not allowed')),
-          preventSilentAccess: () => Promise.resolve()
-        };
-      });
-      Object.defineProperty(Navigator.prototype, 'credentials', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    }
+  if (!navigator.credentials) {
+    Object.defineProperty(navigator, 'credentials', {
+      get: () => ({
+        get: () => Promise.resolve(null),
+        create: () => Promise.reject(new DOMException('Not allowed')),
+        preventSilentAccess: () => Promise.resolve()
+      }),
+      configurable: true
+    });
   }
 
-  // keyboard - Navigator.prototype getter
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origKb = Object.getOwnPropertyDescriptor(Navigator.prototype, 'keyboard');
-    if (origKb && origKb.get) {
-      const getter = window.__GB_nativeGetter('keyboard', function() {
-        return {
-          getLayoutMap: () => Promise.resolve({
-            has: () => true, get: () => 'KeyA',
-            entries: function* () {}, keys: function* () {},
-            values: function* () {}, forEach: () => {}, size: 0
-          }),
-          lock: () => Promise.resolve(), unlock: () => Promise.resolve()
-        };
-      });
-      Object.defineProperty(Navigator.prototype, 'keyboard', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    }
+  if (!navigator.keyboard) {
+    Object.defineProperty(navigator, 'keyboard', {
+      get: () => ({
+        getLayoutMap: () => Promise.resolve({
+          has: () => true, get: () => 'KeyA',
+          entries: function* () {}, keys: function* () {},
+          values: function* () {}, forEach: () => {}, size: 0
+        }),
+        lock: () => Promise.resolve(), unlock: () => Promise.resolve()
+      }),
+      configurable: true
+    });
   }
 
-  // mediaCapabilities - Navigator.prototype getter
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origMc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'mediaCapabilities');
-    if (origMc && origMc.get) {
-      const getter = window.__GB_nativeGetter('mediaCapabilities', function() {
-        return {
-          decodingInfo: (config) => Promise.resolve({ supported: true, smooth: true, powerEfficient: true }),
-          encodingInfo: (config) => Promise.resolve({ supported: true, smooth: true, powerEfficient: true })
-        };
-      });
-      Object.defineProperty(Navigator.prototype, 'mediaCapabilities', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    }
+  if (!navigator.mediaCapabilities) {
+    Object.defineProperty(navigator, 'mediaCapabilities', {
+      get: () => ({
+        decodingInfo: (config) => Promise.resolve({ supported: true, smooth: true, powerEfficient: true }),
+        encodingInfo: (config) => Promise.resolve({ supported: true, smooth: true, powerEfficient: true })
+      }),
+      configurable: true
+    });
   }
 
-  // wakeLock - Navigator.prototype getter
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origWl = Object.getOwnPropertyDescriptor(Navigator.prototype, 'wakeLock');
-    if (origWl && origWl.get) {
-      const getter = window.__GB_nativeGetter('wakeLock', function() {
-        return {
-          request: (type) => Promise.resolve({
-            type: type || 'screen', released: false,
-            release: () => Promise.resolve(),
-            addEventListener: () => {}, removeEventListener: () => {}
-          })
-        };
-      });
-      Object.defineProperty(Navigator.prototype, 'wakeLock', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    }
+  if (!navigator.wakeLock) {
+    Object.defineProperty(navigator, 'wakeLock', {
+      get: () => ({
+        request: (type) => Promise.resolve({
+          type: type || 'screen', released: false,
+          release: () => Promise.resolve(),
+          addEventListener: () => {}, removeEventListener: () => {}
+        })
+      }),
+      configurable: true
+    });
   }
 
-  // scheduling - Navigator.prototype getter
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origSch = Object.getOwnPropertyDescriptor(Navigator.prototype, 'scheduling');
-    if (origSch && origSch.get) {
-      const getter = window.__GB_nativeGetter('scheduling', function() {
-        return { isInputPending: () => false };
-      });
-      Object.defineProperty(Navigator.prototype, 'scheduling', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    }
+  if (!navigator.scheduling) {
+    Object.defineProperty(navigator, 'scheduling', { get: () => ({ isInputPending: () => false }), configurable: true });
   }
 
-  // presentation - Navigator.prototype getter
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const origPres = Object.getOwnPropertyDescriptor(Navigator.prototype, 'presentation');
-    if (origPres && origPres.get) {
-      const getter = window.__GB_nativeGetter('presentation', function() {
-        return { defaultRequest: null, receiver: null };
-      });
-      Object.defineProperty(Navigator.prototype, 'presentation', {
-        get: getter,
-        configurable: true,
-        enumerable: true
-      });
-    }
+  if (!navigator.presentation) {
+    Object.defineProperty(navigator, 'presentation', { get: () => ({ defaultRequest: null, receiver: null }), configurable: true });
   }
 
   // ============ Phase 3.3 维度 6: window 对象补充 ============
 
   if (!window.visualViewport) {
     Object.defineProperty(window, 'visualViewport', {
-      value: {
+      get: () => ({
         width: window.innerWidth, height: window.innerHeight, scale: 1,
         offsetLeft: 0, offsetTop: 0, pageLeft: 0, pageTop: 0,
         onresize: null, onscroll: null, addEventListener: () => {}, removeEventListener: () => {}
-      },
-      writable: true,
+      }),
       configurable: true
     });
   }
 
-  Object.defineProperty(window, 'originAgentCluster', { 
-    value: false, 
-    writable: true, 
-    configurable: true 
-  });
+  Object.defineProperty(window, 'originAgentCluster', { get: () => false, configurable: true });
 
 
 })();
@@ -2466,6 +2010,29 @@
 //   B. 废弃 CDP 5 秒轮询，或改为 60 秒低频校验
 //   C. 启动恢复逻辑：先检查 browser.pages()，如已有真实标签页则不再从数据库恢复
 
+// ==================== Phase 3.5: 增量式 Session 标签页持久化引擎 ====================
+//
+// 核心变更（解决重复 URL 与 Session Restore 叠加问题）：
+//   1. 事件驱动：URL/标题/可见性变化时立即上报（本地 diff，无变化不发请求）
+//   2. 心跳兜底：每 30 秒 ping 一次，让后端知道标签页仍存活（用于死标签清理）
+//   3. 关闭标记：beforeunload 时 sendBeacon 发送 action='close'，后端可立即删除
+//   4. SPA 兼容：劫持 history.pushState/replaceState，监听 hashchange/popstate
+//   5. 与 Electron CDP 配合：如 launcher.ts 同时运行 CDP 轮询，建议将 CDP 轮询
+//      改为 60 秒一次的校验轮询，或完全废弃，避免双重上报导致重复 URL
+//
+// 后端配合要求：
+//   - POST /api/v1/profiles/:id/session-tabs 需支持 action 字段：
+//     * action='upsert'：插入或更新（以 profile_id + url + source='extension' 为联合键）
+//     * action='close'：删除该条记录（或标记 is_active=0）
+//   - 后端定时任务：删除超过 90 秒未收到心跳/更新的标签页（视为进程已死）
+//   - 如保留 CDP 的 /session-tabs/bulk 接口，建议改为增量 diff 逻辑，或确保
+//     同一 profile 不会同时接收 Extension 增量与 CDP 全量两种上报
+//
+// launcher.ts 必须配合的 3 处修改（详见下方说明）：
+//   A. 启动参数加 '--no-startup-window'（禁用 Chromium 自带 Session Restore）
+//   B. 废弃 CDP 5 秒轮询，或改为 60 秒低频校验
+//   C. 启动恢复逻辑：先检查 browser.pages()，如已有真实标签页则不再从数据库恢复
+
 (function() {
   'use strict';
 
@@ -2656,198 +2223,3 @@
 
 })();
 
-// ==================== Phase 4.0 Fix: Worker / SharedWorker 拦截 ====================
-// Worker 运行在独立全局上下文，Content Script 无法直接注入。
-// 方案：拦截 Worker 构造函数，通过 Blob URL 包装原始脚本，前置注入代码。
-(function() {
-  'use strict';
-
-  const OriginalWorker = window.Worker;
-  const OriginalSharedWorker = window.SharedWorker;
-  const OriginalURLCreateObjectURL = window.URL.createObjectURL;
-  const OriginalURLRevokeObjectURL = window.URL.revokeObjectURL;
-
-  // 生成注入前缀代码（与主页面一致的反检测环境）
-  function buildWorkerInjectPrefix() {
-    return `
-      // GhostBrowse Worker 环境注入
-      (function() {
-        'use strict';
-        // 覆盖 navigator.userAgentData
-        if (typeof navigator !== 'undefined') {
-          Object.defineProperty(navigator, 'userAgentData', {
-            get: function() {
-              return {
-                brands: [{ brand: 'Chromium', version: '128' }, { brand: 'Not.A/Brand', version: '24' }, { brand: 'Google Chrome', version: '128' }],
-                mobile: false,
-                platform: 'Windows',
-                getHighEntropyValues: function(hints) {
-                  return Promise.resolve({
-                    architecture: 'x86', bitness: '64', brands: this.brands,
-                    fullVersionList: [{ brand: 'Chromium', version: '128.0.6099.130' }, { brand: 'Not.A/Brand', version: '24.0.0.0' }, { brand: 'Google Chrome', version: '128.0.6099.130' }],
-                    mobile: false, model: '', platform: 'Windows', platformVersion: '15.0.0',
-                    uaFullVersion: '128.0.6099.130', wow64: false
-                  });
-                },
-                toJSON: function() { return { brands: this.brands, mobile: this.mobile, platform: this.platform }; }
-              };
-            },
-            configurable: true
-          });
-          Object.defineProperty(navigator, 'platform', { value: 'Win32', writable: true, configurable: true });
-          Object.defineProperty(navigator, 'webdriver', { value: undefined, writable: true, configurable: true });
-          Object.defineProperty(navigator, 'hardwareConcurrency', { value: 4, writable: true, configurable: true });
-          Object.defineProperty(navigator, 'deviceMemory', { value: 8, writable: true, configurable: true });
-          Object.defineProperty(navigator, 'language', { value: 'zh-CN', writable: true, configurable: true });
-          Object.defineProperty(navigator, 'languages', { value: ['zh-CN', 'zh', 'en-US', 'en'], writable: true, configurable: true });
-        }
-        // 禁用 WebRTC in Worker
-        if (typeof self !== 'undefined') {
-          self.RTCPeerConnection = undefined;
-          self.webkitRTCPeerConnection = undefined;
-        }
-      })();
-    `;
-  }
-
-  if (OriginalWorker) {
-    window.Worker = function(scriptURL, options) {
-      try {
-        // 如果是 Blob URL 或 data URL，直接创建
-        if (String(scriptURL).startsWith('blob:') || String(scriptURL).startsWith('data:')) {
-          return new OriginalWorker(scriptURL, options);
-        }
-        // 同源 Worker：尝试 fetch 并包装
-        const prefix = buildWorkerInjectPrefix();
-        // 使用 importScripts 方式注入（跨域 Worker 可用）
-        const wrappedScript = prefix + '\nimportScripts("' + String(scriptURL).replace(/"/g, '\\"') + '");';
-        const blob = new Blob([wrappedScript], { type: 'application/javascript' });
-        const blobURL = OriginalURLCreateObjectURL(blob);
-        const worker = new OriginalWorker(blobURL, options);
-        // 延迟释放 Blob URL（避免 Worker 尚未加载完成 URL 被回收）
-        setTimeout(() => { try { OriginalURLRevokeObjectURL(blobURL); } catch(e) {} }, 5000);
-        return worker;
-      } catch (e) {
-        // 包装失败时回退到原始 Worker
-        return new OriginalWorker(scriptURL, options);
-      }
-    };
-    window.Worker.prototype = OriginalWorker.prototype;
-  }
-
-  if (OriginalSharedWorker) {
-    window.SharedWorker = function(scriptURL, nameOrOptions) {
-      try {
-        if (String(scriptURL).startsWith('blob:') || String(scriptURL).startsWith('data:')) {
-          return new OriginalSharedWorker(scriptURL, nameOrOptions);
-        }
-        const prefix = buildWorkerInjectPrefix();
-        const wrappedScript = prefix + '\nimportScripts("' + String(scriptURL).replace(/"/g, '\\"') + '");';
-        const blob = new Blob([wrappedScript], { type: 'application/javascript' });
-        const blobURL = OriginalURLCreateObjectURL(blob);
-        const worker = new OriginalSharedWorker(blobURL, nameOrOptions);
-        setTimeout(() => { try { OriginalURLRevokeObjectURL(blobURL); } catch(e) {} }, 5000);
-        return worker;
-      } catch (e) {
-        return new OriginalSharedWorker(scriptURL, nameOrOptions);
-      }
-    };
-    window.SharedWorker.prototype = OriginalSharedWorker.prototype;
-  }
-})();
-
-// ==================== Phase 4.1: toString 伪装修复 ====================
-// 检测站通过检查函数 toString 是否包含 [native code] 来识别注入
-// 此代码在文件末尾执行，修复所有 Content Script 注入函数的 toString
-(function() {
-  'use strict';
-
-  function fixToString(fn, name) {
-    if (typeof fn !== 'function') return;
-    // 使用 Function.prototype.toString.call 获取原始 toString 输出
-    const orig = Function.prototype.toString.call.bind(Function.prototype.toString);
-    fn.toString = function() {
-      try {
-        const str = orig(this);
-        if (typeof str === 'string' && !str.includes('[native code]')) {
-          return 'function ' + (name || fn.name || '') + '() { [native code] }';
-        }
-        return str;
-      } catch(e) {
-        return 'function ' + (name || fn.name || '') + '() { [native code] }';
-      }
-    };
-  }
-
-  const targets = [
-    ['HTMLCanvasElement.prototype.getContext', HTMLCanvasElement.prototype.getContext],
-    ['CanvasRenderingContext2D.prototype.fillText', CanvasRenderingContext2D.prototype.fillText],
-    ['CanvasRenderingContext2D.prototype.strokeText', CanvasRenderingContext2D.prototype.strokeText],
-    ['CanvasRenderingContext2D.prototype.measureText', CanvasRenderingContext2D.prototype.measureText],
-    ['CanvasRenderingContext2D.prototype.isPointInPath', CanvasRenderingContext2D.prototype.isPointInPath],
-    ['CanvasRenderingContext2D.prototype.getImageData', CanvasRenderingContext2D.prototype.getImageData],
-    ['WebGLRenderingContext.prototype.getParameter', WebGLRenderingContext.prototype.getParameter],
-    ['WebGLRenderingContext.prototype.getExtension', WebGLRenderingContext.prototype.getExtension],
-    ['WebGLRenderingContext.prototype.getSupportedExtensions', WebGLRenderingContext.prototype.getSupportedExtensions],
-    ['WebGLRenderingContext.prototype.readPixels', WebGLRenderingContext.prototype.readPixels],
-    ['WebGL2RenderingContext.prototype.getParameter', window.WebGL2RenderingContext?.prototype.getParameter],
-    ['WebGL2RenderingContext.prototype.getExtension', window.WebGL2RenderingContext?.prototype.getExtension],
-    ['AudioBuffer.prototype.copyFromChannel', AudioBuffer.prototype.copyFromChannel],
-    ['AnalyserNode.prototype.getFloatFrequencyData', AnalyserNode.prototype.getFloatFrequencyData],
-    ['AnalyserNode.prototype.getByteFrequencyData', AnalyserNode.prototype.getByteFrequencyData],
-    ['AnalyserNode.prototype.getByteTimeDomainData', AnalyserNode.prototype.getByteTimeDomainData],
-    ['Element.prototype.getBoundingClientRect', Element.prototype.getBoundingClientRect],
-    ['Element.prototype.getClientRects', Element.prototype.getClientRects],
-    ['Range.prototype.getBoundingClientRect', Range.prototype.getBoundingClientRect],
-    ['Range.prototype.getClientRects', Range.prototype.getClientRects],
-    ['Date.prototype.getTimezoneOffset', Date.prototype.getTimezoneOffset],
-    ['Intl.DateTimeFormat', Intl.DateTimeFormat],
-    ['window.scrollTo', window.scrollTo],
-    ['window.scrollBy', window.scrollBy],
-    ['history.pushState', history.pushState],
-    ['history.replaceState', history.replaceState],
-    ['EventTarget.prototype.dispatchEvent', EventTarget.prototype.dispatchEvent],
-    ['HTMLElement.prototype.click', HTMLElement.prototype.click],
-    ['Notification.requestPermission', Notification.requestPermission],
-    ['navigator.geolocation.getCurrentPosition', navigator.geolocation.getCurrentPosition],
-    ['navigator.geolocation.watchPosition', navigator.geolocation.watchPosition],
-    ['navigator.mediaDevices.enumerateDevices', navigator.mediaDevices?.enumerateDevices],
-    ['navigator.mediaDevices.getUserMedia', navigator.mediaDevices?.getUserMedia],
-    ['navigator.permissions.query', navigator.permissions.query],
-    ['CSS.supports', CSS.supports],
-    ['speechSynthesis.getVoices', speechSynthesis.getVoices],
-    ['navigator.plugins.item', navigator.plugins?.item],
-    ['navigator.plugins.namedItem', navigator.plugins?.namedItem],
-    ['navigator.plugins.refresh', navigator.plugins?.refresh],
-    ['navigator.mimeTypes.item', navigator.mimeTypes?.item],
-    ['navigator.mimeTypes.namedItem', navigator.mimeTypes?.namedItem],
-  ];
-
-  targets.forEach(([name, fn]) => {
-    if (typeof fn === 'function') fixToString(fn, name.split('.').pop());
-  });
-
-  // 修复 Navigator.prototype getter 的 toString
-  if (typeof Navigator !== 'undefined' && Navigator.prototype) {
-    const navigatorProtoTargets = [
-      ['Navigator.prototype.languages', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'languages')?.get],
-      ['Navigator.prototype.userAgentData', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgentData')?.get],
-      ['Navigator.prototype.hardwareConcurrency', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'hardwareConcurrency')?.get],
-      ['Navigator.prototype.deviceMemory', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'deviceMemory')?.get],
-      ['Navigator.prototype.bluetooth', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'bluetooth')?.get],
-      ['Navigator.prototype.connection', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'connection')?.get],
-      ['Navigator.prototype.permissions', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'permissions')?.get],
-      ['Navigator.prototype.clipboard', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'clipboard')?.get],
-      ['Navigator.prototype.credentials', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'credentials')?.get],
-      ['Navigator.prototype.keyboard', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'keyboard')?.get],
-      ['Navigator.prototype.mediaCapabilities', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'mediaCapabilities')?.get],
-      ['Navigator.prototype.wakeLock', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'wakeLock')?.get],
-      ['Navigator.prototype.scheduling', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'scheduling')?.get],
-      ['Navigator.prototype.presentation', () => Object.getOwnPropertyDescriptor(Navigator.prototype, 'presentation')?.get],
-    ];
-    navigatorProtoTargets.forEach(([name, getterFn]) => {
-      const getter = getterFn();
-      if (typeof getter === 'function') fixToString(getter, name.split('.').pop());
-    });
-  }
-})();
