@@ -23,6 +23,7 @@ import { getDatabase } from '../server/db'
 import { detectProxyCountry } from '../server/utils/proxy-geo'
 import { resolveGeoConfig } from '../server/utils/geo-config'
 import { saveProfileCookieJson } from '../server/services/cookie-snapshot'
+import { decrypt } from '../server/utils/crypto'
 
 // ==================== Phase 3.5 Rev4: Session Tab Manager（Electron 主进程集中心跳）====================
 
@@ -762,6 +763,41 @@ function generateExtension(
   const timezone = detectedTimezone || 'Asia/Shanghai'
   const timezoneOffset = detectedTimezoneOffset !== undefined ? detectedTimezoneOffset : -480
   
+  // Phase 4.0: 读取并解密平台账号（用于自动登录）
+  let platformAccounts: any[] = []
+  try {
+    const db = getDatabase()
+    const rows = db.prepare(`
+      SELECT * FROM platform_accounts
+      WHERE profile_id = ? AND is_active = 1
+    `).all(profile.id) as any[]
+
+    platformAccounts = rows.map(row => {
+      let backupCodes: string[] | null = null
+      try {
+        if (row.two_fa_backup_codes) {
+          backupCodes = JSON.parse(decrypt(row.two_fa_backup_codes))
+        }
+      } catch (e) {
+        backupCodes = null
+      }
+      return {
+        id: row.id,
+        platform: row.platform,
+        account: row.account,
+        password: row.password ? decrypt(row.password) : '',
+        username_confirm: row.username_confirm || null,
+        two_fa_type: row.two_fa_type || null,
+        two_fa_secret: row.two_fa_secret ? decrypt(row.two_fa_secret) : '',
+        two_fa_backup_codes: backupCodes,
+        is_active: !!row.is_active
+      }
+    })
+    console.log(`[BrowserLauncher] Profile ${profile.id} 加载平台账号: ${platformAccounts.length} 个`)
+  } catch (e: any) {
+    console.warn('[BrowserLauncher] 加载平台账号失败:', e.message)
+  }
+
   // Phase 3.2: 追加指纹噪声种子字段到 config
   const config = {
     profile_id: profile.id,
@@ -787,7 +823,9 @@ function generateExtension(
     rects_noise_seed: (profile as any).rectsNoiseSeed || '13104F15',
     // Phase 3.2: WebGL 完整伪装参数
     webgl_vendor: (profile as any).webglVendor || 'Intel Inc.',
-    webgl_renderer: (profile as any).webglRenderer || 'Intel Iris Xe Graphics'
+    webgl_renderer: (profile as any).webglRenderer || 'Intel Iris Xe Graphics',
+    // Phase 4.0: 平台账号（用于 Twitter/X 自动登录）
+    platform_accounts: platformAccounts
   }
   
   contentScript = contentScript.split('{{CONFIG}}').join(JSON.stringify(config))
@@ -1029,6 +1067,55 @@ export async function launchChrome(
   
   if (startupUrls.length === 0) {
     startupUrls = [getDefaultHomepage()]
+  }
+
+  // ==================== Phase 4.0: Twitter/X 自动登录 - 启动时智能跳转 ====================
+  // 仅当配置了启用的平台账号 + 未登录时，把 x.com 追加到启动 URL 末尾
+  // "未登录"判定：profiles.cookie_json 中没有 .x.com / .twitter.com 域的 auth_token cookie
+  try {
+    const db = getDatabase()
+    const accountRows = db.prepare(`
+      SELECT id FROM platform_accounts
+      WHERE profile_id = ? AND is_active = 1
+        AND (platform = 'twitter' OR platform IS NULL OR platform = '')
+    `).all(profile.id) as any[]
+
+    if (accountRows.length > 0) {
+      // 检查是否已登录
+      let loggedIn = false
+      try {
+        const cookieJson = profile.cookie_json || ''
+        if (cookieJson.trim()) {
+          const cookies = JSON.parse(cookieJson) as any[]
+          if (Array.isArray(cookies)) {
+            loggedIn = cookies.some(c => {
+              const domain = String(c.domain || c.host_key || '').toLowerCase()
+              const name = String(c.name || '').toLowerCase()
+              const value = String(c.value || '')
+              const isTwitterDomain = domain.includes('x.com') || domain.includes('twitter.com')
+              // 必须同时满足：Twitter 域 + auth_token + 值长度 > 10（真实 token 至少 30+ 字符）
+              return isTwitterDomain && name === 'auth_token' && value.length > 10
+            })
+          }
+        }
+      } catch (e) {
+        loggedIn = false
+      }
+
+      if (!loggedIn) {
+        const loginUrl = 'https://x.com/i/flow/login'
+        if (!startupUrls.includes(loginUrl) && !startupUrls.some(u => u.includes('x.com') || u.includes('twitter.com'))) {
+          startupUrls.push(loginUrl)
+          console.log(`[BrowserLauncher] Profile ${profile.id} 检测到平台账号但未登录，追加登录页: ${loginUrl}`)
+          // 重新写入 Preferences
+          patchChromePreferences(userDataDir, startupUrls)
+        }
+      } else {
+        console.log(`[BrowserLauncher] Profile ${profile.id} Twitter 已登录，跳过自动跳转`)
+      }
+    }
+  } catch (e: any) {
+    console.warn('[BrowserLauncher] Twitter 登录态检测失败:', e.message)
   }
   
   // Phase 3.5 Fix: 强制修改 Chrome Preferences，确保启动时恢复我们的 URLs

@@ -181,6 +181,7 @@ function runMigrations(): void {
   migrateFingerprintColumns()
   createSessionTabsTable()
   migrateCookieJsonColumn()
+  createPlatformAccountsTable()
 }
 
 function migrateCookieJsonColumn(): void {
@@ -439,6 +440,42 @@ function createSessionTabsTable(): void {
 /**
  * 关闭数据库连接
  */
+function createPlatformAccountsTable(): void {
+  if (!db) return
+  try {
+    const sql = `
+      CREATE TABLE IF NOT EXISTS platform_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        platform TEXT NOT NULL DEFAULT 'twitter',
+        account TEXT NOT NULL,
+        password TEXT NOT NULL,
+        username_confirm TEXT DEFAULT NULL,
+        two_fa_type TEXT DEFAULT NULL,
+        two_fa_secret TEXT DEFAULT NULL,
+        two_fa_backup_codes TEXT DEFAULT NULL,
+        is_active INTEGER DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `
+    db!.prepare(sql).run()
+    // 索引
+    db!.prepare('CREATE INDEX IF NOT EXISTS idx_pa_profile ON platform_accounts(profile_id, user_id)').run()
+    // 迁移：为已有表添加 username_confirm 列
+    try {
+      db!.prepare('ALTER TABLE platform_accounts ADD COLUMN username_confirm TEXT DEFAULT NULL').run()
+    } catch (e: any) {
+      // 列已存在则忽略
+    }
+  } catch (err: any) {
+    console.error('[DB] platform_accounts 表创建失败:', err.message)
+  }
+}
+
 export function closeDatabase(): void {
   if (db) {
     db.close()

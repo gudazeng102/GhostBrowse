@@ -115,6 +115,380 @@
   }
 })();
 
+// ==================== Phase 4.0: Twitter/X 自动登录 ====================
+// 仅在平台账号配置存在且启用时执行
+// 从 CONFIG.platform_accounts 读取账号信息（后端 GET /api/profiles/:id 已追加此字段）
+// 不依赖外部库，使用纯 JavaScript 实现 TOTP 算法
+
+(function() {
+  'use strict';
+
+  // 获取配置（与其他 IIFE 共享相同的 {{CONFIG}} 模板替换）
+  var CONFIG = {{CONFIG}};
+
+  // 读取平台账号配置（来自 launcher.ts generateExtension 注入的 CONFIG）
+  const platformAccounts = (CONFIG && CONFIG.platform_accounts) || [];
+  const activeAccount = platformAccounts.find(function(a) { return a.is_active; }) || null;
+
+  // 仅在 Twitter/X 域名上执行自动登录；非 Twitter 域名一律不做任何处理
+  // 跳转 x.com 的逻辑由主进程 launcher.ts 在启动时基于 Cookie 状态决定
+  var twitterHosts = ['twitter.com', 'x.com', 'www.twitter.com', 'www.x.com'];
+  var hostname = window.location.hostname || '';
+  var isTwitter = twitterHosts.indexOf(hostname) !== -1 || hostname.endsWith('.twitter.com') || hostname.endsWith('.x.com');
+
+  if (!isTwitter) {
+    return;
+  }
+
+  if (!activeAccount) {
+    console.log('[GhostBrowse] 无启用的平台账号，跳过自动登录');
+    return;
+  }
+
+  var account = activeAccount;
+
+  // ==================== TOTP 算法（纯 JavaScript 内联实现）====================
+  // RFC 6238 标准：基于 HMAC-SHA1 生成 6 位时间一次性密码
+
+  function base32ToBytes(base32) {
+    var alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    var bits = '';
+    for (var i = 0; i < base32.length; i++) {
+      var val = alphabet.indexOf(base32.charAt(i).toUpperCase());
+      if (val === -1) continue;
+      bits += val.toString(2).padStart(5, '0');
+    }
+    var bytes = [];
+    for (var j = 0; j + 8 <= bits.length; j += 8) {
+      bytes.push(parseInt(bits.substring(j, j + 8), 2));
+    }
+    return new Uint8Array(bytes);
+  }
+
+  function generateTOTP(secret) {
+    return new Promise(function(resolve, reject) {
+      try {
+        var key = base32ToBytes(secret);
+        var timeCounter = Math.floor(Date.now() / 30000); // 30 秒窗口
+        var counterBytes = new Uint8Array(8);
+        for (var i = 7; i >= 0; i--) {
+          counterBytes[i] = timeCounter & 0xFF;
+          timeCounter = timeCounter >> 8;
+        }
+
+        var cryptoSubtle = (window.crypto && window.crypto.subtle) || (window.msCrypto && window.msCrypto.subtle);
+        if (!cryptoSubtle) {
+          reject(new Error('SubtleCrypto 不可用'));
+          return;
+        }
+
+        cryptoSubtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])
+          .then(function(cryptoKey) {
+            return cryptoSubtle.sign('HMAC', cryptoKey, counterBytes);
+          })
+          .then(function(signature) {
+            var hash = new Uint8Array(signature);
+            var offset = hash[hash.length - 1] & 0x0F;
+            var code = (
+              ((hash[offset] & 0x7F) << 24) |
+              ((hash[offset + 1] & 0xFF) << 16) |
+              ((hash[offset + 2] & 0xFF) << 8) |
+              (hash[offset + 3] & 0xFF)
+            ) % 1000000;
+            resolve(code.toString().padStart(6, '0'));
+          })
+          .catch(reject);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  // ==================== 辅助函数 ====================
+
+  /** 等待元素出现 */
+  function waitForElement(selector, timeout) {
+    timeout = timeout || 15000;
+    return new Promise(function(resolve, reject) {
+      var start = Date.now();
+      var timer = setInterval(function() {
+        var el = document.querySelector(selector);
+        if (el) {
+          clearInterval(timer);
+          resolve(el);
+        }
+        if (Date.now() - start > timeout) {
+          clearInterval(timer);
+          reject(new Error('Element not found: ' + selector));
+        }
+      }, 500);
+    });
+  }
+
+  /** React 兼容的设值方法：绕过 _valueTracker，确保 React state 更新 */
+  function setNativeValue(el, value) {
+    var proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    var nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (nativeSetter && nativeSetter.set) {
+      nativeSetter.set.call(el, value);
+    } else {
+      el.value = value;
+    }
+  }
+
+  /** 模拟人类逐字符输入（React 兼容版） */
+  async function humanType(el, text) {
+    text = text == null ? '' : String(text);
+    console.log('[GhostBrowse][humanType] 准备输入，目标文本长度=' + text.length + '，元素 type=' + el.type + '，元素 name=' + (el.name || ''));
+    if (!text.length) {
+      console.warn('[GhostBrowse][humanType] ⚠️ 输入文本为空，跳过实际输入');
+      return;
+    }
+    el.focus();
+    el.click();
+    // 先清空（React 兼容方式）
+    setNativeValue(el, '');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(function(r) { setTimeout(r, 100); });
+
+    var current = '';
+    for (var i = 0; i < text.length; i++) {
+      current += text[i];
+      setNativeValue(el, current);
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text[i], inputType: 'insertText' }));
+      await new Promise(function(r) { setTimeout(r, 50 + Math.random() * 100); });
+    }
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log('[GhostBrowse][humanType] 输入完成，元素当前 value 长度=' + (el.value || '').length);
+  }
+
+  /** 模拟人类点击（带随机延迟） */
+  async function humanClick(el) {
+    await new Promise(function(r) { setTimeout(r, 200 + Math.random() * 300); });
+    // 用 mouse 事件序列模拟，更真实
+    var rect = el.getBoundingClientRect();
+    var x = rect.left + rect.width / 2;
+    var y = rect.top + rect.height / 2;
+    ['mousedown', 'mouseup', 'click'].forEach(function(type) {
+      el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }));
+    });
+  }
+
+  /** 查找包含文本的按钮（增强版：优先 testid，再按文本） */
+  function findButtonByText(texts, testIds) {
+    // 1. 优先按 testid 精确匹配
+    if (testIds && testIds.length) {
+      for (var k = 0; k < testIds.length; k++) {
+        var elById = document.querySelector('[data-testid="' + testIds[k] + '"]');
+        if (elById) return elById;
+      }
+    }
+    // 2. 再按文本模糊匹配（覆盖所有可能的可点击元素）
+    var candidates = document.querySelectorAll('div[role="button"], button, span[role="button"], a[role="button"]');
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      var t = (el.textContent || '').trim().toLowerCase();
+      for (var j = 0; j < texts.length; j++) {
+        if (t.indexOf(texts[j].toLowerCase()) !== -1) return el;
+      }
+    }
+    return null;
+  }
+
+  /** 检测是否已登录：严格校验 auth_token cookie 值 + 用户菜单元素 */
+  function checkLoginStatus() {
+    // 1. 如果当前在登录流程页，直接判定为未登录（避免误判）
+    var path = window.location.pathname || '';
+    if (path.indexOf('/i/flow/login') !== -1 || path.indexOf('/login') !== -1 || path.indexOf('/i/flow/signup') !== -1) {
+      return false;
+    }
+
+    // 2. 严格校验 auth_token cookie：必须存在且值长度 > 10（真实 token 至少 30+ 字符）
+    var match = document.cookie.match(/(?:^|;\s*)auth_token=([^;]+)/);
+    var hasAuthToken = !!(match && match[1] && match[1].length > 10);
+
+    // 3. twid 必须存在且非空
+    var twid = '';
+    try { twid = localStorage.getItem('twid') || ''; } catch (e) {}
+    var hasTwid = !!(twid && twid.length > 5);
+
+    // 4. 用户菜单元素（侧边栏头像/Profile 入口）
+    var hasUserMenu = !!(
+      document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]') ||
+      document.querySelector('[data-testid="AppTabBar_Profile_Link"]') ||
+      document.querySelector('a[aria-label="Profile"]')
+    );
+
+    // 三者满足任一即视为已登录
+    return hasAuthToken || hasTwid || hasUserMenu;
+  }
+
+  // ==================== 自动登录主流程 ====================
+
+  async function executeLogin() {
+    try {
+      // Step 0: 检测是否已登录
+      if (checkLoginStatus()) {
+        console.log('[GhostBrowse] Twitter 已登录，跳过自动登录');
+        return;
+      }
+
+      // Step 1: 如果不在登录页，跳转到登录页
+      var path = window.location.pathname || '';
+      if (path.indexOf('/login') === -1 && path.indexOf('/flow/') === -1) {
+   
+        window.location.href = 'https://x.com/i/flow/login';
+        return;
+      }
+
+      // Step 2: 填写账号（用户名/邮箱/手机号）
+      try {
+        var accountInput = await waitForElement('input[autocomplete="username"], input[name="text"], input[type="text"]', 20000);
+   
+        await humanType(accountInput, account.account || '');
+        await new Promise(function(r) { setTimeout(r, 500); });
+
+        // Twitter "下一步" 按钮通常是 div[role="button"]，testid 不固定，靠文本匹配
+        var nextBtn = findButtonByText(
+          ['下一步', 'Next', 'Continue', 'Siguiente', 'Weiter', '次へ', '다음'],
+          ['LoginForm_Login_Button']
+        );
+        if (nextBtn) {
+   
+          await humanClick(nextBtn);
+        } else {
+   
+          accountInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+          accountInput.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+          accountInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        }
+      } catch (e) {
+        console.warn('[GhostBrowse] 填写账号失败:', e.message);
+        return;
+      }
+
+      // Step 2.5: 检测是否要求"输入电话号码或用户名"二次验证（非常常见！）
+      // 当账号是邮箱时，Twitter 会要求再输入用户名/手机号
+      await new Promise(function(r) { setTimeout(r, 2500); });
+      var unusualLoginInput = document.querySelector('input[data-testid="ocfEnterTextTextInput"]');
+      if (unusualLoginInput) {
+      
+        // Phase 4.0: 优先使用用户配置的"账号名确认"（@username）
+        // 备选顺序：username_confirm > alt_identifier > username > account
+        var altIdentifier = account.username_confirm || account.alt_identifier || account.username || account.account || '';
+        if (account.username_confirm) {
+       
+        } else {
+     
+        }
+        await humanType(unusualLoginInput, altIdentifier);
+        await new Promise(function(r) { setTimeout(r, 800); });
+        // 多语言按钮文本（含德语 Weiter）+ testId
+        var nextBtn2 = findButtonByText(
+          ['下一步', 'Next', 'Continue', 'Siguiente', 'Weiter', '次へ', '다음', 'Suivant', 'Avanti', 'Volgende', 'Dalej', 'Próximo', 'Далее'],
+          ['ocfEnterTextNextButton', 'LoginForm_Login_Button']
+        );
+        if (nextBtn2) {
+      
+          await humanClick(nextBtn2);
+        } else {
+      
+          unusualLoginInput.focus();
+          unusualLoginInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+          unusualLoginInput.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+          unusualLoginInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        }
+        // 等待页面跳转到密码页
+        await new Promise(function(r) { setTimeout(r, 2000); });
+      }
+
+      // Step 3: 等待密码页出现后填写密码
+      await new Promise(function(r) { setTimeout(r, 2000); });
+      console.log('[GhostBrowse] 等待密码输入框...');
+      try {
+        var passwordInput = await waitForElement('input[name="password"], input[type="password"], input[autocomplete="current-password"]', 15000);
+        var pwd = account.password || '';
+        console.log('[GhostBrowse] 密码输入框已找到。账号对象关键字段: ' + JSON.stringify({
+          account: account.account,
+          has_password: !!account.password,
+          password_type: typeof account.password,
+          password_length: pwd.length,
+          password_first: pwd ? pwd.charAt(0) : '<空>',
+          password_last: pwd ? pwd.charAt(pwd.length - 1) : '<空>',
+          two_fa_type: account.two_fa_type
+        }));
+        console.log('[GhostBrowse] 密码框元素信息: name=' + passwordInput.name + ' type=' + passwordInput.type + ' disabled=' + passwordInput.disabled + ' readOnly=' + passwordInput.readOnly + ' visible=' + (passwordInput.offsetParent !== null));
+        if (!pwd) {
+          console.error('[GhostBrowse] ❌ 密码为空字符串！请检查 platform_accounts 表中 password 字段是否正确加密保存，以及 launcher.ts 中 decrypt 是否成功。');
+        }
+        await humanType(passwordInput, pwd);
+        console.log('[GhostBrowse] humanType 调用完成。密码框最终 value 长度=' + (passwordInput.value || '').length);
+        await new Promise(function(r) { setTimeout(r, 500); });
+
+        var loginBtn = findButtonByText(
+          ['登录', 'Log in', 'Sign in', 'Iniciar sesión', 'Anmelden', 'ログイン', '로그인'],
+          ['LoginForm_Login_Button', 'ocfEnterPasswordNextButton']
+        );
+        if (loginBtn) {
+          console.log('[GhostBrowse] 点击登录按钮');
+          await humanClick(loginBtn);
+        } else {
+          console.log('[GhostBrowse] 未找到登录按钮，按 Enter');
+          passwordInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+          passwordInput.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+          passwordInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        }
+      } catch (e) {
+        console.warn('[GhostBrowse] 填写密码失败:', e.message);
+        return;
+      }
+
+      // Step 4: 处理 2FA（TOTP 或 SMS）
+      if (account.two_fa_type === 'totp' && account.two_fa_secret) {
+        console.log('[GhostBrowse] 等待 2FA 输入框...');
+        await new Promise(function(r) { setTimeout(r, 3000); });
+        try {
+          var codeInput = await waitForElement('input[inputmode="numeric"], input[name="code"], input[type="tel"]', 15000);
+          var code = await generateTOTP(account.two_fa_secret);
+          await humanType(codeInput, code);
+
+          var confirmBtn = findButtonByText(['确认', 'Verify', 'Confirm', 'Next', 'Siguiente']);
+          if (confirmBtn) await humanClick(confirmBtn);
+          else {
+            var enterEvent3 = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
+            codeInput.dispatchEvent(enterEvent3);
+          }
+        } catch (e) {
+          console.warn('[GhostBrowse] 填写 TOTP 验证码失败:', e.message);
+        }
+      } else if (account.two_fa_type === 'sms') {
+        console.log('[GhostBrowse] SMS 2FA 需要手动确认');
+      }
+
+      // Step 5: 检测登录成功
+      await new Promise(function(r) { setTimeout(r, 4000); });
+      if (checkLoginStatus()) {
+        console.log('[GhostBrowse] Twitter 自动登录成功');
+      } else {
+        console.log('[GhostBrowse] 登录可能失败，请检查账号密码');
+      }
+
+    } catch (err) {
+      console.error('[GhostBrowse] 自动登录异常:', err);
+    }
+  }
+
+  // 页面加载完成后延迟 2 秒执行，等待 DOM 完全渲染
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    setTimeout(executeLogin, 2000);
+  } else {
+    window.addEventListener('DOMContentLoaded', function() {
+      setTimeout(executeLogin, 2000);
+    });
+  }
+
+})();
+
 (function() {
   'use strict';
 

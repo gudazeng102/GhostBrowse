@@ -17,6 +17,7 @@ import systemRouter from './routes/system'
 import authRouter from './routes/auth'
 import fingerprintRouter from './routes/fingerprint'
 import cookieManagerRouter from './routes/cookie-manager'
+import platformAccountRouter from './routes/platform-account'
 
 // Express 应用实例
 let app: Express | null = null
@@ -101,6 +102,9 @@ export function createApp(): Express {
 
   // ==================== Phase 4.0: Cookie 管理 API（CDP 实时 Cookie） ====================
   app.use('/api/v1/cookie-manager', cookieManagerRouter)
+
+  // ==================== Phase 4.0: 平台账号 API（Twitter/X 自动登录） ====================
+  app.use('/api/v1/platform-accounts', platformAccountRouter)
 
   // ==================== 捕获所有路由，返回 index.html (SPA 支持) ====================
   app.get('*', (req: Request, res: Response) => {

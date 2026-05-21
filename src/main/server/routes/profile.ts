@@ -501,7 +501,31 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
         host: row.pr_host,
         port: row.pr_port,
         username: row.pr_username
-      } : null
+      } : null,
+      // Phase 4.0: 追加平台账号列表（加密字段不返回明文）
+      platform_accounts: (() => {
+        try {
+          const rows = db.prepare(
+            `SELECT id, profile_id, platform, account, two_fa_type, is_active, created_at, updated_at
+             FROM platform_accounts WHERE profile_id = ? AND user_id = ?`
+          ).all(row.id, userId) as any[]
+          return rows.map(r => ({
+            id: r.id,
+            profile_id: r.profile_id,
+            platform: r.platform,
+            account: r.account,
+            two_fa_type: r.two_fa_type || null,
+            is_active: !!r.is_active,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            password: '********',
+            two_fa_secret: null,
+            two_fa_backup_codes: null
+          }))
+        } catch {
+          return []
+        }
+      })()
     }
     
     res.json({

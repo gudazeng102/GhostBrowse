@@ -1,45 +1,104 @@
 /**
- * 全局类型定义
- * Phase 1.0: 基础类型
- * Phase 1.8: 认证相关类型
- * Phase 2.0: 指纹检测类型
+ * 类型定义 - Phase 4.0
+ * 追加 PlatformAccount 接口和 Profile 的 platform_accounts 字段
  */
 
-// ==================== Phase 1.0: 代理和窗口基础类型 ====================
+// ==================== 已有类型（保留）====================
 
+// 用户信息
+export interface User {
+  id: number
+  email: string
+  username: string
+  createdAt: number
+}
+
+// 代理信息
 export interface Proxy {
   id: number
   name: string
   type: 'http' | 'https' | 'socks5'
   host: string
   port: number
-  username?: string
-  password?: string
-  remark?: string
-  createdAt?: number
-  updatedAt?: number
+  username: string | null
+  password: string | null
+  remark: string | null
+  createdAt: number
+  updatedAt: number
 }
 
+// WebRTC 模式
+export type WebRtcMode = 'forward' | 'replace' | 'real' | 'disable'
+
+// 时区模式
+export type TimezoneMode = 'ip' | 'custom' | 'real'
+
+// 地理位置模式
+export type GeolocationMode = 'ip' | 'custom' | 'real'
+
+// 语言模式
+export type LanguageMode = 'ip' | 'mask' | 'custom'
+
+// Canvas 模式
+export type CanvasMode = 'noise' | 'block' | 'fake'
+
+// WebGL 模式
+export type WebGLMode = 'mock' | 'disable' | 'real'
+
+// 媒体设备模式
+export type MediaDeviceMode = 'mock' | 'disable' | 'real'
+
+// ==================== Phase 4.0: 平台账号类型 ====================
+
+/**
+ * 平台账号接口
+ * - 后端返回的 password/two_fa_secret 为 '********'（不暴露密文）
+ * - 后端返回的 two_fa_backup_codes 为解密后的数组
+ */
+export interface PlatformAccount {
+  id?: number
+  profile_id: number
+  user_id?: number
+  platform: string   // 当前仅支持 'twitter'
+  account: string    // 用户名/邮箱/手机号
+  password?: string  // 前端表单用，后端不返回明文
+  username_confirm?: string | null  // 账号名确认（@开头的 Twitter 用户名，用于异常账号登录二次验证）
+  two_fa_type?: 'totp' | 'sms' | null
+  two_fa_secret?: string  // 前端表单用，后端不返回明文
+  two_fa_backup_codes?: string[] | null  // 解密后的恢复码数组
+  is_active?: boolean
+  created_at?: number
+  updated_at?: number
+}
+
+// ==================== 已有 Profile 接口（追加 platform_accounts 字段）====================
+
+/**
+ * 窗口配置（Profile）
+ * Phase 1.3 创建
+ * Phase 3.0 追加指纹参数字段
+ * Phase 4.0 追加 platform_accounts 字段
+ */
 export interface Profile {
-  id: number
+  id?: number
   title: string
-  proxyId: number | null
-  chromeVersion: string
-  os: string
-  webrtcMode: string
-  timezoneMode: string
-  geolocationMode: string
-  languageMode: string
-  uiLanguage: string
-  screenResolution: string
-  font: string
-  canvasMode: string
-  webglMode: string
-  mediaDeviceMode: string
+  proxyId?: number
+  chromeVersion?: string
+  os?: string
+  webrtcMode?: WebRtcMode
+  timezoneMode?: TimezoneMode
+  geolocationMode?: GeolocationMode
+  languageMode?: LanguageMode
+  uiLanguage?: string
+  screenResolution?: string
+  font?: string
+  canvasMode?: CanvasMode
+  webglMode?: WebGLMode
+  mediaDeviceMode?: MediaDeviceMode
   startupUrl?: string
+  iconPath?: string
   createdAt?: number
   updatedAt?: number
-  proxy?: Proxy | null
   // Phase 3.0: 指纹参数
   deviceName?: string
   macAddress?: string
@@ -48,269 +107,129 @@ export interface Profile {
   rectsNoiseSeed?: string
   webglVendor?: string
   webglRenderer?: string
+  userAgent?: string
   // Phase 4.0: Cookie 预置 JSON
   cookie_json?: string
+  cookieJson?: string
+  // Phase 4.0: 平台账号列表
+  platform_accounts?: PlatformAccount[]
+  // 关联代理信息
+  proxy?: Proxy | null
 }
 
-// ==================== Phase 1.8: 认证相关类型 ====================
+// ==================== 已有 DTO 接口（保留）====================
 
-export interface User {
-  id: number
-  username: string | null
-  email: string
-  display_name: string | null
-  status: string
+/**
+ * 创建/更新 Profile 请求体
+ */
+export interface ProfileDto {
+  title: string
+  proxyId?: number
+  chromeVersion?: string
+  os?: string
+  webrtcMode?: WebRtcMode
+  timezoneMode?: TimezoneMode
+  geolocationMode?: GeolocationMode
+  languageMode?: LanguageMode
+  uiLanguage?: string
+  screenResolution?: string
+  font?: string
+  canvasMode?: CanvasMode
+  webglMode?: WebGLMode
+  mediaDeviceMode?: MediaDeviceMode
+  startupUrl?: string
+  iconPath?: string
+  // Phase 3.0
+  deviceName?: string
+  macAddress?: string
+  canvasNoiseSeed?: string
+  audioNoiseSeed?: string
+  rectsNoiseSeed?: string
+  webglVendor?: string
+  webglRenderer?: string
+  userAgent?: string
+  // Phase 4.0
+  cookie_json?: string
+  cookieJson?: string
 }
 
-export interface LoginForm {
-  email: string
-  password: string
-}
-
-export interface RegisterForm {
-  email: string
-  password: string
-  confirmPassword: string
-  code: string
-}
-
-// ==================== Phase 2.0: 指纹检测类型 ====================
-
-/** 指纹检测请求参数 */
-export interface FingerprintCheckParams {
-  profileId: number
-}
-
-/** 指纹检测结果 - 窗口信息 */
-export interface FingerprintProfile {
+/**
+ * Profile 列表项（查询返回的简化版）
+ */
+export interface ProfileRecord {
   id: number
   title: string
+  proxyId: number | null
   chromeVersion: string
   os: string
-}
-
-/** 指纹检测结果 - 代理信息 */
-export interface FingerprintProxy {
-  status: 'success' | 'fail' | 'no_proxy'
-  address: string
-  type: string
-  ip: string
-  country: string
-  city: string
-  latency: number
-}
-
-/** 指纹检测结果 - 纯洁度评分 */
-export interface FingerprintPurity {
-  score: number
-  level: string
-  levelText: string
-}
-
-/** 指纹检测结果 - 完整返回 */
-export interface FingerprintCheckResult {
-  id: number
-  profile: FingerprintProfile
-  proxy: FingerprintProxy
-  purity: FingerprintPurity
-  fingerprint: {
-    chromeVersion: string
-    os: string
-    userAgent: string
-    webrtcMode: string
-    timezoneMode: string
-    geolocationMode: string
-    languageMode: string
-    uiLanguage: string
-    screenResolution: string
-    font: string
-    canvasMode: string
-    webglMode: string
-    mediaDeviceMode: string
-  }
-  warnings: string[]
-  checkedAt: number
-}
-
-/** 指纹检测历史记录 */
-export interface FingerprintCheckRecord {
-  id: number
-  profileId: number
-  profileTitle: string
-  proxyStatus: string
-  proxyIp: string
-  proxyCountry: string
-  proxyCity: string
-  proxyLatency: number
-  purityScore: number
-  purityLevel: string
-  fingerprintSnapshot: Record<string, any> | null
-  riskWarnings: string[]
-  checkedAt: number
-}
-
-// ==================== Phase 2.2: Cookie 管理类型 ====================
-
-/** Cookie 状态信息 */
-export interface CookieStatus {
-  cookieCount: number
-  domains: string[]
-  domainCount: number
-  platforms: string[]
-  cookiesFileExists: boolean
-  localStorageExists: boolean
-  sessionStorageExists: boolean
-  indexedDBExists: boolean
-  cacheExists: boolean
-  totalSizeBytes: number
-}
-
-/** Cookie 备份记录 */
-export interface CookieBackup {
-  id: number
-  profileId: number
-  backupType: 'auto' | 'manual'
-  backupPath: string
-  cookieCount: number
-  sizeBytes: number
-  createdAt: number
-}
-
-/** 清理缓存结果 */
-export interface ClearCookieResult {
-  mode: string
-  clearedItems: string[]
-}
-
-// ==================== Phase 2.3: 指纹配置智能跟随代理IP类型 ====================
-
-/** 国家 → 指纹配置映射 */
-export interface GeoFingerprintConfig {
-  language: string
-  font: string
-  timezone: string
-  resolution: string
-  webrtc: string
-}
-
-/** 智能配置结果 */
-export interface SmartConfigResult {
-  country: string
-  ui_language: string
-  font: string
-  screen_resolution: string
-  timezone_mode: string
-  geolocation_mode: string
-  language_mode: string
-  webrtc_mode: string
-}
-
-// ==================== Phase 2.6: 内嵌 Chromium 类型 ====================
-
-/** Chrome 启动结果 */
-export interface LaunchChromeResult {
-  pid: number
-  userDataDir: string
-}
-
-/** Chrome 版本检查结果 */
-export interface ChromeVersionCheck {
-  exists: boolean
-  path: string
-}
-
-// ==================== Phase 3.0: 浏览器设定卡片 + 生成新指纹类型 ====================
-
-/** 生成的指纹配置（后端返回） */
-export interface GeneratedFingerprint {
-  chromeVersion: string
-  userAgent: string
-  os: string
-  webrtcMode: string
-  timezoneMode: string
-  geolocationMode: string
-  languageMode: string
+  webrtcMode: WebRtcMode
+  timezoneMode: TimezoneMode
+  geolocationMode: GeolocationMode
+  languageMode: LanguageMode
   uiLanguage: string
   screenResolution: string
   font: string
-  canvasMode: string
-  canvasNoiseSeed?: string
-  webglMode: string
-  webglVendor: string
-  webglRenderer: string
-  audioContextMode: string
-  audioContextNoiseSeed?: string
-  clientRectsMode: string
-  clientRectsNoiseSeed?: string
-  deviceName: string
-  macAddress: string
-  mediaDeviceMode: string
-}
-
-/** 浏览器设定卡片显示数据 */
-export interface BrowserSettingsCard {
-  browser: string
-  userAgent: string
-  webrtc: string
-  timezone: string
-  geolocation: string
-  language: string
-  uiLanguage: string
-  resolution: string
-  font: string
-  canvas: string
-  webglImage: string
-  webglMetadata: string
-  audioContext: string
-  clientRects: string
-  deviceName: string
-  macAddress: string
-}
-
-// ==================== Phase 3.3: 一致性校验类型 ====================
-
-/** 一致性校验单项结果 */
-export interface ConsistencyCheckItem {
-  category: string
-  status: 'pass' | 'warning' | 'fail'
-  message: string
-  suggestion: string | null
-}
-
-/** 一致性校验总结果 */
-export interface ConsistencyCheckResult {
-  profileId: number
-  overallScore: number
-  level: 'excellent' | 'good' | 'fair' | 'poor'
-  checks: ConsistencyCheckItem[]
-  summary: {
-    pass: number
-    warning: number
-    fail: number
-  }
-}
-
-/** 带一致性校验的指纹生成结果 */
-export interface GeneratedFingerprintWithConsistency extends GeneratedFingerprint {
-  consistency: ConsistencyCheckResult
-}
-
-// ==================== Phase 3.5: 窗口级 Session 标签页持久化类型 ====================
-
-/** Session 标签页记录（前后端共用） */
-export interface SessionTab {
-  profileId: number
-  userId: number
-  url: string
-  title: string | null
-  active: number
-  sortOrder: number
+  canvasMode: CanvasMode
+  webglMode: WebGLMode
+  mediaDeviceMode: MediaDeviceMode
+  startupUrl?: string
+  iconPath?: string
+  createdAt: number
   updatedAt: number
+  cookie_json?: string
+  cookieJson?: string
+  // Phase 4.0: 平台账号
+  platform_accounts?: PlatformAccount[]
+  proxy?: Proxy | null
 }
 
-/** Session 标签页心跳上报请求体 */
-export interface SessionTabHeartbeat {
-  url: string
-  title?: string
-  active?: number
+/**
+ * API 响应格式
+ */
+export interface ApiResponse<T> {
+  code: number
+  data: T
+  message: string
+}
+
+/**
+ * 列表响应格式
+ */
+export interface ListResponse<T> {
+  code: number
+  data: T[]
+  message: string
+}
+
+/**
+ * 指纹检测结果
+ */
+export interface FingerprintCheck {
+  id?: number
+  profileId: number
+  proxyId?: number
+  proxyStatus: 'success' | 'fail' | 'no_proxy'
+  proxyIp?: string
+  proxyCountry?: string
+  proxyCity?: string
+  proxyLatency?: number
+  purityScore: number
+  purityLevel: 'excellent' | 'good' | 'fair' | 'poor' | 'unknown'
+  fingerprintSnapshot?: string
+  riskWarnings?: string
+  checkedAt: number
+}
+
+/**
+ * 代理检测结果
+ */
+export interface ProxyCheck {
+  id?: number
+  proxyId: number
+  status: 'success' | 'fail'
+  ip?: string
+  country?: string
+  city?: string
+  latency?: number
+  checkedAt: number
 }
