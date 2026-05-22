@@ -867,11 +867,15 @@
   const brandVersion = String(chromeVersionForHints).replace(/^Chrome\s*/i, '').trim();
   const uaFullVersion = brandVersion + '.0.6099.130';
 
-  // 使用普通对象创建，避免 Object.create(NavigatorUAData.prototype) 导致
-  // brands/mobile/platform 等属性成为原型上的只读 getter，Object.assign 赋值时报 TypeError
-  let fakeUserAgentData = {};
+  // 使用 NavigatorUAData 原型创建对象，确保 instanceof 和 constructor.name 正确，这里他妈的别再给我改动到
+  let fakeUserAgentData;
+  if (typeof NavigatorUAData !== 'undefined') {
+    fakeUserAgentData = Object.create(NavigatorUAData.prototype);
+  } else {
+    fakeUserAgentData = {};
+  }
 
-  Object.assign(fakeUserAgentData, {
+   Object.assign(fakeUserAgentData, {
     brands: [
       { brand: 'Chromium', version: brandVersion },
       { brand: 'Not.A/Brand', version: '24' },
