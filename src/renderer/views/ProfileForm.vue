@@ -322,8 +322,19 @@
               size="small"
             >
               <template #bodyCell="{ column, record }">
+                <!-- 账号列：宽度缩小 + tooltip -->
                 <template v-if="column.key === 'account'">
-                  <span>{{ record.account }}</span>
+                  <a-tooltip :title="record.account">
+                    <span class="account-ellipsis">{{ record.account }}</span>
+                  </a-tooltip>
+                </template>
+                <!-- 平台列（Phase 4.2 新增）：显示平台名称 + logo -->
+                <template v-if="column.key === 'platform'">
+                  <span class="platform-tag">
+                    <svg v-if="record.platform === 'twitter'" class="platform-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" fill="currentColor"/></svg>
+                    <span v-else-if="record.platform === 'outlook'" class="platform-icon-text">📧</span>
+                    {{ record.platform === 'twitter' ? 'Twitter/X' : record.platform === 'outlook' ? 'Outlook' : record.platform }}
+                  </span>
                 </template>
                 <template v-if="column.key === 'two_fa_type'">
                   <a-tag v-if="record.two_fa_type === 'totp'" color="blue">TOTP</a-tag>
@@ -453,16 +464,36 @@
       </a-col>
     </a-row>
 
-    <!-- Phase 4.0: 平台账号添加/编辑弹窗 -->
-    <a-modal v-model:open="platformAccountVisible" :title="platformAccountEditing ? '编辑账号' : '添加账号'" @ok="handleSavePlatformAccount" :width="500">
+    <!-- Phase 4.0/4.2: 平台账号添加/编辑弹窗 -->
+    <a-modal v-model:open="platformAccountVisible" :title="platformAccountEditing ? '编辑账号' : '添加账号'" @ok="handleSavePlatformAccount" :width="500" :mask-closable="false">
       <a-form ref="platformAccountFormRef" :model="platformAccountForm" layout="vertical">
+        <!-- Phase 4.2 新增：平台选择（默认值为 twitter，可不验证） -->
+        <a-form-item label="平台">
+          <a-select v-model:value="platformAccountForm.platform" placeholder="选择平台">
+            <a-select-option value="twitter">
+              <span class="select-option-with-icon">
+                <svg class="option-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" fill="currentColor"/></svg>
+                Twitter / X
+              </span>
+            </a-select-option>
+            <a-select-option value="outlook">
+              <span class="select-option-with-icon">
+                <span class="option-icon-text">📧</span>
+                Outlook
+              </span>
+            </a-select-option>
+          </a-select>
+        </a-form-item>
+        <!-- 账号 -->
         <a-form-item label="账号（用户名/邮箱/手机）" name="account" :rules="[{ required: true, message: '请输入账号' }]">
-          <a-input v-model:value="platformAccountForm.account" placeholder="Twitter 用户名或邮箱" />
+          <a-input v-model:value="platformAccountForm.account" :placeholder="platformAccountForm.platform === 'twitter' ? 'Twitter 用户名或邮箱' : 'Outlook 邮箱'" />
         </a-form-item>
+        <!-- 密码 -->
         <a-form-item label="密码" name="password" :rules="[{ required: !platformAccountEditing, message: '请输入密码' }]">
-          <a-input-password v-model:value="platformAccountForm.password" :placeholder="platformAccountEditing ? '留空则不修改原密码' : 'Twitter 密码'" />
+          <a-input-password v-model:value="platformAccountForm.password" :placeholder="platformAccountEditing ? '留空则不修改原密码' : (platformAccountForm.platform === 'twitter' ? 'Twitter 密码' : 'Outlook 密码')" />
         </a-form-item>
-        <a-form-item name="username_confirm">
+        <!-- 账号名确认（仅 Twitter/X 显示，Phase 4.2） -->
+        <a-form-item v-if="platformAccountForm.platform === 'twitter'" name="username_confirm">
           <template #label>
             <span>
               账号名确认
@@ -670,6 +701,7 @@ const platformAccountVisible = ref(false)
 const platformAccountEditing = ref(false)
 const platformAccountFormRef = ref()
 const platformAccountForm = reactive({
+  platform: 'twitter' as 'twitter' | 'outlook',
   account: '',
   password: '',
   username_confirm: '',
@@ -679,9 +711,10 @@ const platformAccountForm = reactive({
   is_active: true
 })
 const platformAccountColumns = [
-  { title: '账号', key: 'account', dataIndex: 'account' },
-  { title: '2FA', key: 'two_fa_type', dataIndex: 'two_fa_type', width: 100 },
-  { title: '状态', key: 'is_active', dataIndex: 'is_active', width: 100 },
+  { title: '账号', key: 'account', dataIndex: 'account', width: 180 },
+  { title: '平台', key: 'platform', width: 120 },
+  { title: '2FA', key: 'two_fa_type', dataIndex: 'two_fa_type', width: 80 },
+  { title: '状态', key: 'is_active', dataIndex: 'is_active', width: 80 },
   { title: '操作', key: 'action', width: 160 }
 ]
 
@@ -700,7 +733,7 @@ const platformAccountEditingId = ref<number | null>(null)
 function openAddPlatformAccount() {
   platformAccountEditing.value = false
   platformAccountEditingId.value = null
-  Object.assign(platformAccountForm, { account: '', password: '', username_confirm: '', two_fa_type: null, two_fa_secret: '', two_fa_backup_codes: '', is_active: true })
+  Object.assign(platformAccountForm, { platform: 'twitter' as 'twitter' | 'outlook', account: '', password: '', username_confirm: '', two_fa_type: null, two_fa_secret: '', two_fa_backup_codes: '', is_active: true })
   platformAccountVisible.value = true
 }
 
@@ -708,8 +741,8 @@ function openEditPlatformAccount(item: PlatformAccount) {
   platformAccountEditing.value = true
   platformAccountEditingId.value = item.id
   Object.assign(platformAccountForm, {
+    platform: (item.platform as 'twitter' | 'outlook') || 'twitter',
     account: item.account || '',
-    // 后端已返回明文，直接回显
     password: (item as any).password || '',
     username_confirm: item.username_confirm || '',
     two_fa_type: item.two_fa_type || null,
@@ -721,76 +754,67 @@ function openEditPlatformAccount(item: PlatformAccount) {
 }
 
 async function handleSavePlatformAccount() {
-  try {
-    await platformAccountFormRef.value?.validate()
-  } catch { return }
-  
-  // 如果是新建模式（尚未保存窗口），先保存窗口再添加账号
-  if (!editId.value) {
-    // 先执行表单提交
-    try {
-      await formRef.value?.validate()
-    } catch { return }
-    
-    submitting.value = true
-    try {
-      const submitData: ProfileDto = {
-        title: formState.title,
-        proxyId: formState.proxyId,
-        chromeVersion: formState.chromeVersion,
-        os: formState.os,
-        webrtcMode: formState.webrtcMode,
-        timezoneMode: formState.timezoneMode,
-        geolocationMode: formState.geolocationMode,
-        languageMode: formState.languageMode,
-        uiLanguage: formState.uiLanguage,
-        screenResolution: formState.screenResolution,
-        font: Array.isArray(formState.font) ? formState.font.join(',') : formState.font,
-        canvasMode: formState.canvasMode,
-        webglMode: formState.webglMode,
-        mediaDeviceMode: formState.mediaDeviceMode,
-        startupUrl: formState.startupUrl,
-        deviceName: formState.deviceName || undefined,
-        macAddress: formState.macAddress || undefined,
-        canvasNoiseSeed: formState.canvasNoiseSeed || undefined,
-        audioNoiseSeed: formState.audioNoiseSeed || undefined,
-        rectsNoiseSeed: formState.rectsNoiseSeed || undefined,
-        webglVendor: formState.webglVendor || undefined,
-        webglRenderer: formState.webglRenderer || undefined,
-        cookieJson: formState.cookieText || formState.cookieJson || undefined,
-      }
-      
-      const result: any = await createProfile(submitData)
-      message.success('窗口创建成功，现在可以添加平台账号')
-      
-      // 跳转到编辑页，获取新窗口的 ID
-      await router.push('/profile')
-      
-      // 重新加载并获取新创建的 profile
-      const newProfileId = result?.id || result?.data?.id
-      if (newProfileId) {
-        // 仅更新路由，editId 是 computed 会自动派生新值
-        await router.replace(`/profile/form?id=${newProfileId}`)
-      }
-
-      submitting.value = false
-      return
-    } catch (error: any) {
-      message.error(error?.response?.data?.message || '保存窗口失败')
-      submitting.value = false
-      return
-    }
+  // 验证必填字段
+  if (!platformAccountForm.account || !platformAccountForm.account.trim()) {
+    message.warning('请输入账号')
+    return
+  }
+  if (!platformAccountForm.password) {
+    message.warning('请输入密码')
+    return
   }
 
+  // 新建模式：将账号信息暂存到本地数组，等用户点"创建窗口"时一起提交
+  if (!editId.value) {
+    const newAccount: any = {
+      id: -(Date.now()),  // 临时负数 ID 标识本地未保存账号
+      profile_id: 0,
+      platform: platformAccountForm.platform,
+      account: platformAccountForm.account,
+      password: platformAccountForm.password,
+      two_fa_type: platformAccountForm.two_fa_type,
+      is_active: platformAccountForm.is_active,
+      _pending: true  // 标记为本地暂存，待保存
+    }
+    if (platformAccountForm.platform === 'twitter' && platformAccountForm.username_confirm) {
+      newAccount.username_confirm = platformAccountForm.username_confirm.trim()
+    }
+    if (platformAccountForm.two_fa_type === 'totp' && platformAccountForm.two_fa_secret) {
+      newAccount.two_fa_secret = platformAccountForm.two_fa_secret
+    }
+    if (platformAccountForm.two_fa_type === 'sms') {
+      newAccount.two_fa_backup_codes = platformAccountForm.two_fa_backup_codes
+    }
+
+    if (platformAccountEditing.value && platformAccountEditingId.value !== null) {
+      // 本地编辑：替换对应记录
+      const idx = platformAccounts.value.findIndex(a => a.id === platformAccountEditingId.value)
+      if (idx >= 0) {
+        newAccount.id = platformAccountEditingId.value
+        platformAccounts.value.splice(idx, 1, newAccount)
+      }
+    } else {
+      platformAccounts.value.push(newAccount)
+    }
+
+    message.success('账号已添加，点击"创建窗口"完成保存')
+    platformAccountVisible.value = false
+    return
+  }
+
+  // 编辑模式：直接添加/更新账号
   const data: any = {
     profile_id: Number(editId.value),
+    platform: platformAccountForm.platform,
     account: platformAccountForm.account,
-    username_confirm: platformAccountForm.username_confirm ? platformAccountForm.username_confirm.trim() : null,
     two_fa_type: platformAccountForm.two_fa_type,
     is_active: platformAccountForm.is_active
   }
 
-  // 编辑模式：密码留空表示不修改；新建模式：密码必传
+  if (platformAccountForm.platform === 'twitter' && platformAccountForm.username_confirm) {
+    data.username_confirm = platformAccountForm.username_confirm.trim()
+  }
+
   if (!platformAccountEditing.value) {
     data.password = platformAccountForm.password
   } else if (platformAccountForm.password && platformAccountForm.password.trim()) {
@@ -798,8 +822,7 @@ async function handleSavePlatformAccount() {
   }
 
   if (platformAccountForm.two_fa_type === 'totp') {
-    // 编辑时若 TOTP 密钥留空，也不覆盖
-    if (!platformAccountEditing.value || (platformAccountForm.two_fa_secret && platformAccountForm.two_fa_secret.trim())) {
+    if (!platformAccountEditing.value || platformAccountForm.two_fa_secret?.trim()) {
       data.two_fa_secret = platformAccountForm.two_fa_secret
     }
   }
@@ -829,6 +852,12 @@ async function handleSavePlatformAccount() {
 }
 
 async function handleDeletePlatformAccount(id: number) {
+  // 如果是本地暂存账号（负数 ID），直接从数组中移除
+  if (id < 0) {
+    platformAccounts.value = platformAccounts.value.filter(a => a.id !== id)
+    message.success('已删除')
+    return
+  }
   try {
     await deletePlatformAccount(id)
     message.success('已删除')
@@ -939,11 +968,45 @@ async function handleSubmit() {
       } else {
         message.success('修改成功')
       }
+      router.push('/profile')
+      return
     } else {
-      await createProfile(submitData)
+      const result: any = await createProfile(submitData)
+      const newProfileId = result?.id || result?.data?.id
+
+      // 提交暂存的平台账号
+      const pendingAccounts = platformAccounts.value.filter((a: any) => (a as any)._pending)
+      if (newProfileId && pendingAccounts.length > 0) {
+        for (const account of pendingAccounts) {
+          try {
+            const accountData: any = {
+              profile_id: newProfileId,
+              platform: account.platform,
+              account: account.account,
+              password: account.password,
+              two_fa_type: account.two_fa_type,
+              is_active: account.is_active,
+            }
+            if (account.platform === 'twitter' && account.username_confirm) {
+              accountData.username_confirm = account.username_confirm
+            }
+            if (account.two_fa_type === 'totp' && account.two_fa_secret) {
+              accountData.two_fa_secret = account.two_fa_secret
+            }
+            if (account.two_fa_type === 'sms') {
+              accountData.two_fa_backup_codes = account.two_fa_backup_codes
+            }
+            await createPlatformAccount(accountData)
+          } catch (e: any) {
+            console.error('创建平台账号失败:', e)
+          }
+        }
+      }
+
       message.success(hasCookieText ? '窗口创建成功，预置 Cookie 已保存' : '创建成功')
+      router.push('/profile')
+      return
     }
-    router.push('/profile')
   } catch (error: any) {
     console.error('提交失败:', error)
     message.error(error?.response?.data?.message || '操作失败')
@@ -1017,4 +1080,13 @@ onMounted(async () => {
 .platform-logo { width: 40px; height: 40px; border-radius: 8px; background: #f5f5f5; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; border: 1px solid #e8e8e8; }
 .platform-logo:hover { background: #1890ff; border-color: #1890ff; transform: translateY(-2px); box-shadow: 0 2px 8px rgba(24, 144, 255, 0.3); }
 .text-wrap { word-break: break-all; word-wrap: break-word; }
+/* Phase 4.2: 平台账号表格样式 */
+.account-ellipsis { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.platform-tag { display: flex; align-items: center; gap: 6px; }
+.platform-icon { width: 16px; height: 16px; vertical-align: middle; color: #1DA1F2; }
+/* Phase 4.2: 下拉选项带 logo 样式 */
+.select-option-with-icon { display: flex; align-items: center; gap: 8px; }
+.option-icon { width: 16px; height: 16px; }
+.option-icon-text { font-size: 16px; }
+.platform-icon-text { font-size: 16px; }
 </style>

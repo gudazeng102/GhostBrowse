@@ -50,6 +50,9 @@ export type MediaDeviceMode = 'mock' | 'disable' | 'real'
 
 // ==================== Phase 4.0: 平台账号类型 ====================
 
+// 平台类型枚举（Phase 4.2 支持 outlook）
+export type PlatformType = 'twitter' | 'outlook'
+
 /**
  * 平台账号接口
  * - 后端返回的 password/two_fa_secret 为 '********'（不暴露密文）
@@ -59,7 +62,7 @@ export interface PlatformAccount {
   id?: number
   profile_id: number
   user_id?: number
-  platform: string   // 当前仅支持 'twitter'
+  platform: PlatformType   // Phase 4.2 支持 'twitter' / 'outlook'
   account: string    // 用户名/邮箱/手机号
   password?: string  // 前端表单用，后端不返回明文
   username_confirm?: string | null  // 账号名确认（@开头的 Twitter 用户名，用于异常账号登录二次验证）

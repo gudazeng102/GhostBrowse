@@ -1117,7 +1117,83 @@ export async function launchChrome(
   } catch (e: any) {
     console.warn('[BrowserLauncher] Twitter 登录态检测失败:', e.message)
   }
-  
+
+  // ==================== Phase 4.2: Outlook 自动登录 - 启动时智能跳转 ====================
+  // 仅当配置了启用的 Outlook 账号 + 未登录时，把 Outlook 登录页追加到启动 URL 末尾
+  // "未登录"判定：profiles.cookie_json 中没有 .live.com / .microsoft.com 域的会话 cookie
+  try {
+    const db = getDatabase()
+    const outlookAccountRows = db.prepare(`
+      SELECT id FROM platform_accounts
+      WHERE profile_id = ? AND is_active = 1 AND platform = 'outlook'
+    `).all(profile.id) as any[]
+
+    if (outlookAccountRows.length > 0) {
+      let outlookLoggedIn = false
+      try {
+        const cookieJson = profile.cookie_json || ''
+        if (cookieJson.trim()) {
+          const cookies = JSON.parse(cookieJson) as any[]
+          if (Array.isArray(cookies)) {
+            outlookLoggedIn = cookies.some(c => {
+              const domain = String(c.domain || c.host_key || '').toLowerCase()
+              const name = String(c.name || '').toLowerCase()
+              const value = String(c.value || '')
+              const isOutlookDomain =
+                domain.includes('live.com') ||
+                domain.includes('microsoft.com') ||
+                domain.includes('microsoftonline.com') ||
+                domain.includes('outlook.com') ||
+                domain.includes('office.com')
+              // Microsoft 登录态主要 cookie：ESTSAUTH / ESTSAUTHPERSISTENT / RPSAuth / MSPAuth / SignInStateCookie
+              const isAuthCookie =
+                name === 'estsauth' ||
+                name === 'estsauthpersistent' ||
+                name === 'estsauthlight' ||
+                name === 'rpsauth' ||
+                name === 'mspauth' ||
+                name === 'signinstatecookie'
+              return isOutlookDomain && isAuthCookie && value.length > 10
+            })
+          }
+        }
+      } catch (e) {
+        outlookLoggedIn = false
+      }
+
+      if (!outlookLoggedIn) {
+        // 改为先跳 microsoft.com 官网，由 content-script 自动重定向到 login.live.com
+        // 这样登录路径更接近真实用户行为，减少风控触发
+        const outlookLoginUrl = 'https://www.microsoft.com/'
+        const alreadyHasOutlook = startupUrls.some(u =>
+          u.includes('microsoft.com') ||
+          u.includes('live.com') ||
+          u.includes('outlook.com') ||
+          u.includes('office.com') ||
+          u.includes('microsoftonline.com')
+        )
+        if (!alreadyHasOutlook) {
+          startupUrls.push(outlookLoginUrl)
+          console.log(`[BrowserLauncher] Profile ${profile.id} 检测到 Outlook 平台账号但未登录，追加登录页: ${outlookLoginUrl}`)
+          patchChromePreferences(userDataDir, startupUrls)
+        }
+      } else {
+        console.log(`[BrowserLauncher] Profile ${profile.id} Outlook 已登录，跳过自动跳转`)
+      }
+    }
+  } catch (e: any) {
+    console.warn('[BrowserLauncher] Outlook 登录态检测失败:', e.message)
+  }
+
+  // ==================== 后续平台自动登录扩展点 ====================
+  // 添加新平台（如 Gmail / Facebook / LinkedIn ...）时，请在此处新增独立的 try/catch 块，
+  // 参照上方 Twitter / Outlook 的写法：
+  //   1. 查询 platform_accounts 中 platform='xxx' 且 is_active=1 的记录
+  //   2. 通过 cookie_json 判断登录态
+  //   3. 未登录时 startupUrls.push('对应平台登录页')，然后 patchChromePreferences
+  // 切勿修改上方 Twitter / Outlook 已有逻辑，每个平台保持独立代码块。
+  // ==================== 扩展点结束 ====================
+
   // Phase 3.5 Fix: 强制修改 Chrome Preferences，确保启动时恢复我们的 URLs
   patchChromePreferences(userDataDir, startupUrls)
   

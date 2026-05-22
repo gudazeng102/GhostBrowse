@@ -489,6 +489,364 @@
 
 })();
 
+// ==================== Phase 4.2: Outlook 自动登录（独立模块，与 Twitter 互不干扰）====================
+// 仅在 login.live.com / login.microsoftonline.com / outlook.live.com 等 Microsoft 域名上执行
+// Twitter 模块上方已有，本模块完全独立，不复用其变量与函数
+(function() {
+  'use strict';
+
+  var __outlookConfig;
+  try { __outlookConfig = {{CONFIG}}; } catch (e) { return; }
+  if (!__outlookConfig || !Array.isArray(__outlookConfig.platform_accounts)) return;
+
+  var hostname = (location.hostname || '').toLowerCase();
+  var outlookHosts = [
+    'www.microsoft.com',
+    'microsoft.com',
+    'login.live.com',
+    'login.microsoftonline.com',
+    'login.microsoft.com',
+    'outlook.live.com',
+    'outlook.office.com',
+    'outlook.office365.com'
+  ];
+  var isOutlookHost = outlookHosts.indexOf(hostname) !== -1
+    || hostname.endsWith('.live.com')
+    || hostname.endsWith('.microsoftonline.com')
+    || hostname.endsWith('.microsoft.com')
+    || hostname.endsWith('.office.com')
+    || hostname.endsWith('.office365.com');
+  if (!isOutlookHost) return;
+
+  // Microsoft 官网入口页：直接跳转到登录页（更接近真实用户路径）
+  if (hostname === 'www.microsoft.com' || hostname === 'microsoft.com') {
+    if (window.__ghostbrowse_outlook_redirect_done__) return;
+    window.__ghostbrowse_outlook_redirect_done__ = true;
+    setTimeout(function() {
+      try { location.href = 'https://login.live.com/'; } catch (e) {}
+    }, 1500 + Math.floor(Math.random() * 1500));
+    return;
+  }
+
+  var outlookAccount = __outlookConfig.platform_accounts.find(function(a) {
+    return a && a.platform === 'outlook' && a.is_active && a.account && a.password;
+  });
+  if (!outlookAccount) return;
+
+  // 防止多次执行
+  if (window.__ghostbrowse_outlook_login_started__) return;
+  window.__ghostbrowse_outlook_login_started__ = true;
+
+  function olog(msg) { try { console.log('[GhostBrowse-Outlook]', msg); } catch (e) {} }
+
+  function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
+
+  function waitForElement(selector, timeoutMs) {
+    timeoutMs = timeoutMs || 30000;
+    return new Promise(function(resolve) {
+      var start = Date.now();
+      var timer = setInterval(function() {
+        var el = document.querySelector(selector);
+        if (el) { clearInterval(timer); resolve(el); return; }
+        if (Date.now() - start > timeoutMs) { clearInterval(timer); resolve(null); }
+      }, 200);
+    });
+  }
+
+  // React 兼容的 native value 设置（绕过 _valueTracker，强制触发 React state 更新）
+  function setNativeValue(el, value) {
+    var proto = el.tagName === 'TEXTAREA'
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+    var nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (nativeSetter && nativeSetter.set) {
+      nativeSetter.set.call(el, value);
+    } else {
+      el.value = value;
+    }
+  }
+
+  // keyCode/charCode 映射（针对 Microsoft 登录页 React onKeyDown/onKeyUp 监听）
+  function keyCodeOf(ch) {
+    if (!ch) return 0;
+    var code = ch.charCodeAt(0);
+    // 字母统一转大写返回 keyCode（DOM keyCode 规范要求字母用大写 ASCII）
+    if (code >= 97 && code <= 122) return code - 32;
+    return code;
+  }
+  function codeOf(ch) {
+    if (!ch) return '';
+    if (/[a-zA-Z]/.test(ch)) return 'Key' + ch.toUpperCase();
+    if (/[0-9]/.test(ch)) return 'Digit' + ch;
+    var map = {
+      '@': 'Digit2', '.': 'Period', '-': 'Minus', '_': 'Minus',
+      '+': 'Equal', '=': 'Equal', '!': 'Digit1', '#': 'Digit3',
+      '$': 'Digit4', '%': 'Digit5', '^': 'Digit6', '&': 'Digit7',
+      '*': 'Digit8', '(': 'Digit9', ')': 'Digit0',
+      ' ': 'Space', '/': 'Slash', '\\': 'Backslash',
+      ',': 'Comma', ';': 'Semicolon', "'": 'Quote', '"': 'Quote',
+      ':': 'Semicolon', '<': 'Comma', '>': 'Period', '?': 'Slash',
+      '[': 'BracketLeft', ']': 'BracketRight', '{': 'BracketLeft', '}': 'BracketRight',
+      '|': 'Backslash', '~': 'Backquote', '`': 'Backquote'
+    };
+    return map[ch] || 'Unidentified';
+  }
+
+  // React 兼容输入：仅用 setNativeValue + InputEvent（不派发 keydown/keypress/keyup）
+  // 派发 keydown/keypress 会被 Microsoft 登录页的全局键盘监听器误判为快捷键/Enter，
+  // 导致密码框输入到一半就被切换/提交。逐字符 setNativeValue 是经过验证最稳妥的方式。
+  async function humanType(el, text) {
+    if (!el) return;
+    text = text == null ? '' : String(text);
+    el.focus();
+    el.click();
+
+    // 先清空
+    setNativeValue(el, '');
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '', inputType: 'deleteContentBackward' }));
+    await sleep(120);
+
+    var current = '';
+    for (var i = 0; i < text.length; i++) {
+      var ch = text.charAt(i);
+      current += ch;
+
+      // 主路径：setNativeValue + InputEvent（绕过 React _valueTracker）
+      // 注意：故意不派发 keydown/keypress/keyup，避免 Microsoft 登录页全局键盘
+      // 监听器把字符误判为快捷键/Enter 提前提交（之前导致密码输入卡住的根因）
+      var setOk = false;
+      try {
+        setNativeValue(el, current);
+        el.dispatchEvent(new InputEvent('input', {
+          bubbles: true, cancelable: false,
+          data: ch, inputType: 'insertText'
+        }));
+        setOk = (el.value === current);
+      } catch (e) { setOk = false; }
+
+      // 兜底：setNativeValue 被框架拒绝时，用 execCommand 注入（对 React 受控组件最可靠）
+      if (!setOk) {
+        try {
+          el.focus();
+          if (document.execCommand) {
+            try { el.setSelectionRange(el.value.length, el.value.length); } catch (e2) {}
+            document.execCommand('insertText', false, ch);
+          }
+        } catch (e3) {}
+      }
+
+      await sleep(60 + Math.floor(Math.random() * 80));
+    }
+
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // Microsoft 登录流程：
+  // 1) 邮箱页：input[type="email"] 或 #i0116 → 下一步按钮 #idSIButton9 / input[type="submit"]
+  // 2) 密码页：input[type="password"] 或 #i0118 → 登录按钮 #idSIButton9
+  // 3) "保持登录"页：是 / 否 → 默认点"是"保持登录
+  async function executeOutlookLogin() {
+    olog('开始 Outlook 自动登录流程，账号: ' + outlookAccount.account);
+
+    // ========== 入口前置检测：页面是否已经是 KMSI / 隐私通知页 ==========
+    // 密码提交后页面会刷新/跳转到 KMSI 页，content-script 重新注入，
+    // 如果不做前置检测，会重新走邮箱/密码步骤然后在找不到输入框时中止
+    //
+    // 重要：不能仅凭 go.microsoft.com/fwlink/ 链接判断 KMSI！
+    // Microsoft 登录页（邮箱/密码页）的页脚也有指向 go.microsoft.com 的隐私/法律链接。
+    // 必须同时验证页面主体文本包含 KMSI 特征词（如 "Stay signed in" / "Angemeldet bleiben"），
+    // 才能确认是真的 KMSI 页，而非登录页。
+    var kmsiTextKeywords = [
+      'stay signed in', 'angemeldet bleiben', '保持登录',
+      'rester connecté', 'mantener la sesión iniciada', 'mantieni l\'accesso',
+      'sesión abierta', 'ingelogd blijven', 'zostań zalogowany'
+    ];
+    var bodyTextLC = (document.body && document.body.innerText || '').toLowerCase();
+    var hasKmsiText = kmsiTextKeywords.some(function(k) { return bodyTextLC.indexOf(k) !== -1; });
+    var isKmsiPageNow = hasKmsiText;
+
+    var privacyKeywords = [
+      'quick note about your microsoft account',
+      'kurze notiz', 'kurze info',
+      '关于你的 microsoft 帐户', '关于您的 microsoft 帐户',
+      'note rapide', 'una breve nota', 'breve nota',
+      'kort opmerking'
+    ];
+    var isPrivacyPageNow = privacyKeywords.some(function(k) { return bodyTextLC.indexOf(k) !== -1; });
+
+    if (isKmsiPageNow || isPrivacyPageNow) {
+      olog('检测到页面已是登录后弹窗（KMSI=' + isKmsiPageNow + ', 隐私=' + isPrivacyPageNow + '），跳过邮箱/密码步骤，直接处理弹窗');
+      await handlePostLoginPopups();
+      return;
+    }
+
+    // ========== 正常登录流程：邮箱 → 密码 → 弹窗 ==========
+
+    // ---------- Step 1: 邮箱 ----------
+    var emailInput = await waitForElement('input[type="email"], #i0116, input[name="loginfmt"]', 30000);
+    if (!emailInput) { olog('未找到邮箱输入框，流程中止'); return; }
+
+    // 已经填了同样值则跳过
+    if (!emailInput.value || emailInput.value !== outlookAccount.account) {
+      await humanType(emailInput, outlookAccount.account);
+    }
+    await sleep(400 + Math.floor(Math.random() * 400));
+
+    var nextBtn = document.querySelector('#idSIButton9, input[type="submit"][value*="Next" i], input[type="submit"][value*="下一步"], button[type="submit"]');
+    if (nextBtn) {
+      olog('点击"下一步"');
+      nextBtn.click();
+    } else {
+      // 兜底：回车提交
+      emailInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
+    }
+
+    // ---------- Step 2: 密码 ----------
+    // Microsoft 切换页面是 SPA，密码框可能延迟出现
+    var pwdInput = await waitForElement('input[type="password"], #i0118, input[name="passwd"]', 30000);
+    if (!pwdInput) { olog('未找到密码输入框，流程中止（可能是账号不存在或被风控拦截）'); return; }
+
+    await sleep(500 + Math.floor(Math.random() * 500));
+    await humanType(pwdInput, outlookAccount.password);
+    await sleep(400 + Math.floor(Math.random() * 400));
+
+    var signInBtn = document.querySelector('#idSIButton9, input[type="submit"][value*="Sign in" i], input[type="submit"][value*="登录"], button[type="submit"]');
+    if (signInBtn) {
+      olog('点击"登录"');
+      signInBtn.click();
+    } else {
+      pwdInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
+    }
+
+    // ---------- Step 3: 处理登录后的两个弹窗（隐私通知 / KMSI 保持登录）----------
+    await handlePostLoginPopups();
+
+    // TODO（后续平台扩展示例）：如需处理 Outlook 的 2FA / SMS 验证码，可在此追加 Step 4 逻辑
+    // 不要修改上方 Twitter 模块；新平台请新建独立 IIFE。
+  }
+
+  // 处理登录后的两个弹窗：
+  //   A) 隐私通知 "A quick note about your Microsoft account"   → OK / 确定 / Akzeptieren
+  //   B) KMSI "Stay signed in / 保持登录 / Angemeldet bleiben"  → Yes / Ja / 是
+  // 两个弹窗顺序不固定，且密码提交后页面会跳转/刷新到 KMSI 页（content-script 重新注入），
+  // 所以 executeOutlookLogin 入口检测到 KMSI / 隐私页时也会走到这里，跳过邮箱/密码步骤。
+  // 单独抽成函数后，两条入口路径共用同一份弹窗处理逻辑。
+  function handlePostLoginPopups() {
+    return new Promise(function(resolveDone) {
+      var postLoginPolls = 0;
+      var maxPostLoginPolls = 90; // 90 * 200ms = 18 秒（页面刷新后弹窗渲染稍慢）
+      var privacyHandled = false;
+      var kmsiHandled = false;
+
+      var postLoginTimer = setInterval(function() {
+        postLoginPolls++;
+        if (postLoginPolls > maxPostLoginPolls || (privacyHandled && kmsiHandled)) {
+          clearInterval(postLoginTimer);
+          olog('登录后弹窗处理结束 (privacyHandled=' + privacyHandled + ', kmsiHandled=' + kmsiHandled + ')');
+          resolveDone();
+          return;
+        }
+
+        // ---- 1) 隐私通知页（"A quick note about your Microsoft account"）----
+        if (!privacyHandled) {
+          var privacyKeywords = [
+            'quick note about your microsoft account',
+            'kurze notiz', 'kurze info',
+            '关于你的 microsoft 帐户', '关于您的 microsoft 帐户',
+            'note rapide', 'una breve nota', 'breve nota',
+            'kort opmerking'
+          ];
+          var bodyText = (document.body && document.body.innerText || '').toLowerCase();
+          var isPrivacyPage = privacyKeywords.some(function(k) { return bodyText.indexOf(k) !== -1; });
+
+          if (isPrivacyPage) {
+            var okBtn = findOutlookButtonByText([
+              'ok', 'okay',
+              'accept', 'akzeptieren', 'aceptar', 'accepter',
+              '确定', '同意', '接受', '我同意',
+              'continue', 'weiter', '继续'
+            ]);
+            if (!okBtn) {
+              okBtn = document.querySelector('#iNext, #idSIButton9, button[type="submit"], input[type="submit"]');
+            }
+            if (okBtn) {
+              olog('隐私通知页：点击 "OK"');
+              try { okBtn.click(); } catch (e) {}
+              privacyHandled = true;
+              return;
+            }
+          }
+        }
+
+        // ---- 2) KMSI "保持登录" 页（语言无关：检测 go.microsoft.com/fwlink/ 链接）----
+        if (!kmsiHandled) {
+          var kmsiAnchors = document.querySelectorAll('a[href^="https://go.microsoft.com/fwlink/"], a[href*="go.microsoft.com/fwlink/"]');
+          var isKmsiPage = kmsiAnchors && kmsiAnchors.length > 0;
+
+          if (isKmsiPage) {
+            var yesBtn = document.querySelector('#idSIButton9, input[type="submit"][value*="Yes" i], input[type="submit"][value*="Ja" i], input[type="submit"][value*="是"]');
+            if (!yesBtn) {
+              yesBtn = findOutlookButtonByText([
+                'yes', 'ja', '是',
+                'sí', 'si', 'oui',
+                'tak', 'sim'
+              ]);
+            }
+            if (!yesBtn) {
+              yesBtn = document.querySelector('input[type="submit"], button[type="submit"], button.btn-primary, .ext-button.primary');
+            }
+            if (yesBtn) {
+              olog('KMSI 页：选择 "Yes / Ja"（保持登录）');
+              try { yesBtn.click(); } catch (e) {}
+              kmsiHandled = true;
+              return;
+            }
+          }
+        }
+      }, 200);
+    });
+  }
+
+  // 辅助：按可见文本查找可点击元素（button / div[role=button] / span[role=button] / a[role=button]）
+  // Outlook 模块独立实现，不复用 Twitter 模块的 findButtonByText
+  function findOutlookButtonByText(texts) {
+    var lowered = texts.map(function(t) { return String(t).toLowerCase(); });
+    var candidates = document.querySelectorAll('button, input[type="submit"], input[type="button"], div[role="button"], span[role="button"], a[role="button"]');
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      // 过滤不可见
+      if (!el.offsetParent && el.tagName !== 'INPUT') continue;
+      var t = ((el.value || '') + ' ' + (el.textContent || '') + ' ' + (el.getAttribute('aria-label') || '')).trim().toLowerCase();
+      if (!t) continue;
+      for (var j = 0; j < lowered.length; j++) {
+        // 精确边界匹配，避免 "okay" 误匹配 "yes ok"
+        var kw = lowered[j];
+        if (t === kw || t.indexOf(kw) !== -1) {
+          return el;
+        }
+      }
+    }
+    return null;
+  }
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    setTimeout(executeOutlookLogin, 2000);
+  } else {
+    window.addEventListener('DOMContentLoaded', function() {
+      setTimeout(executeOutlookLogin, 2000);
+    });
+  }
+})();
+
+// ==================== 后续平台自动登录扩展点（content-script 端）====================
+// 添加新平台（如 Gmail / Facebook / LinkedIn ...）时，请在此处复制一份独立的 IIFE 块：
+//   1. 拿到 config.platform_accounts，过滤出对应平台 + is_active 的账号
+//   2. 用 location.hostname 白名单守卫（非目标域名直接 return）
+//   3. 用独立的 window.__ghostbrowse_xxx_login_started__ 标记防重复
+//   4. 实现该平台特定的 selector + 登录步骤
+// 切勿合并/修改上方 Twitter / Outlook 已有 IIFE，每个平台保持独立模块。
+// ==================== 扩展点结束 ====================
+
 (function() {
   'use strict';
 
@@ -509,13 +867,9 @@
   const brandVersion = String(chromeVersionForHints).replace(/^Chrome\s*/i, '').trim();
   const uaFullVersion = brandVersion + '.0.6099.130';
 
-  // 使用 NavigatorUAData 原型创建对象，确保 instanceof 和 constructor.name 正确
-  let fakeUserAgentData;
-  if (typeof NavigatorUAData !== 'undefined') {
-    fakeUserAgentData = Object.create(NavigatorUAData.prototype);
-  } else {
-    fakeUserAgentData = {};
-  }
+  // 使用普通对象创建，避免 Object.create(NavigatorUAData.prototype) 导致
+  // brands/mobile/platform 等属性成为原型上的只读 getter，Object.assign 赋值时报 TypeError
+  let fakeUserAgentData = {};
 
   Object.assign(fakeUserAgentData, {
     brands: [
