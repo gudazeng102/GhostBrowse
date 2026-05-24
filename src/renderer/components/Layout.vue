@@ -4,7 +4,7 @@
     <a-layout-header class="layout-header">
       <div class="logo">
         <span class="logo-icon">👻</span>
-        <span class="logo-text">GhostBrowse</span>
+        <span v-if="!collapsed" class="logo-text">GhostBrowse</span>
       </div>
 
       <!-- Phase 1.8: 右上角用户信息和退出登录 -->
@@ -33,24 +33,42 @@
         :trigger="null"
         collapsible
         :width="200"
+        :collapsed-width="64"
         class="layout-sider"
       >
         <a-menu
           v-model:selectedKeys="selectedKeys"
           theme="dark"
           mode="inline"
+          :inline-collapsed="collapsed"
           @click="handleMenuClick"
         >
           <a-menu-item key="home">
-            <span>🏠 首页</span>
+            <template #icon>
+              <span class="menu-emoji">🏠</span>
+            </template>
+            <span>首页</span>
           </a-menu-item>
           <a-menu-item key="proxy">
-            <span>🌐 代理管理</span>
+            <template #icon>
+              <span class="menu-emoji">🌐</span>
+            </template>
+            <span>代理管理</span>
           </a-menu-item>
           <a-menu-item key="profile">
-            <span>📋 窗口管理</span>
+            <template #icon>
+              <span class="menu-emoji">📋</span>
+            </template>
+            <span>窗口管理</span>
           </a-menu-item>
         </a-menu>
+
+        <!-- 收缩/展开按钮：固定在侧栏底部 -->
+        <div class="sider-collapse-trigger" @click="toggleCollapsed">
+          <MenuUnfoldOutlined v-if="collapsed" />
+          <MenuFoldOutlined v-else />
+          <span v-if="!collapsed" class="trigger-text">收起</span>
+        </div>
       </a-layout-sider>
 
       <!-- 右侧内容区 -->
@@ -64,14 +82,25 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { UserOutlined, LogoutOutlined } from '@ant-design/icons-vue'
+import {
+  UserOutlined,
+  LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined
+} from '@ant-design/icons-vue'
 import { authStore } from '../stores/auth'
 
 const router = useRouter()
 const route = useRoute()
 
-// 菜单折叠状态
-const collapsed = ref(false)
+// 菜单折叠状态（持久化到 localStorage）
+const COLLAPSED_KEY = 'gb_sider_collapsed'
+const collapsed = ref<boolean>(localStorage.getItem(COLLAPSED_KEY) === '1')
+
+function toggleCollapsed() {
+  collapsed.value = !collapsed.value
+  localStorage.setItem(COLLAPSED_KEY, collapsed.value ? '1' : '0')
+}
 
 // 当前选中的菜单项
 const selectedKeys = ref<string[]>(['home'])
@@ -147,6 +176,53 @@ function handleLogout() {
 
 .layout-sider {
   background: #001529;
+  position: relative;
+}
+
+/* 让菜单不要顶到底部按钮 */
+.layout-sider :deep(.ant-layout-sider-children) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.layout-sider :deep(.ant-menu) {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* 收缩状态下让 emoji 居中显示 */
+.menu-emoji {
+  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+}
+
+/* 折叠按钮 */
+.sider-collapse-trigger {
+  flex-shrink: 0;
+  height: 48px;
+  line-height: 48px;
+  padding: 0 16px;
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+  transition: color 0.2s, background 0.2s;
+}
+
+.sider-collapse-trigger:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.trigger-text {
+  font-size: 14px;
 }
 
 .layout-content {
