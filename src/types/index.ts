@@ -50,8 +50,8 @@ export type MediaDeviceMode = 'mock' | 'disable' | 'real'
 
 // ==================== Phase 4.0: 平台账号类型 ====================
 
-// 平台类型枚举（Phase 4.2 支持 outlook）
-export type PlatformType = 'twitter' | 'outlook'
+// 平台类型枚举（Phase 4.2 支持 outlook，Phase 4.3 支持 tiktok）
+export type PlatformType = 'twitter' | 'outlook' | 'tiktok'
 
 /**
  * 平台账号接口

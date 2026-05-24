@@ -1061,7 +1061,9 @@ export async function launchChrome(
       : path.join(process.cwd(), 'resources', 'browser', version, 'homepage.html')
    // return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://browserleaks.com/webgl'
    // return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://www.baidu.com'
-    return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://www.google.com'
+   // return fs.existsSync(homepagePath) ? `file://${homepagePath.replace(/\\/g, '/')}` : 'https://www.google.com'
+   return 'https://www.browserscan.net/zh'
+
 
   }
   
@@ -1185,13 +1187,68 @@ export async function launchChrome(
     console.warn('[BrowserLauncher] Outlook 登录态检测失败:', e.message)
   }
 
+  // ==================== Phase 4.3: TikTok 自动登录 - 启动时智能跳转 ====================
+  // 仅当配置了启用的 TikTok 账号 + 未登录时，把 TikTok 登录页追加到启动 URL 末尾
+  // "未登录"判定：profiles.cookie_json 中没有 .tiktok.com 域的 sessionid / sid_guard / sid_tt cookie
+  try {
+    const db = getDatabase()
+    const tiktokAccountRows = db.prepare(`
+      SELECT id FROM platform_accounts
+      WHERE profile_id = ? AND is_active = 1 AND platform = 'tiktok'
+    `).all(profile.id) as any[]
+
+    if (tiktokAccountRows.length > 0) {
+      let tiktokLoggedIn = false
+      try {
+        const cookieJson = profile.cookie_json || ''
+        if (cookieJson.trim()) {
+          const cookies = JSON.parse(cookieJson) as any[]
+          if (Array.isArray(cookies)) {
+            tiktokLoggedIn = cookies.some(c => {
+              const domain = String(c.domain || c.host_key || '').toLowerCase()
+              const name = String(c.name || '').toLowerCase()
+              const value = String(c.value || '')
+              const isTiktokDomain = domain.includes('tiktok.com')
+              // TikTok 登录态主要 cookie：sessionid / sid_guard / sid_tt / sessionid_ss
+              const isAuthCookie =
+                name === 'sessionid' ||
+                name === 'sessionid_ss' ||
+                name === 'sid_guard' ||
+                name === 'sid_tt' ||
+                name === 'uid_tt'
+              return isTiktokDomain && isAuthCookie && value.length > 10
+            })
+          }
+        }
+      } catch (e) {
+        tiktokLoggedIn = false
+      }
+
+      if (!tiktokLoggedIn) {
+        // 改为打开 TikTok 官网首页，由 content-script 模拟点击 "Log in" 按钮进入登录弹窗
+        // 与 Outlook 登录路径保持一致：从官网入口进入更接近真实用户行为，降低被风控概率
+        const tiktokHomeUrl = 'https://www.tiktok.com/'
+        const alreadyHasTiktok = startupUrls.some(u => u.includes('tiktok.com'))
+        if (!alreadyHasTiktok) {
+          startupUrls.push(tiktokHomeUrl)
+          console.log(`[BrowserLauncher] Profile ${profile.id} 检测到 TikTok 平台账号但未登录，追加首页（由 content-script 自动点击 Log in）: ${tiktokHomeUrl}`)
+          patchChromePreferences(userDataDir, startupUrls)
+        }
+      } else {
+        console.log(`[BrowserLauncher] Profile ${profile.id} TikTok 已登录，跳过自动跳转`)
+      }
+    }
+  } catch (e: any) {
+    console.warn('[BrowserLauncher] TikTok 登录态检测失败:', e.message)
+  }
+
   // ==================== 后续平台自动登录扩展点 ====================
   // 添加新平台（如 Gmail / Facebook / LinkedIn ...）时，请在此处新增独立的 try/catch 块，
-  // 参照上方 Twitter / Outlook 的写法：
+  // 参照上方 Twitter / Outlook / TikTok 的写法：
   //   1. 查询 platform_accounts 中 platform='xxx' 且 is_active=1 的记录
   //   2. 通过 cookie_json 判断登录态
   //   3. 未登录时 startupUrls.push('对应平台登录页')，然后 patchChromePreferences
-  // 切勿修改上方 Twitter / Outlook 已有逻辑，每个平台保持独立代码块。
+  // 切勿修改上方 Twitter / Outlook / TikTok 已有逻辑，每个平台保持独立代码块。
   // ==================== 扩展点结束 ====================
 
   // Phase 3.5 Fix: 强制修改 Chrome Preferences，确保启动时恢复我们的 URLs

@@ -294,8 +294,8 @@
           <a-card :bordered="false" style="margin-bottom: 16px;">
             <template #title>
               <span>
-                🔑 平台账号（Twitter/X 自动登录）
-                <a-tooltip title="配置 Twitter/X 账号信息，窗口启动后自动登录。支持密码和两步验证（APP验证码/SMS）。">
+                🔑 平台账号（Twitter/X、Outlook、TikTok 自动登录）
+                <a-tooltip title="配置 Twitter/X、Outlook、TikTok 等平台账号信息，窗口启动后自动登录。支持密码和两步验证（APP验证码/SMS）。">
                   <QuestionCircleOutlined style="margin-left: 6px; color: #999; cursor: help;" />
                 </a-tooltip>
               </span>
@@ -333,7 +333,8 @@
                   <span class="platform-tag">
                     <svg v-if="record.platform === 'twitter'" class="platform-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" fill="currentColor"/></svg>
                     <span v-else-if="record.platform === 'outlook'" class="platform-icon-text">📧</span>
-                    {{ record.platform === 'twitter' ? 'Twitter/X' : record.platform === 'outlook' ? 'Outlook' : record.platform }}
+                    <span v-else-if="record.platform === 'tiktok'" class="platform-icon-text">🎵</span>
+                    {{ record.platform === 'twitter' ? 'Twitter/X' : record.platform === 'outlook' ? 'Outlook' : record.platform === 'tiktok' ? 'TikTok' : record.platform }}
                   </span>
                 </template>
                 <template v-if="column.key === 'two_fa_type'">
@@ -482,15 +483,21 @@
                 Outlook
               </span>
             </a-select-option>
+            <a-select-option value="tiktok">
+              <span class="select-option-with-icon">
+                <span class="option-icon-text">🎵</span>
+                TikTok
+              </span>
+            </a-select-option>
           </a-select>
         </a-form-item>
         <!-- 账号 -->
         <a-form-item label="账号（用户名/邮箱/手机）" name="account" :rules="[{ required: true, message: '请输入账号' }]">
-          <a-input v-model:value="platformAccountForm.account" :placeholder="platformAccountForm.platform === 'twitter' ? 'Twitter 用户名或邮箱' : 'Outlook 邮箱'" />
+          <a-input v-model:value="platformAccountForm.account" :placeholder="getAccountPlaceholder(platformAccountForm.platform)" />
         </a-form-item>
         <!-- 密码 -->
         <a-form-item label="密码" name="password" :rules="[{ required: !platformAccountEditing, message: '请输入密码' }]">
-          <a-input-password v-model:value="platformAccountForm.password" :placeholder="platformAccountEditing ? '留空则不修改原密码' : (platformAccountForm.platform === 'twitter' ? 'Twitter 密码' : 'Outlook 密码')" />
+          <a-input-password v-model:value="platformAccountForm.password" :placeholder="platformAccountEditing ? '留空则不修改原密码' : getPasswordPlaceholder(platformAccountForm.platform)" />
         </a-form-item>
         <!-- 账号名确认（仅 Twitter/X 显示，Phase 4.2） -->
         <a-form-item v-if="platformAccountForm.platform === 'twitter'" name="username_confirm">
@@ -701,7 +708,7 @@ const platformAccountVisible = ref(false)
 const platformAccountEditing = ref(false)
 const platformAccountFormRef = ref()
 const platformAccountForm = reactive({
-  platform: 'twitter' as 'twitter' | 'outlook',
+  platform: 'twitter' as 'twitter' | 'outlook' | 'tiktok',
   account: '',
   password: '',
   username_confirm: '',
@@ -710,6 +717,22 @@ const platformAccountForm = reactive({
   two_fa_backup_codes: '',
   is_active: true
 })
+
+// 根据平台返回账号输入框占位符
+function getAccountPlaceholder(platform: string): string {
+  if (platform === 'twitter') return 'Twitter 用户名或邮箱'
+  if (platform === 'outlook') return 'Outlook 邮箱'
+  if (platform === 'tiktok') return 'TikTok 邮箱/手机号/用户名'
+  return '请输入账号'
+}
+
+// 根据平台返回密码输入框占位符
+function getPasswordPlaceholder(platform: string): string {
+  if (platform === 'twitter') return 'Twitter 密码'
+  if (platform === 'outlook') return 'Outlook 密码'
+  if (platform === 'tiktok') return 'TikTok 密码'
+  return '请输入密码'
+}
 const platformAccountColumns = [
   { title: '账号', key: 'account', dataIndex: 'account', width: 180 },
   { title: '平台', key: 'platform', width: 120 },
@@ -733,7 +756,7 @@ const platformAccountEditingId = ref<number | null>(null)
 function openAddPlatformAccount() {
   platformAccountEditing.value = false
   platformAccountEditingId.value = null
-  Object.assign(platformAccountForm, { platform: 'twitter' as 'twitter' | 'outlook', account: '', password: '', username_confirm: '', two_fa_type: null, two_fa_secret: '', two_fa_backup_codes: '', is_active: true })
+  Object.assign(platformAccountForm, { platform: 'twitter' as 'twitter' | 'outlook' | 'tiktok', account: '', password: '', username_confirm: '', two_fa_type: null, two_fa_secret: '', two_fa_backup_codes: '', is_active: true })
   platformAccountVisible.value = true
 }
 
@@ -741,7 +764,7 @@ function openEditPlatformAccount(item: PlatformAccount) {
   platformAccountEditing.value = true
   platformAccountEditingId.value = item.id
   Object.assign(platformAccountForm, {
-    platform: (item.platform as 'twitter' | 'outlook') || 'twitter',
+    platform: (item.platform as 'twitter' | 'outlook' | 'tiktok') || 'twitter',
     account: item.account || '',
     password: (item as any).password || '',
     username_confirm: item.username_confirm || '',

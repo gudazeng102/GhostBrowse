@@ -40,11 +40,11 @@ export function createApp(): Express {
     credentials: true
   }))
 
-  // JSON Body 解析
-  app.use(express.json())
+  // JSON Body 解析（提高 limit 以支持大体积 cookie_json 等字段）
+  app.use(express.json({ limit: '50mb' }))
 
   // URL-encoded Body 解析
-  app.use(express.urlencoded({ extended: true }))
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }))
 
   // ==================== 静态文件服务 ====================
   // 开发模式：项目根目录/dist

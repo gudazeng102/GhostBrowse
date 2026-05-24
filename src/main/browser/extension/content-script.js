@@ -838,13 +838,316 @@
   }
 })();
 
+// ==================== Phase 4.3: TikTok 自动登录（独立模块，与 Twitter / Outlook 互不干扰）====================
+// 仅在 tiktok.com / www.tiktok.com 等 TikTok 域名上执行
+// Twitter / Outlook 模块上方已有，本模块完全独立，不复用其变量与函数
+(function() {
+  'use strict';
+
+  var __tiktokConfig;
+  try { __tiktokConfig = {{CONFIG}}; } catch (e) { return; }
+  if (!__tiktokConfig || !Array.isArray(__tiktokConfig.platform_accounts)) return;
+
+  var hostname = (location.hostname || '').toLowerCase();
+  var tiktokHosts = [
+    'www.tiktok.com',
+    'tiktok.com',
+    'm.tiktok.com'
+  ];
+  var isTiktokHost = tiktokHosts.indexOf(hostname) !== -1
+    || hostname.endsWith('.tiktok.com');
+  if (!isTiktokHost) return;
+
+  var tiktokAccount = __tiktokConfig.platform_accounts.find(function(a) {
+    return a && a.platform === 'tiktok' && a.is_active && a.account && a.password;
+  });
+  if (!tiktokAccount) return;
+
+  function tlog(msg) { try { console.log('[GhostBrowse-TikTok]', msg); } catch (e) {} }
+
+  // ✅ 改为"从官网首页点 Log in"流程（与 Outlook 路径保持一致），
+  // 不再限制只在登录页执行——首页/其他任意 TikTok 页都允许执行：
+  //   - 在首页时：找到 "Log in" 按钮点击 → 弹出登录弹窗 → 填表
+  //   - 在登录页时：直接填表
+  //   - 已登录后页面跳回首页时：localStorage 30 分钟防重入标记拦截，避免误触 Log in 按钮
+  // 防止多次执行（window 标记 + localStorage 持久标记，跨页面刷新存活）
+  if (window.__ghostbrowse_tiktok_login_started__) return;
+  // localStorage 标记：登录开始/完成时写入，30 分钟内不再触发自动登录
+  // （延长到 30 分钟可覆盖：填表 → 提交 → 跳首页 → 风控弹回登录页 这种短时间循环）
+  // 真实登录态由后端 cookie_json 在下次启动时重新判定，所以这里时效拉长无副作用
+  try {
+    var loginDoneTs = localStorage.getItem('__ghostbrowse_tiktok_login_done__');
+    if (loginDoneTs) {
+      var elapsed = Date.now() - parseInt(loginDoneTs, 10);
+      if (elapsed < 30 * 60 * 1000) {
+        tlog('TikTok 登录已完成标记生效（' + Math.round(elapsed / 1000) + '秒前），跳过自动登录');
+        return;
+      }
+      // 超过 30 分钟，清除标记，允许重新登录
+      localStorage.removeItem('__ghostbrowse_tiktok_login_done__');
+    }
+  } catch (e) {}
+  window.__ghostbrowse_tiktok_login_started__ = true;
+
+  function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
+
+  function waitForElement(selector, timeoutMs) {
+    timeoutMs = timeoutMs || 30000;
+    return new Promise(function(resolve) {
+      var start = Date.now();
+      var timer = setInterval(function() {
+        var el = document.querySelector(selector);
+        if (el) { clearInterval(timer); resolve(el); return; }
+        if (Date.now() - start > timeoutMs) { clearInterval(timer); resolve(null); }
+      }, 300);
+    });
+  }
+
+  // React 兼容的 native value 设置
+  function setNativeValue(el, value) {
+    var proto = el.tagName === 'TEXTAREA'
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+    var nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (nativeSetter && nativeSetter.set) {
+      nativeSetter.set.call(el, value);
+    } else {
+      el.value = value;
+    }
+  }
+
+  // 模拟人类逐字符输入（React 兼容）
+  async function humanType(el, text) {
+    if (!el) return;
+    text = text == null ? '' : String(text);
+    el.focus();
+    el.click();
+
+    // 先清空
+    setNativeValue(el, '');
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '', inputType: 'deleteContentBackward' }));
+    await sleep(120);
+
+    var current = '';
+    for (var i = 0; i < text.length; i++) {
+      var ch = text.charAt(i);
+      current += ch;
+
+      var setOk = false;
+      try {
+        setNativeValue(el, current);
+        el.dispatchEvent(new InputEvent('input', {
+          bubbles: true, cancelable: false,
+          data: ch, inputType: 'insertText'
+        }));
+        setOk = (el.value === current);
+      } catch (e) { setOk = false; }
+
+      // 兜底：execCommand
+      if (!setOk) {
+        try {
+          el.focus();
+          if (document.execCommand) {
+            try { el.setSelectionRange(el.value.length, el.value.length); } catch (e2) {}
+            document.execCommand('insertText', false, ch);
+          }
+        } catch (e3) {}
+      }
+
+      await sleep(60 + Math.floor(Math.random() * 80));
+    }
+
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // 查找包含文本的可点击元素
+  function findTiktokButtonByText(texts) {
+    var lowered = texts.map(function(t) { return String(t).toLowerCase(); });
+    var candidates = document.querySelectorAll('button, a[role="button"], div[role="button"], span[role="button"], [data-e2e]');
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      if (!el.offsetParent && el.tagName !== 'INPUT') continue;
+      var t = ((el.value || '') + ' ' + (el.textContent || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('data-e2e') || '')).trim().toLowerCase();
+      if (!t) continue;
+      for (var j = 0; j < lowered.length; j++) {
+        var kw = lowered[j];
+        if (t === kw || t.indexOf(kw) !== -1) {
+          return el;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 检测是否已登录
+  function checkTiktokLoginStatus() {
+    // 已登录时会有用户头像或特定元素
+    var hasAvatar = !!(
+      document.querySelector('[data-e2e="profile-icon"]') ||
+      document.querySelector('[data-e2e="menu-avatar-container"]') ||
+      document.querySelector('[data-e2e="account-icon"]')
+    );
+    // 检查 cookie 中的 sessionid
+    var match = document.cookie.match(/(?:^|;\s*)sessionid=([^;]+)/);
+    var hasSession = !!(match && match[1] && match[1].length > 5);
+    return hasAvatar || hasSession;
+  }
+
+  // TikTok 登录流程：
+  // 1) 首页点 "Log in" / "登录"
+  // 2) 弹窗中选择 "Use phone / email / username" / "使用手机/邮箱/用户名"
+  // 3) 切换到 "Email / Username" / "邮箱/用户名" tab
+  // 4) 输入邮箱/用户名
+  // 5) 输入密码
+  // 6) 点 "Log in" / "登录"
+  async function executeTiktokLogin() {
+    tlog('开始 TikTok 自动登录流程，账号: ' + tiktokAccount.account);
+
+    // Step 0: 检测是否已登录
+    if (checkTiktokLoginStatus()) {
+      tlog('TikTok 已登录，跳过自动登录');
+      return;
+    }
+
+    // Step 1: 点击首页 "Log in" 按钮
+    var loginBtn = findTiktokButtonByText([
+      'log in', '登录', 'sign in', 'anmelden', 'se connecter',
+      'accedi', 'iniciar sesión', '로그인', 'ログイン'
+    ]);
+    // 也尝试 data-e2e 属性
+    if (!loginBtn) {
+      loginBtn = document.querySelector('[data-e2e="top-login-button"], [data-e2e="login-button"]');
+    }
+    if (loginBtn) {
+      tlog('点击 "Log in" 按钮');
+      try { loginBtn.click(); } catch (e) {}
+    } else {
+      // 如果 URL 不在登录页，尝试直接跳转
+      var path = window.location.pathname || '';
+      if (path.indexOf('/login') === -1 && path.indexOf('/signup') === -1) {
+        tlog('未找到登录按钮，跳转到登录页');
+        window.location.href = 'https://www.tiktok.com/login/phone-or-email/email';
+        return;
+      }
+    }
+
+    // 等待登录弹窗/页面加载
+    await sleep(2000 + Math.floor(Math.random() * 1000));
+
+    // Step 2: 选择 "Use phone / email / username" 登录方式
+    var phoneEmailBtn = findTiktokButtonByText([
+      'use phone / email / username', '使用手机/邮箱/用户名',
+      'use phone number or email', '使用手机号或邮箱',
+      'log in with phone or email', '用手机号或邮箱登录',
+      'phone or email', '手机或邮箱'
+    ]);
+    if (phoneEmailBtn) {
+      tlog('点击 "Use phone / email / username"');
+      try { phoneEmailBtn.click(); } catch (e) {}
+      await sleep(1500 + Math.floor(Math.random() * 500));
+    }
+
+    // Step 3: 切换到 "Email / Username" tab（TikTok 默认可能是手机号 tab）
+    var emailTab = findTiktokButtonByText([
+      'email / username', '邮箱/用户名', 'email', '邮箱',
+      'log in with email or username', '用邮箱或用户名登录'
+    ]);
+    if (emailTab) {
+      tlog('切换到 "Email / Username" tab');
+      try { emailTab.click(); } catch (e) {}
+      await sleep(1000 + Math.floor(Math.random() * 500));
+    }
+
+    // Step 4: 输入邮箱/用户名
+    var accountInput = await waitForElement(
+      'input[type="text"][name="username"], input[type="text"][placeholder*="email" i], input[type="text"][placeholder*="用户名" i], input[type="text"][autocomplete="email"], input[name="email"], input[type="text"]',
+      15000
+    );
+    if (!accountInput) {
+      tlog('未找到账号输入框，尝试更宽泛的选择器');
+      accountInput = await waitForElement('input[type="text"]', 5000);
+    }
+    if (accountInput) {
+      if (!accountInput.value || accountInput.value !== tiktokAccount.account) {
+        await humanType(accountInput, tiktokAccount.account);
+      }
+      await sleep(500 + Math.floor(Math.random() * 500));
+    } else {
+      tlog('未找到账号输入框，流程中止');
+      return;
+    }
+
+    // Step 5: 输入密码
+    var passwordInput = await waitForElement(
+      'input[type="password"], input[name="password"], input[autocomplete="current-password"]',
+      10000
+    );
+    if (passwordInput) {
+      await humanType(passwordInput, tiktokAccount.password);
+      await sleep(500 + Math.floor(Math.random() * 500));
+    } else {
+      tlog('未找到密码输入框，流程中止');
+      return;
+    }
+
+    // Step 6: 点击登录按钮
+    var submitBtn = findTiktokButtonByText([
+      'log in', '登录', 'sign in', 'anmelden', 'se connecter',
+      'accedi', 'iniciar sesión', '로그인', 'ログイン'
+    ]);
+    if (!submitBtn) {
+      submitBtn = document.querySelector('button[type="submit"], input[type="submit"]');
+    }
+    // ✅ 关键修复：在点击提交按钮"之前"就写入 localStorage 标记
+    // 原因：点击后页面会跳转到首页 → content-script 在首页重新注入 → 此时本 IIFE 又被执行
+    //      如果等到登录"成功检测"通过才写标记，但页面跳转可能在写入前发生 → 重入循环
+    // 提前写入 + 路径白名单（已在入口处加），双重保险防止重入
+    try { localStorage.setItem('__ghostbrowse_tiktok_login_done__', String(Date.now())); } catch (e) {}
+
+    if (submitBtn) {
+      tlog('点击 "Log in" 提交按钮');
+      try { submitBtn.click(); } catch (e) {}
+    } else {
+      // 兜底：回车提交
+      passwordInput.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
+    }
+
+    // Step 7: 等待并检测登录结果
+    await sleep(4000 + Math.floor(Math.random() * 2000));
+
+    // 处理可能的验证码弹窗（TikTok 可能弹出滑块验证或短信验证码）
+    // 这里仅做日志提示，不自动处理滑块验证（需要人工介入）
+    var captchaEl = document.querySelector('[data-e2e="captcha-verify-container"], .captcha-verify-container, [id*="captcha"]');
+    if (captchaEl) {
+      tlog('⚠️ 检测到验证码弹窗，需要手动完成验证，已设置 30 分钟内不再自动登录');
+      return;
+    }
+
+    if (checkTiktokLoginStatus()) {
+      tlog('TikTok 自动登录成功');
+      // 成功后再次刷新标记时间戳（延长 30 分钟有效期）
+      try { localStorage.setItem('__ghostbrowse_tiktok_login_done__', String(Date.now())); } catch (e) {}
+    } else {
+      tlog('登录结果未知（可能在跳转中），已写入 30 分钟防重入标记');
+    }
+  }
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    setTimeout(executeTiktokLogin, 2500);
+  } else {
+    window.addEventListener('DOMContentLoaded', function() {
+      setTimeout(executeTiktokLogin, 2500);
+    });
+  }
+})();
+
 // ==================== 后续平台自动登录扩展点（content-script 端）====================
 // 添加新平台（如 Gmail / Facebook / LinkedIn ...）时，请在此处复制一份独立的 IIFE 块：
 //   1. 拿到 config.platform_accounts，过滤出对应平台 + is_active 的账号
 //   2. 用 location.hostname 白名单守卫（非目标域名直接 return）
 //   3. 用独立的 window.__ghostbrowse_xxx_login_started__ 标记防重复
 //   4. 实现该平台特定的 selector + 登录步骤
-// 切勿合并/修改上方 Twitter / Outlook 已有 IIFE，每个平台保持独立模块。
+// 切勿合并/修改上方 Twitter / Outlook / TikTok 已有 IIFE，每个平台保持独立模块。
 // ==================== 扩展点结束 ====================
 
 (function() {

@@ -22,9 +22,10 @@ export async function getPlatformAccounts(profileId: number): Promise<PlatformAc
 /** 创建平台账号 */
 export async function createPlatformAccount(data: {
   profile_id: number
-  platform?: string
+  platform?: 'twitter' | 'outlook' | 'tiktok'
   account: string
   password: string
+  username_confirm?: string
   two_fa_type?: 'totp' | 'sms' | null
   two_fa_secret?: string
   two_fa_backup_codes?: string
