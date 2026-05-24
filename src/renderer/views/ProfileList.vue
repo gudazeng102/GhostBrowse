@@ -81,45 +81,38 @@
             <span>窗口列表 - {{ currentGroupTitle }}</span>
           </template>
           <template #extra>
-            <a-space>
-              <a-button @click="loadProfileStatus" :loading="statusLoading">
-                🔄 刷新状态
+            <a-dropdown :disabled="selectedRowKeys.length === 0">
+              <a-button type="primary">
+                ⚡ 批量操作 ({{ selectedRowKeys.length }})
+                <DownOutlined />
               </a-button>
-
-              <a-dropdown :disabled="selectedRowKeys.length === 0">
-                <a-button>
-                  📂 移动到分组 ({{ selectedRowKeys.length }})
-                  <DownOutlined />
-                </a-button>
-                <template #overlay>
-                  <a-menu @click="onMoveMenuClick">
-                    <a-menu-item key="ungrouped">📭 未分组</a-menu-item>
-                    <a-menu-divider />
-                    <a-menu-item v-for="g in groupList" :key="String(g.id)">
+              <template #overlay>
+                <a-menu @click="onBatchMenuClick">
+                  <a-sub-menu key="move">
+                    <template #title>
+                      <span>📂 移动到分组</span>
+                    </template>
+                    <a-menu-item key="move:ungrouped">📭 未分组</a-menu-item>
+                    <a-menu-divider v-if="groupList.length > 0" />
+                    <a-menu-item v-for="g in groupList" :key="`move:${g.id}`">
                       <span class="group-color-dot" :style="{ background: g.color }"></span>
                       {{ g.name }}
                     </a-menu-item>
-                  </a-menu>
-                </template>
-              </a-dropdown>
-
-              <a-button type="primary" :disabled="!canBatchStart" @click="handleBatchStart">
-                🚀 批量打开 ({{ selectedStoppedCount }})
-              </a-button>
-
-              <a-button danger :disabled="!canBatchClose" @click="handleBatchClose">
-                ⏹️ 批量关闭 ({{ selectedRunningCount }})
-              </a-button>
-
-              <a-button
-                type="primary"
-                danger
-                :disabled="selectedRowKeys.length === 0"
-                @click="handleBatchDelete"
-              >
-                🗑️ 批量删除 ({{ selectedRowKeys.length }})
-              </a-button>
-            </a-space>
+                  </a-sub-menu>
+                  <a-menu-divider />
+                  <a-menu-item key="batchStart" :disabled="!canBatchStart">
+                    🚀 批量打开 ({{ selectedStoppedCount }})
+                  </a-menu-item>
+                  <a-menu-item key="batchClose" :disabled="!canBatchClose">
+                    ⏹️ 批量关闭 ({{ selectedRunningCount }})
+                  </a-menu-item>
+                  <a-menu-divider />
+                  <a-menu-item key="batchDelete" danger>
+                    🗑️ 批量删除 ({{ selectedRowKeys.length }})
+                  </a-menu-item>
+                </a-menu>
+              </template>
+            </a-dropdown>
           </template>
 
           <a-table
@@ -128,21 +121,26 @@
             :loading="loading"
             :pagination="pagination"
             :row-selection="{ selectedRowKeys, onChange: onSelectChange }"
+            :scroll="{ x: 1000 }"
             row-key="id"
+            size="middle"
             @change="handleTableChange"
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'status'">
-                <a-tag :color="isRunning(record.id) ? 'success' : 'default'">
-                  {{ isRunning(record.id) ? '🟢 运行中' : '⚪ 已停止' }}
+                <a-tag :color="isRunning(record.id) ? 'green' : 'red'">
+                  {{ isRunning(record.id) ? '运行中' : '已停止' }}
                 </a-tag>
               </template>
 
               <template v-else-if="column.key === 'group'">
-                <a-tag v-if="record.group" :color="record.group.color">
-                  {{ record.group.name }}
-                </a-tag>
-                <a-tag v-else color="default">未分组</a-tag>
+                <span class="group-cell">
+                  <span
+                    class="group-color-dot"
+                    :style="{ background: record.group ? record.group.color : '#d9d9d9' }"
+                  ></span>
+                  <span>{{ record.group ? record.group.name : '未分组' }}</span>
+                </span>
               </template>
 
               <template v-else-if="column.key === 'webrtcMode'">
@@ -159,11 +157,7 @@
               </template>
 
               <template v-else-if="column.key === 'action'">
-                <a-space>
-                  <a-button type="link" size="small" @click="handleEdit(record)">
-                    编辑
-                  </a-button>
-
+                <a-space :size="4">
                   <a-button
                     v-if="!isRunning(record.id)"
                     type="primary"
@@ -176,26 +170,23 @@
                     ⏹️ 关闭
                   </a-button>
 
-                  <a-popconfirm
-                    title="确定要删除这个窗口配置吗？"
-                    ok-text="确认"
-                    cancel-text="取消"
-                    @confirm="handleDelete(record)"
-                  >
-                    <a-button type="link" size="small" danger>
-                      删除
+                  <a-dropdown :trigger="['click']">
+                    <a-button size="small">
+                      更多
+                      <DownOutlined />
                     </a-button>
-                  </a-popconfirm>
-
-                  <a-button
-                    type="link"
-                    size="small"
-                    :loading="checkingId === record.id"
-                    @click="handleFingerprintCheck(record)"
-                  >
-                    <SafetyOutlined />
-                    检测指纹
-                  </a-button>
+                    <template #overlay>
+                      <a-menu @click="(info: any) => onRowMoreClick(info, record)">
+                        <a-menu-item key="edit">✏️ 编辑</a-menu-item>
+                        <a-menu-item key="fingerprint" :disabled="checkingId === record.id">
+                          <SafetyOutlined />
+                          {{ checkingId === record.id ? ' 检测中...' : ' 检测指纹' }}
+                        </a-menu-item>
+                        <a-menu-divider />
+                        <a-menu-item key="delete" danger>🗑️ 删除</a-menu-item>
+                      </a-menu>
+                    </template>
+                  </a-dropdown>
                 </a-space>
               </template>
             </template>
@@ -401,12 +392,12 @@ async function onDeleteGroup(g: ProfileGroup) {
   }
 }
 
-async function onMoveMenuClick({ key }: { key: string }) {
+async function doMoveToGroup(rawKey: string) {
   if (selectedRowKeys.value.length === 0) {
     message.warning('请先选择窗口')
     return
   }
-  const targetGroupId = key === 'ungrouped' ? null : Number(key)
+  const targetGroupId = rawKey === 'ungrouped' ? null : Number(rawKey)
   try {
     const result = await moveProfilesToGroup(targetGroupId, selectedRowKeys.value)
     message.success(`已移动 ${result.changes} 个窗口`)
@@ -416,6 +407,45 @@ async function onMoveMenuClick({ key }: { key: string }) {
     await loadProfileList()
   } catch (err: any) {
     message.error(err?.response?.data?.message || '移动失败')
+  }
+}
+
+function onBatchMenuClick({ key }: { key: string }) {
+  if (typeof key === 'string' && key.startsWith('move:')) {
+    doMoveToGroup(key.slice(5))
+    return
+  }
+  switch (key) {
+    case 'batchStart':
+      handleBatchStart()
+      break
+    case 'batchClose':
+      handleBatchClose()
+      break
+    case 'batchDelete':
+      handleBatchDelete()
+      break
+  }
+}
+
+function onRowMoreClick(info: { key: string }, record: ProfileRecord) {
+  switch (info.key) {
+    case 'edit':
+      handleEdit(record)
+      break
+    case 'fingerprint':
+      handleFingerprintCheck(record)
+      break
+    case 'delete':
+      Modal.confirm({
+        title: '确认删除',
+        content: '确定要删除这个窗口配置吗？此操作不可恢复。',
+        okText: '确认',
+        cancelText: '取消',
+        okButtonProps: { danger: true },
+        onOk: () => handleDelete(record)
+      })
+      break
   }
 }
 
@@ -455,13 +485,13 @@ function handleCheckAgain() {
 
 // ==================== 表格列 ====================
 const columns = [
-  { title: 'ID', dataIndex: 'id', key: 'id', width: 40 },
+  { title: 'ID', dataIndex: 'id', key: 'id', width: 60, fixed: 'left' },
   { title: '状态', dataIndex: 'status', key: 'status', width: 100 },
-  { title: '标题', dataIndex: 'title', key: 'title', width: 180 },
-  { title: '分组', key: 'group', width: 120 },
+  { title: '标题', dataIndex: 'title', key: 'title', width: 180, ellipsis: true },
+  { title: '分组', key: 'group', width: 140 },
   { title: 'Chrome版本', dataIndex: 'chromeVersion', key: 'chromeVersion', width: 110 },
-  { title: '代理', key: 'proxy', width: 130 },
-  { title: '操作', key: 'action', width: 240, fixed: 'right' }
+  { title: '代理', key: 'proxy', width: 140 },
+  { title: '操作', key: 'action', width: 140, fixed: 'right' }
 ]
 
 // ==================== 列表数据与状态 ====================
@@ -721,9 +751,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.profile-list-container {
-  padding: 24px;
-}
 
 .page-header {
   display: flex;
@@ -816,5 +843,10 @@ onUnmounted(() => {
 .color-swatch.active {
   border-color: #000;
   box-shadow: 0 0 0 2px #fff inset;
+}
+
+.group-cell {
+  display: inline-flex;
+  align-items: center;
 }
 </style>

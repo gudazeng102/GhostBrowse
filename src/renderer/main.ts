@@ -12,6 +12,8 @@ import { authStore } from './stores/auth'
 
 // 导入 Ant Design Vue 全局样式
 import 'ant-design-vue/dist/reset.css'
+// 全局自定义样式（滚动条等）
+import './assets/global.css'
 
 // 创建 Vue 应用实例
 const app = createApp(App)
