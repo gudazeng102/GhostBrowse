@@ -90,3 +90,19 @@ CREATE TABLE IF NOT EXISTS verification_codes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_verification_codes_email ON verification_codes(email);
+
+-- =====================================================
+-- Phase 5.0: 窗口分组功能
+-- =====================================================
+CREATE TABLE IF NOT EXISTS profile_groups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  color TEXT DEFAULT '#1890ff',
+  remark TEXT,
+  sort_order INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_profile_groups_user ON profile_groups(user_id);

@@ -68,6 +68,32 @@
                 </a-form-item>
               </a-col>
             </a-row>
+            <a-row :gutter="16">
+              <a-col :span="12">
+                <a-form-item label="所属分组" name="groupId">
+                  <a-select
+                    v-model:value="formState.groupId"
+                    placeholder="选择分组（可选，未选则为未分组）"
+                    allowClear
+                  >
+                    <a-select-option v-for="g in groupList" :key="g.id" :value="g.id">
+                      <span
+                        :style="{
+                          display: 'inline-block',
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          background: g.color,
+                          marginRight: '6px',
+                          verticalAlign: 'middle'
+                        }"
+                      ></span>
+                      {{ g.name }}
+                    </a-select-option>
+                  </a-select>
+                </a-form-item>
+              </a-col>
+            </a-row>
           </a-card>
 
           <!-- 浏览器指纹卡片 -->
@@ -541,7 +567,19 @@ import type { FormInstance } from 'ant-design-vue'
 import { getProxyList, type ProxyRecord } from '../api/proxy'
 import { getProfileDetail, createProfile, updateProfile, type ProfileDto, type ProfileRecord } from '../api/profile'
 import { smartConfigProfile, generateFingerprint } from '../api/profile'
+import { getGroupList, type ProfileGroup } from '../api/profile-group'
 import request from '../api/request'
+
+// ========== Phase 5.0: 窗口分组 ==========
+const groupList = ref<ProfileGroup[]>([])
+async function loadGroupList() {
+  try {
+    const data = await getGroupList()
+    groupList.value = data.groups
+  } catch (e) {
+    console.error('加载分组列表失败:', e)
+  }
+}
 
 // ========== Phase 4.0: 平台账号管理 ==========
 import { getPlatformAccounts, createPlatformAccount, updatePlatformAccount, deletePlatformAccount } from '../api/platform-account'
@@ -908,7 +946,7 @@ const cookiePlaceholder = computed(() => '粘贴 JSON 数组，例如：\n[\n  {
 const canImport = computed(() => importMode.value === 'paste' ? formState.cookieText.trim().length > 0 : importFileJson.value !== null)
 
 const formState: any = reactive({
-  title: '', proxyId: undefined, chromeVersion: '121', os: 'windows',
+  title: '', proxyId: undefined, groupId: undefined, chromeVersion: '121', os: 'windows',
   webrtcMode: 'replace', timezoneMode: 'ip', geolocationMode: 'ip', languageMode: 'mask',
   uiLanguage: 'zh-CN', screenResolution: '1920x1080', font: 'Microsoft YaHei,Arial',
   canvasMode: 'noise', webglMode: 'mock', mediaDeviceMode: 'mock', startupUrl: '',
@@ -929,6 +967,7 @@ async function loadProfileDetail() {
     const data = await getProfileDetail(editId.value) as ProfileRecord
     formState.title = data.title
     formState.proxyId = data.proxyId ?? undefined
+    formState.groupId = data.groupId ?? undefined
     formState.chromeVersion = data.chromeVersion
     formState.os = data.os
     formState.webrtcMode = data.webrtcMode
@@ -962,7 +1001,8 @@ async function handleSubmit() {
   submitting.value = true
   try {
     const submitData: ProfileDto = {
-      title: formState.title, proxyId: formState.proxyId, chromeVersion: formState.chromeVersion, os: formState.os,
+      title: formState.title, proxyId: formState.proxyId, groupId: formState.groupId ?? null,
+      chromeVersion: formState.chromeVersion, os: formState.os,
       webrtcMode: formState.webrtcMode, timezoneMode: formState.timezoneMode, geolocationMode: formState.geolocationMode,
       languageMode: formState.languageMode, uiLanguage: formState.uiLanguage, screenResolution: formState.screenResolution,
       font: Array.isArray(formState.font) ? formState.font.join(',') : formState.font,
@@ -1085,6 +1125,7 @@ async function loadProfileStatus() {
 
 onMounted(async () => {
   await loadProxyList()
+  await loadGroupList()
   if (isEdit.value) {
     loadProfileDetail()
     loadProfileStatus()

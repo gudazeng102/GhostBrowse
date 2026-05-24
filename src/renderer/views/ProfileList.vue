@@ -7,131 +7,204 @@
       </a-button>
     </div>
 
-    <a-card :bordered="false">
-      <template #title>
-        <span>窗口列表</span>
-      </template>
-      <template #extra>
-        <a-space>
-          <!-- 状态刷新按钮 -->
-          <a-button @click="loadProfileStatus" :loading="statusLoading">
-            🔄 刷新状态
-          </a-button>
-          
-          <!-- Phase 1.4: 批量打开按钮 - 选中已停止的窗口时启用 -->
-          <a-button 
-            type="primary"
-            :disabled="!canBatchStart"
-            @click="handleBatchStart"
-          >
-            🚀 批量打开 ({{ selectedStoppedCount }})
-          </a-button>
-          
-          <!-- Phase 1.4: 批量关闭按钮 - 选中运行中的窗口时启用 -->
-          <a-button 
-            danger
-            :disabled="!canBatchClose"
-            @click="handleBatchClose"
-          >
-            ⏹️ 批量关闭 ({{ selectedRunningCount }})
-          </a-button>
-          
-          <!-- 批量删除按钮 -->
-          <a-button 
-            type="primary" 
-            danger 
-            :disabled="selectedRowKeys.length === 0"
-            @click="handleBatchDelete"
-          >
-            🗑️ 批量删除 ({{ selectedRowKeys.length }})
-          </a-button>
-        </a-space>
-      </template>
-
-      <!-- a-table 开启 row-selection 多选功能 -->
-      <a-table
-        :columns="columns"
-        :data-source="profileList"
-        :loading="loading"
-        :pagination="pagination"
-        :row-selection="{ selectedRowKeys, onChange: onSelectChange }"
-        row-key="id"
-        @change="handleTableChange"
-      >
-        <template #bodyCell="{ column, record }">
-          <!-- Phase 1.4: 状态列 -->
-          <template v-if="column.key === 'status'">
-            <a-tag :color="isRunning(record.id) ? 'success' : 'default'">
-              {{ isRunning(record.id) ? '🟢 运行中' : '⚪ 已停止' }}
-            </a-tag>
+    <a-row :gutter="16">
+      <!-- 左侧：分组侧边栏 -->
+      <a-col :span="5">
+        <a-card :bordered="false" class="group-sidebar">
+          <template #title>
+            <span>📂 分组</span>
+          </template>
+          <template #extra>
+            <a-button type="link" size="small" @click="openGroupModal()">
+              ＋ 新建
+            </a-button>
           </template>
 
-          <template v-else-if="column.key === 'webrtcMode'">
-            <a-tag :color="getWebRtcColor(record.webrtcMode)">
-              {{ record.webrtcMode }}
-            </a-tag>
-          </template>
-
-          <template v-else-if="column.key === 'proxy'">
-            <a-tag v-if="record.proxy" color="blue">
-              {{ record.proxy.name }}
-            </a-tag>
-            <a-tag v-else color="default">无</a-tag>
-          </template>
-
-          <template v-else-if="column.key === 'action'">
-            <a-space>
-              <a-button type="link" size="small" @click="handleEdit(record)">
-                编辑
-              </a-button>
-              
-              <!-- Phase 1.4: 根据状态显示不同按钮 -->
-              <a-button 
-                v-if="!isRunning(record.id)"
-                type="primary"
-                size="small"
-                @click="handleLaunch(record)"
-              >
-                🚀 打开
-              </a-button>
-              <a-button 
-                v-else
-                danger
-                size="small"
-                @click="handleClose(record)"
-              >
-                ⏹️ 关闭
-              </a-button>
-              
-              <a-popconfirm
-                title="确定要删除这个窗口配置吗？"
-                ok-text="确认"
-                cancel-text="取消"
-                @confirm="handleDelete(record)"
-              >
-                <a-button type="link" size="small" danger>
-                  删除
+          <div class="group-list">
+            <div
+              class="group-item"
+              :class="{ active: selectedGroupKey[0] === 'all' }"
+              @click="selectGroup('all')"
+            >
+              <span class="group-item-label">📁 全部窗口</span>
+              <a-tag color="default">{{ totalCount }}</a-tag>
+            </div>
+            <div
+              class="group-item"
+              :class="{ active: selectedGroupKey[0] === 'ungrouped' }"
+              @click="selectGroup('ungrouped')"
+            >
+              <span class="group-item-label">📭 未分组</span>
+              <a-tag color="default">{{ ungroupedCount }}</a-tag>
+            </div>
+            <div
+              v-for="g in groupList"
+              :key="`g-${g.id}`"
+              class="group-item"
+              :class="{ active: selectedGroupKey[0] === `g-${g.id}` }"
+              @click="selectGroup(`g-${g.id}`)"
+            >
+              <span class="group-item-label">
+                <span class="group-color-dot" :style="{ background: g.color }"></span>
+                {{ g.name }}
+              </span>
+              <span class="group-item-actions" @click.stop>
+                <a-tag color="default">{{ g.profileCount || 0 }}</a-tag>
+                <a-button
+                  type="text"
+                  size="small"
+                  class="action-btn"
+                  @click.stop="openGroupModal(g)"
+                  title="编辑"
+                >
+                  ✏️
                 </a-button>
-              </a-popconfirm>
+                <a-button
+                  type="text"
+                  size="small"
+                  class="action-btn"
+                  @click.stop="confirmDeleteGroup(g)"
+                  title="删除"
+                >
+                  🗑️
+                </a-button>
+              </span>
+            </div>
+          </div>
+        </a-card>
+      </a-col>
 
-              <!-- Phase 2.0: 检测指纹按钮 -->
-              <a-button 
-                type="link" 
-                size="small"
-                :loading="checkingId === record.id"
-                @click="handleFingerprintCheck(record)"
-              >
-                <SafetyOutlined />
-                检测指纹
+      <!-- 右侧：窗口表格 -->
+      <a-col :span="19">
+        <a-card :bordered="false">
+          <template #title>
+            <span>窗口列表 - {{ currentGroupTitle }}</span>
+          </template>
+          <template #extra>
+            <a-space>
+              <a-button @click="loadProfileStatus" :loading="statusLoading">
+                🔄 刷新状态
               </a-button>
 
+              <a-dropdown :disabled="selectedRowKeys.length === 0">
+                <a-button>
+                  📂 移动到分组 ({{ selectedRowKeys.length }})
+                  <DownOutlined />
+                </a-button>
+                <template #overlay>
+                  <a-menu @click="onMoveMenuClick">
+                    <a-menu-item key="ungrouped">📭 未分组</a-menu-item>
+                    <a-menu-divider />
+                    <a-menu-item v-for="g in groupList" :key="String(g.id)">
+                      <span class="group-color-dot" :style="{ background: g.color }"></span>
+                      {{ g.name }}
+                    </a-menu-item>
+                  </a-menu>
+                </template>
+              </a-dropdown>
+
+              <a-button type="primary" :disabled="!canBatchStart" @click="handleBatchStart">
+                🚀 批量打开 ({{ selectedStoppedCount }})
+              </a-button>
+
+              <a-button danger :disabled="!canBatchClose" @click="handleBatchClose">
+                ⏹️ 批量关闭 ({{ selectedRunningCount }})
+              </a-button>
+
+              <a-button
+                type="primary"
+                danger
+                :disabled="selectedRowKeys.length === 0"
+                @click="handleBatchDelete"
+              >
+                🗑️ 批量删除 ({{ selectedRowKeys.length }})
+              </a-button>
             </a-space>
           </template>
-        </template>
-      </a-table>
-    </a-card>
 
-    <!-- Phase 2.0: 指纹检测弹窗 -->
+          <a-table
+            :columns="columns"
+            :data-source="profileList"
+            :loading="loading"
+            :pagination="pagination"
+            :row-selection="{ selectedRowKeys, onChange: onSelectChange }"
+            row-key="id"
+            @change="handleTableChange"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'status'">
+                <a-tag :color="isRunning(record.id) ? 'success' : 'default'">
+                  {{ isRunning(record.id) ? '🟢 运行中' : '⚪ 已停止' }}
+                </a-tag>
+              </template>
+
+              <template v-else-if="column.key === 'group'">
+                <a-tag v-if="record.group" :color="record.group.color">
+                  {{ record.group.name }}
+                </a-tag>
+                <a-tag v-else color="default">未分组</a-tag>
+              </template>
+
+              <template v-else-if="column.key === 'webrtcMode'">
+                <a-tag :color="getWebRtcColor(record.webrtcMode)">
+                  {{ record.webrtcMode }}
+                </a-tag>
+              </template>
+
+              <template v-else-if="column.key === 'proxy'">
+                <a-tag v-if="record.proxy" color="blue">
+                  {{ record.proxy.name }}
+                </a-tag>
+                <a-tag v-else color="default">无</a-tag>
+              </template>
+
+              <template v-else-if="column.key === 'action'">
+                <a-space>
+                  <a-button type="link" size="small" @click="handleEdit(record)">
+                    编辑
+                  </a-button>
+
+                  <a-button
+                    v-if="!isRunning(record.id)"
+                    type="primary"
+                    size="small"
+                    @click="handleLaunch(record)"
+                  >
+                    🚀 打开
+                  </a-button>
+                  <a-button v-else danger size="small" @click="handleClose(record)">
+                    ⏹️ 关闭
+                  </a-button>
+
+                  <a-popconfirm
+                    title="确定要删除这个窗口配置吗？"
+                    ok-text="确认"
+                    cancel-text="取消"
+                    @confirm="handleDelete(record)"
+                  >
+                    <a-button type="link" size="small" danger>
+                      删除
+                    </a-button>
+                  </a-popconfirm>
+
+                  <a-button
+                    type="link"
+                    size="small"
+                    :loading="checkingId === record.id"
+                    @click="handleFingerprintCheck(record)"
+                  >
+                    <SafetyOutlined />
+                    检测指纹
+                  </a-button>
+                </a-space>
+              </template>
+            </template>
+          </a-table>
+        </a-card>
+      </a-col>
+    </a-row>
+
+    <!-- 指纹检测弹窗 -->
     <FingerprintCheckModal
       v-model:visible="fingerprintModalVisible"
       :result="fingerprintResult"
@@ -139,6 +212,36 @@
       @checkAgain="handleCheckAgain"
     />
 
+    <!-- 分组编辑弹窗 -->
+    <a-modal
+      v-model:open="groupModalVisible"
+      :title="groupForm.id ? '编辑分组' : '新建分组'"
+      @ok="onSaveGroup"
+      @cancel="groupModalVisible = false"
+      :ok-text="groupForm.id ? '保存' : '创建'"
+      cancel-text="取消"
+    >
+      <a-form :model="groupForm" layout="vertical">
+        <a-form-item label="分组名称" required>
+          <a-input v-model:value="groupForm.name" placeholder="请输入分组名称" :maxlength="32" />
+        </a-form-item>
+        <a-form-item label="颜色">
+          <a-space wrap>
+            <span
+              v-for="c in colorPresets"
+              :key="c"
+              class="color-swatch"
+              :class="{ active: groupForm.color === c }"
+              :style="{ background: c }"
+              @click="groupForm.color = c"
+            ></span>
+          </a-space>
+        </a-form-item>
+        <a-form-item label="备注">
+          <a-textarea v-model:value="groupForm.remark" :rows="2" placeholder="可选" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 
@@ -146,25 +249,185 @@
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { SafetyOutlined } from '@ant-design/icons-vue'
-import { getProfileList, deleteProfile, launchProfile, getProfilesStatus, closeProfile, type ProfileRecord } from '../api/profile'
+import { SafetyOutlined, DownOutlined } from '@ant-design/icons-vue'
+import {
+  getProfileList,
+  deleteProfile,
+  launchProfile,
+  getProfilesStatus,
+  closeProfile,
+  type ProfileRecord
+} from '../api/profile'
+import {
+  getGroupList,
+  createGroup,
+  updateGroup,
+  deleteGroup,
+  moveProfilesToGroup,
+  type ProfileGroup
+} from '../api/profile-group'
 import { checkFingerprint } from '../api/fingerprint'
 import FingerprintCheckModal from '../components/FingerprintCheckModal.vue'
-import type { FingerprintCheckResult } from '../../types'
 
 const router = useRouter()
 
-// ==================== Phase 2.0: 指纹检测相关状态和函数 ====================
+// ==================== 分组相关 ====================
+const groupList = ref<ProfileGroup[]>([])
+const ungroupedCount = ref(0)
+const totalCount = ref(0)
+const selectedGroupKey = ref<string[]>(['all'])
 
+const colorPresets = [
+  '#1890ff', '#52c41a', '#faad14', '#f5222d',
+  '#722ed1', '#13c2c2', '#eb2f96', '#fa8c16'
+]
+
+const groupModalVisible = ref(false)
+const groupForm = reactive<{
+  id: number | null
+  name: string
+  color: string
+  remark: string
+}>({
+  id: null,
+  name: '',
+  color: '#1890ff',
+  remark: ''
+})
+
+const currentGroupTitle = computed(() => {
+  const key = selectedGroupKey.value[0] || 'all'
+  if (key === 'all') return '全部窗口'
+  if (key === 'ungrouped') return '未分组'
+  const id = Number(key.replace('g-', ''))
+  const g = groupList.value.find(x => x.id === id)
+  return g ? g.name : '全部窗口'
+})
+
+const currentGroupFilter = computed<number | 'ungrouped' | undefined>(() => {
+  const key = selectedGroupKey.value[0] || 'all'
+  if (key === 'all') return undefined
+  if (key === 'ungrouped') return 'ungrouped'
+  return Number(key.replace('g-', ''))
+})
+
+async function loadGroups() {
+  try {
+    const data = await getGroupList()
+    groupList.value = data.groups
+    ungroupedCount.value = data.ungroupedCount
+    totalCount.value =
+      data.ungroupedCount +
+      data.groups.reduce((sum, g) => sum + (g.profileCount || 0), 0)
+  } catch (err) {
+    console.error('加载分组失败:', err)
+  }
+}
+
+function selectGroup(key: string) {
+  if (selectedGroupKey.value[0] === key) return
+  selectedGroupKey.value = [key]
+  loadProfileList()
+}
+
+function confirmDeleteGroup(g: ProfileGroup) {
+  Modal.confirm({
+    title: '确认删除',
+    content: `确定删除分组「${g.name}」吗？组内窗口将变为未分组`,
+    okText: '确认',
+    cancelText: '取消',
+    okButtonProps: { danger: true },
+    onOk: () => onDeleteGroup(g)
+  })
+}
+
+function openGroupModal(g?: ProfileGroup) {
+  if (g) {
+    groupForm.id = g.id
+    groupForm.name = g.name
+    groupForm.color = g.color || '#1890ff'
+    groupForm.remark = g.remark || ''
+  } else {
+    groupForm.id = null
+    groupForm.name = ''
+    groupForm.color = '#1890ff'
+    groupForm.remark = ''
+  }
+  groupModalVisible.value = true
+}
+
+async function onSaveGroup() {
+  if (!groupForm.name.trim()) {
+    message.warning('请输入分组名称')
+    return
+  }
+  try {
+    if (groupForm.id) {
+      await updateGroup(groupForm.id, {
+        name: groupForm.name.trim(),
+        color: groupForm.color,
+        remark: groupForm.remark
+      })
+      message.success('分组已更新')
+    } else {
+      await createGroup({
+        name: groupForm.name.trim(),
+        color: groupForm.color,
+        remark: groupForm.remark
+      })
+      message.success('分组已创建')
+    }
+    groupModalVisible.value = false
+    await loadGroups()
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '保存失败')
+  }
+}
+
+async function onDeleteGroup(g: ProfileGroup) {
+  try {
+    await deleteGroup(g.id)
+    message.success('分组已删除')
+    // 如果当前选中的就是该分组，则切回"全部"
+    if (selectedGroupKey.value[0] === `g-${g.id}`) {
+      selectedGroupKey.value = ['all']
+      await loadProfileList()
+    } else {
+      await loadProfileList()
+    }
+    await loadGroups()
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '删除失败')
+  }
+}
+
+async function onMoveMenuClick({ key }: { key: string }) {
+  if (selectedRowKeys.value.length === 0) {
+    message.warning('请先选择窗口')
+    return
+  }
+  const targetGroupId = key === 'ungrouped' ? null : Number(key)
+  try {
+    const result = await moveProfilesToGroup(targetGroupId, selectedRowKeys.value)
+    message.success(`已移动 ${result.changes} 个窗口`)
+    selectedRowKeys.value = []
+    selectedRows.value = []
+    await loadGroups()
+    await loadProfileList()
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '移动失败')
+  }
+}
+
+// ==================== 指纹检测 ====================
 const fingerprintModalVisible = ref(false)
-const fingerprintResult = ref<FingerprintCheckResult | null>(null)
+const fingerprintResult = ref<any>(null)
 const checkingId = ref<number | null>(null)
 
 async function handleFingerprintCheck(profile: any) {
   checkingId.value = profile.id
   try {
     const res: any = await checkFingerprint(profile.id)
-    // axios 返回的数据结构：res.data 才是 API 响应体
     if (res.data?.code === 200 && res.data?.data) {
       fingerprintResult.value = res.data.data
       fingerprintModalVisible.value = true
@@ -190,59 +453,23 @@ function handleCheckAgain() {
   }
 }
 
-// 表格列定义
+// ==================== 表格列 ====================
 const columns = [
-  {
-    title: 'ID',
-    dataIndex: 'id',
-    key: 'id',
-    width: 40
-  },
-  {
-    title: '状态',
-    dataIndex: 'status',
-    key: 'status',
-    width: 100
-  },
-  {
-    title: '标题',
-    dataIndex: 'title',
-    key: 'title',
-    width: 200
-  },
-  {
-    title: 'Chrome版本',
-    dataIndex: 'chromeVersion',
-    key: 'chromeVersion',
-    width: 120
-  },
- 
-  {
-    title: '代理',
-    key: 'proxy',
-    width: 150
-  },
-  {
-    title: '操作',
-    key: 'action',
-    width: 220,
-    fixed: 'right'
-  }
+  { title: 'ID', dataIndex: 'id', key: 'id', width: 40 },
+  { title: '状态', dataIndex: 'status', key: 'status', width: 100 },
+  { title: '标题', dataIndex: 'title', key: 'title', width: 180 },
+  { title: '分组', key: 'group', width: 120 },
+  { title: 'Chrome版本', dataIndex: 'chromeVersion', key: 'chromeVersion', width: 110 },
+  { title: '代理', key: 'proxy', width: 130 },
+  { title: '操作', key: 'action', width: 240, fixed: 'right' }
 ]
 
-// 窗口列表数据
+// ==================== 列表数据与状态 ====================
 const profileList = ref<ProfileRecord[]>([])
-
-// 加载状态
 const loading = ref(false)
-
-// 状态加载状态
 const statusLoading = ref(false)
-
-// 运行中的窗口 ID 列表
 const runningIds = ref<number[]>([])
 
-// 分页配置（使用 reactive 而非 ref，避免 a-table 内部副本不同步）
 const pagination = reactive({
   current: 1,
   pageSize: 10,
@@ -253,26 +480,18 @@ const pagination = reactive({
   showTotal: (total: number) => `共 ${total} 条`
 })
 
-// 多选相关状态
 const selectedRowKeys = ref<number[]>([])
 const selectedRows = ref<ProfileRecord[]>([])
 
-/**
- * 选中项变化回调
- */
 function onSelectChange(keys: number[], rows: ProfileRecord[]) {
   selectedRowKeys.value = keys
   selectedRows.value = rows
 }
 
-/**
- * 检查指定窗口是否运行中
- */
 function isRunning(profileId: number): boolean {
   return runningIds.value.includes(profileId)
 }
 
-// 获取 WebRTC 模式对应的颜色
 function getWebRtcColor(mode: string): string {
   const colorMap: Record<string, string> = {
     forward: 'blue',
@@ -282,9 +501,7 @@ function getWebRtcColor(mode: string): string {
   return colorMap[mode] || 'default'
 }
 
-// 表格变化处理：a-table @change 签名为 (pagination, filters, sorter, extra)
 function handleTableChange(pag: any) {
-  // 当 pageSize 改变时，跳回第一页
   if (pag.pageSize !== pagination.pageSize) {
     pagination.current = 1
   } else {
@@ -293,11 +510,10 @@ function handleTableChange(pag: any) {
   pagination.pageSize = pag.pageSize
 }
 
-// 加载窗口列表
 async function loadProfileList() {
   loading.value = true
   try {
-    const list = await getProfileList()
+    const list = await getProfileList(currentGroupFilter.value)
     profileList.value = list
     pagination.total = list.length
   } catch (error) {
@@ -308,13 +524,11 @@ async function loadProfileList() {
   }
 }
 
-// 加载窗口运行状态
 async function loadProfileStatus() {
   statusLoading.value = true
   try {
     const status = await getProfilesStatus()
     runningIds.value = status.runningIds || []
-
   } catch (error) {
     console.error('加载窗口状态失败:', error)
   } finally {
@@ -322,22 +536,18 @@ async function loadProfileStatus() {
   }
 }
 
-// 新建窗口
 function handleCreateProfile() {
   router.push('/profile/new')
 }
 
-// 编辑窗口
 function handleEdit(record: ProfileRecord) {
   router.push({ path: '/profile/edit', query: { id: String(record.id) } })
 }
 
-// 启动窗口
 async function handleLaunch(record: ProfileRecord) {
   try {
     const result = await launchProfile(record.id)
     message.success(`窗口已启动，PID: ${result.pid}`)
-    // 刷新状态
     loadProfileStatus()
   } catch (error: any) {
     console.error('启动窗口失败:', error)
@@ -345,7 +555,6 @@ async function handleLaunch(record: ProfileRecord) {
   }
 }
 
-// Phase 1.4: 关闭窗口
 async function handleClose(record: ProfileRecord) {
   try {
     const result = await closeProfile(record.id)
@@ -354,7 +563,6 @@ async function handleClose(record: ProfileRecord) {
     } else {
       message.warning(result.message || '窗口未运行')
     }
-    // 刷新状态
     loadProfileStatus()
   } catch (error: any) {
     console.error('关闭窗口失败:', error)
@@ -362,14 +570,12 @@ async function handleClose(record: ProfileRecord) {
   }
 }
 
-// 删除窗口（单个）
 async function handleDelete(record: ProfileRecord) {
   try {
     await deleteProfile(record.id)
     message.success('删除成功')
-    // 清空选中状态
     selectedRowKeys.value = selectedRowKeys.value.filter(key => key !== record.id)
-    // 刷新列表和状态
+    await loadGroups()
     loadProfileList()
     loadProfileStatus()
   } catch (error) {
@@ -378,7 +584,6 @@ async function handleDelete(record: ProfileRecord) {
   }
 }
 
-// 批量删除
 async function handleBatchDelete() {
   if (selectedRowKeys.value.length === 0) {
     message.warning('请先选择要删除的窗口配置')
@@ -395,8 +600,6 @@ async function handleBatchDelete() {
     async onOk() {
       let successCount = 0
       let failCount = 0
-      
-      // 循环删除选中的窗口
       for (const id of selectedRowKeys.value) {
         try {
           await deleteProfile(id)
@@ -406,56 +609,35 @@ async function handleBatchDelete() {
           failCount++
         }
       }
-      
-      // 清空选中状态
       selectedRowKeys.value = []
       selectedRows.value = []
-      
-      // 显示结果
       if (failCount === 0) {
         message.success(`批量删除成功，共删除 ${successCount} 个`)
       } else {
         message.warning(`删除完成：成功 ${successCount} 个，失败 ${failCount} 个`)
       }
-      
-      // 刷新列表和状态
+      await loadGroups()
       loadProfileList()
       loadProfileStatus()
     }
   })
 }
 
-// Phase 1.4: 计算选中项中已停止的数量
 const selectedStoppedCount = computed(() => {
   return selectedRows.value.filter(row => !isRunning(row.id)).length
 })
-
-// Phase 1.4: 计算选中项中运行中的数量
 const selectedRunningCount = computed(() => {
   return selectedRows.value.filter(row => isRunning(row.id)).length
 })
+const canBatchStart = computed(() => selectedStoppedCount.value > 0)
+const canBatchClose = computed(() => selectedRunningCount.value > 0)
 
-// Phase 1.4: 是否可以批量打开
-const canBatchStart = computed(() => {
-  return selectedStoppedCount.value > 0
-})
-
-// Phase 1.4: 是否可以批量关闭
-const canBatchClose = computed(() => {
-  return selectedRunningCount.value > 0
-})
-
-// Phase 1.4: 批量启动
 async function handleBatchStart() {
   if (selectedStoppedCount.value === 0) {
     message.warning('请先选择已停止的窗口')
     return
   }
-
-  const stoppedIds = selectedRows.value
-    .filter(row => !isRunning(row.id))
-    .map(row => row.id)
-
+  const stoppedIds = selectedRows.value.filter(row => !isRunning(row.id)).map(row => row.id)
   Modal.confirm({
     title: '确认批量打开',
     content: `确定要批量打开选中的 ${stoppedIds.length} 个窗口吗？`,
@@ -464,12 +646,7 @@ async function handleBatchStart() {
     async onOk() {
       let successCount = 0
       let failCount = 0
-      
-      // 并行启动所有选中的窗口
-      const results = await Promise.allSettled(
-        stoppedIds.map(id => launchProfile(id))
-      )
-      
+      const results = await Promise.allSettled(stoppedIds.map(id => launchProfile(id)))
       results.forEach((result, index) => {
         if (result.status === 'fulfilled') {
           successCount++
@@ -478,93 +655,74 @@ async function handleBatchStart() {
           failCount++
         }
       })
-      
-      // 显示结果
       if (failCount === 0) {
-        message.success(`批量打开成功，共启动 ${successCount} 个窗口`)
+        message.success(`批量打开成功，共启动 ${successCount} 个`)
       } else {
-        message.warning(`批量打开完成：成功 ${successCount} 个，失败 ${failCount} 个`)
+        message.warning(`启动完成：成功 ${successCount} 个，失败 ${failCount} 个`)
       }
-      
-      // 刷新状态
       loadProfileStatus()
     }
   })
 }
 
-// Phase 1.4: 批量关闭
 async function handleBatchClose() {
   if (selectedRunningCount.value === 0) {
     message.warning('请先选择运行中的窗口')
     return
   }
-
-  const runningItems = selectedRows.value.filter(row => isRunning(row.id))
-
+  const runningIdList = selectedRows.value.filter(row => isRunning(row.id)).map(row => row.id)
   Modal.confirm({
     title: '确认批量关闭',
-    content: `确定要关闭运行中的 ${runningItems.length} 个窗口吗？`,
+    content: `确定要批量关闭选中的 ${runningIdList.length} 个窗口吗？`,
     okText: '确认',
     cancelText: '取消',
+    okButtonProps: { danger: true },
     async onOk() {
       let successCount = 0
       let failCount = 0
-      
-      // 并行关闭所有选中的窗口
-      const results = await Promise.allSettled(
-        runningItems.map(item => closeProfile(item.id))
-      )
-      
+      const results = await Promise.allSettled(runningIdList.map(id => closeProfile(id)))
       results.forEach((result, index) => {
-        if (result.status === 'fulfilled' && result.value.success) {
+        if (result.status === 'fulfilled' && (result.value as any)?.success) {
           successCount++
         } else {
-          console.error(`关闭窗口 ${runningItems[index].id} 失败:`, result)
+          console.error(`关闭窗口 ${runningIdList[index]} 失败:`,
+            result.status === 'rejected' ? result.reason : (result.value as any)?.message)
           failCount++
         }
       })
-      
-      // 清空选中状态
-      selectedRowKeys.value = []
-      selectedRows.value = []
-      
-      // 显示结果
       if (failCount === 0) {
-        message.success(`批量关闭成功，共关闭 ${successCount} 个窗口`)
+        message.success(`批量关闭成功，共关闭 ${successCount} 个`)
       } else {
-        message.warning(`批量关闭完成：成功 ${successCount} 个，失败 ${failCount} 个`)
+        message.warning(`关闭完成：成功 ${successCount} 个，失败 ${failCount} 个`)
       }
-      
-      // 刷新状态
       loadProfileStatus()
     }
   })
 }
 
-// 定时刷新状态
-let statusInterval: number | null = null
+// ==================== 生命周期 ====================
+let statusTimer: ReturnType<typeof setInterval> | null = null
 
-onMounted(() => {
-  loadProfileList()
-  loadProfileStatus()
-  
-  // 每 60 秒自动刷新状态
-  statusInterval = window.setInterval(() => {
+onMounted(async () => {
+  await loadGroups()
+  await loadProfileList()
+  await loadProfileStatus()
+  statusTimer = setInterval(() => {
     loadProfileStatus()
   }, 5000)
 })
 
 onUnmounted(() => {
-  // 清理定时器
-  if (statusInterval) {
-    clearInterval(statusInterval)
+  if (statusTimer) {
+    clearInterval(statusTimer)
+    statusTimer = null
   }
 })
 </script>
 
 <style scoped>
 .profile-list-container {
-  padding: 0;
+  padding: 24px;
 }
 
 .page-header {
@@ -578,6 +736,85 @@ onUnmounted(() => {
   margin: 0;
   font-size: 24px;
   font-weight: 600;
-  color: #262626;
+}
+
+.group-sidebar :deep(.ant-card-body) {
+  padding: 8px;
+}
+
+.group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.group-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s;
+}
+
+.group-item:hover {
+  background: #f5f5f5;
+}
+
+.group-item.active {
+  background: #e6f4ff;
+  color: #1677ff;
+  font-weight: 500;
+}
+
+.group-item-label {
+  display: inline-flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.group-item .action-btn {
+  opacity: 0;
+  padding: 0 4px;
+  transition: opacity 0.2s;
+}
+
+.group-item:hover .action-btn {
+  opacity: 1;
+}
+
+.group-color-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.color-swatch {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 2px solid transparent;
+}
+
+.color-swatch.active {
+  border-color: #000;
+  box-shadow: 0 0 0 2px #fff inset;
 }
 </style>

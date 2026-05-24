@@ -339,6 +339,8 @@ interface ProfileDto {
   // Phase 4.0: Cookie 预置 JSON
   cookie_json?: string
   cookieJson?: string
+  // Phase 5.0: 窗口分组
+  groupId?: number | null
 }
 
 // ==================== API 路由 ====================
@@ -356,24 +358,39 @@ router.get('/', (req: AuthRequest, res: Response) => {
     const userId = req.user!.userId
     const db = getDatabase()
     
-    // JOIN proxies 表获取代理信息，按 user_id 过滤
+    // 支持 ?groupId=xxx / ?groupId=null 过滤
+    const groupIdRaw = req.query.groupId as string | undefined
+    let groupFilter = ''
+    const params: any[] = [userId]
+    if (groupIdRaw !== undefined) {
+      if (groupIdRaw === 'null' || groupIdRaw === '0' || groupIdRaw === 'ungrouped') {
+        groupFilter = ' AND p.group_id IS NULL'
+      } else {
+        groupFilter = ' AND p.group_id = ?'
+        params.push(Number(groupIdRaw))
+      }
+    }
+
+    // JOIN proxies 表 + JOIN profile_groups 表
     const sql = `
       SELECT 
         p.id, p.title, p.proxy_id, p.chrome_version, p.os,
         p.webrtc_mode, p.timezone_mode, p.geolocation_mode,
         p.language_mode, p.ui_language, p.screen_resolution,
         p.font, p.canvas_mode, p.webgl_mode, p.media_device_mode,
-        p.startup_url, p.icon_path, p.created_at, p.updated_at,
+        p.startup_url, p.icon_path, p.group_id, p.created_at, p.updated_at,
         p.cookie_json,
         pr.id as pr_id, pr.name as pr_name, pr.type as pr_type,
-        pr.host as pr_host, pr.port as pr_port, pr.username as pr_username
+        pr.host as pr_host, pr.port as pr_port, pr.username as pr_username,
+        g.id as g_id, g.name as g_name, g.color as g_color
       FROM profiles p
       LEFT JOIN proxies pr ON p.proxy_id = pr.id
-      WHERE p.user_id = ?
+      LEFT JOIN profile_groups g ON p.group_id = g.id
+      WHERE p.user_id = ?${groupFilter}
       ORDER BY p.id DESC
     `
     
-    const rows = db.prepare(sql).all(userId) as any[]
+    const rows = db.prepare(sql).all(...params) as any[]
     
     // 格式化返回数据，关联代理信息
     const list = rows.map(row => ({
@@ -394,6 +411,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
       mediaDeviceMode: row.media_device_mode,
       startupUrl: row.startup_url || undefined,
       iconPath: row.icon_path || undefined,
+      groupId: row.group_id ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       // Phase 4.0: Cookie 预置（同时返回两种命名）
@@ -406,6 +424,12 @@ router.get('/', (req: AuthRequest, res: Response) => {
         type: row.pr_type,
         host: row.pr_host,
         port: row.pr_port
+      } : null,
+      // Phase 5.0: 关联的分组信息
+      group: row.g_id ? {
+        id: row.g_id,
+        name: row.g_name,
+        color: row.g_color || '#1890ff'
       } : null
     }))
     
@@ -584,7 +608,8 @@ router.post('/', (req: AuthRequest, res: Response) => {
         font, canvas_mode, webgl_mode, media_device_mode,
         startup_url, icon_path, user_id, created_at, updated_at,
         device_name, mac_address, canvas_noise_seed, audio_noise_seed,
-        rects_noise_seed, webgl_vendor, webgl_renderer, cookie_json
+        rects_noise_seed, webgl_vendor, webgl_renderer, cookie_json,
+        group_id
       ) VALUES (
         @title, @proxy_id, @chrome_version, @os,
         @webrtc_mode, @timezone_mode, @geolocation_mode,
@@ -592,7 +617,8 @@ router.post('/', (req: AuthRequest, res: Response) => {
         @font, @canvas_mode, @webgl_mode, @media_device_mode,
         @startup_url, @icon_path, @user_id, @created_at, @updated_at,
         @device_name, @mac_address, @canvas_noise_seed, @audio_noise_seed,
-        @rects_noise_seed, @webgl_vendor, @webgl_renderer, @cookie_json
+        @rects_noise_seed, @webgl_vendor, @webgl_renderer, @cookie_json,
+        @group_id
       )
     `).run({
       title: body.title.trim(),
@@ -622,7 +648,8 @@ router.post('/', (req: AuthRequest, res: Response) => {
       rects_noise_seed: body.rectsNoiseSeed || null,
       webgl_vendor: body.webglVendor || null,
       webgl_renderer: body.webglRenderer || null,
-      cookie_json: body.cookieJson || body.cookie_json || null
+      cookie_json: body.cookieJson || body.cookie_json || null,
+      group_id: body.groupId ?? null
     })
     
     res.json({
@@ -709,7 +736,8 @@ router.put('/:id', (req: Request, res: Response) => {
         rects_noise_seed = @rects_noise_seed,
         webgl_vendor = @webgl_vendor,
         webgl_renderer = @webgl_renderer,
-        cookie_json = @cookie_json
+        cookie_json = @cookie_json,
+        group_id = @group_id
       WHERE id = @id
     `).run({
       id: Number(id),
@@ -739,7 +767,9 @@ router.put('/:id', (req: Request, res: Response) => {
       webgl_vendor: body.webglVendor || null,
       webgl_renderer: body.webglRenderer || null,
       // Phase 4.0: Cookie 预置
-      cookie_json: body.cookieJson || body.cookie_json || null
+      cookie_json: body.cookieJson || body.cookie_json || null,
+      // Phase 5.0: 窗口分组
+      group_id: body.groupId ?? null
     })
     
     res.json({

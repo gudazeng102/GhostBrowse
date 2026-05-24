@@ -18,6 +18,7 @@ import authRouter from './routes/auth'
 import fingerprintRouter from './routes/fingerprint'
 import cookieManagerRouter from './routes/cookie-manager'
 import platformAccountRouter from './routes/platform-account'
+import profileGroupRouter from './routes/profile-group'
 
 // Express 应用实例
 let app: Express | null = null
@@ -105,6 +106,9 @@ export function createApp(): Express {
 
   // ==================== Phase 4.0: 平台账号 API（Twitter/X 自动登录） ====================
   app.use('/api/v1/platform-accounts', platformAccountRouter)
+
+  // ==================== Phase 5.0: 窗口分组 API ====================
+  app.use('/api/v1/profile-groups', profileGroupRouter)
 
   // ==================== 捕获所有路由，返回 index.html (SPA 支持) ====================
   app.get('*', (req: Request, res: Response) => {

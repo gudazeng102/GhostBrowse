@@ -50,6 +50,9 @@ export interface ProfileRecord {
   webglRenderer?: string
   // Phase 4.0: Cookie 预置
   cookieJson?: string
+  // Phase 5.0: 窗口分组
+  groupId?: number | null
+  group?: { id: number; name: string; color: string } | null
 }
 
 /** 创建/更新 Profile 请求体 */
@@ -79,6 +82,8 @@ export interface ProfileDto {
   webglRenderer?: string
   // Phase 4.0: Cookie 预置
   cookieJson?: string
+  // Phase 5.0: 窗口分组
+  groupId?: number | null
 }
 
 /** Chrome 启动结果 */
@@ -91,9 +96,16 @@ export interface LaunchResult {
 
 /**
  * 获取窗口列表
+ * @param groupId 分组过滤：number=指定分组ID，'ungrouped'=未分组，undefined=全部
  */
-export async function getProfileList(): Promise<ProfileRecord[]> {
-  const response = await request.get<any>('/profiles')
+export async function getProfileList(
+  groupId?: number | 'ungrouped' | null
+): Promise<ProfileRecord[]> {
+  let url = '/profiles'
+  if (groupId !== undefined && groupId !== null) {
+    url += `?groupId=${groupId === 'ungrouped' ? 'null' : groupId}`
+  }
+  const response = await request.get<any>(url)
   return response.data.data || []
 }
 

@@ -182,6 +182,26 @@ function runMigrations(): void {
   createSessionTabsTable()
   migrateCookieJsonColumn()
   createPlatformAccountsTable()
+  migrateProfileGroupColumn()
+}
+
+/**
+ * Phase 5.0: 窗口分组功能 - 为 profiles 表添加 group_id 字段
+ */
+function migrateProfileGroupColumn(): void {
+  if (!db) return
+
+  try {
+    const columns = db!.prepare('PRAGMA table_info(profiles)').all() as any[]
+    const hasGroupId = columns.some(col => col.name === 'group_id')
+    if (!hasGroupId) {
+      db!.prepare('ALTER TABLE profiles ADD COLUMN group_id INTEGER').run()
+      console.log('[DB] profiles 表已添加 group_id 字段')
+    }
+    db!.prepare('CREATE INDEX IF NOT EXISTS idx_profiles_group_id ON profiles(group_id)').run()
+  } catch (err: any) {
+    console.error('[DB Migrate] 为 profiles 表添加 group_id 字段失败:', err.message)
+  }
 }
 
 function migrateCookieJsonColumn(): void {
