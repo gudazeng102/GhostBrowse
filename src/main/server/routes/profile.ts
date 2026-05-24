@@ -371,6 +371,21 @@ router.get('/', (req: AuthRequest, res: Response) => {
       }
     }
 
+    // 支持 ?keyword=xxx 模糊搜索：标题 / 代理名 / 代理 host / 分组名
+    const keywordRaw = (req.query.keyword as string | undefined)?.trim()
+    let keywordFilter = ''
+    if (keywordRaw) {
+      keywordFilter =
+        ' AND (' +
+        'LOWER(p.title) LIKE ? OR ' +
+        'LOWER(IFNULL(pr.name, \'\')) LIKE ? OR ' +
+        'LOWER(IFNULL(pr.host, \'\')) LIKE ? OR ' +
+        'LOWER(IFNULL(g.name, \'\')) LIKE ?' +
+        ')'
+      const like = `%${keywordRaw.toLowerCase()}%`
+      params.push(like, like, like, like)
+    }
+
     // JOIN proxies 表 + JOIN profile_groups 表
     const sql = `
       SELECT 
@@ -386,12 +401,14 @@ router.get('/', (req: AuthRequest, res: Response) => {
       FROM profiles p
       LEFT JOIN proxies pr ON p.proxy_id = pr.id
       LEFT JOIN profile_groups g ON p.group_id = g.id
-      WHERE p.user_id = ?${groupFilter}
+      WHERE p.user_id = ?${groupFilter}${keywordFilter}
       ORDER BY p.id DESC
     `
     
     const rows = db.prepare(sql).all(...params) as any[]
-    
+
+    console.log(`[Profile API] 列表查询: groupId=${groupIdRaw ?? 'all'}, keyword=${keywordRaw ?? '(none)'}, 命中 ${rows.length} 条`)
+
     // 格式化返回数据，关联代理信息
     const list = rows.map(row => ({
       id: row.id,

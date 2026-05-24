@@ -78,14 +78,26 @@
       <a-col :span="19">
         <a-card :bordered="false">
           <template #title>
-            <span>窗口列表 - {{ currentGroupTitle }}</span>
+            <span>窗口列表</span>
           </template>
           <template #extra>
-            <a-dropdown :disabled="selectedRowKeys.length === 0">
-              <a-button type="primary">
-                ⚡ 批量操作 ({{ selectedRowKeys.length }})
-                <DownOutlined />
-              </a-button>
+            <a-space :size="8">
+              <!-- 搜索框：支持标题 / 代理名 / 代理host / 分组名 模糊搜索 -->
+              <a-input
+                v-model:value="searchKeyword"
+                placeholder="搜索标题/代理/分组"
+                allow-clear
+                style="width: 220px"
+                @press-enter="onSearch"
+              />
+              <a-button type="primary" @click="onSearch">🔍 搜索</a-button>
+              <a-button @click="onResetSearch">↺ 重置</a-button>
+
+              <a-dropdown :disabled="selectedRowKeys.length === 0">
+                <a-button type="primary">
+                  ⚡ 批量操作 ({{ selectedRowKeys.length }})
+                  <DownOutlined />
+                </a-button>
               <template #overlay>
                 <a-menu @click="onBatchMenuClick">
                   <a-sub-menu key="move">
@@ -113,6 +125,7 @@
                 </a-menu>
               </template>
             </a-dropdown>
+            </a-space>
           </template>
 
           <a-table
@@ -286,14 +299,7 @@ const groupForm = reactive<{
   remark: ''
 })
 
-const currentGroupTitle = computed(() => {
-  const key = selectedGroupKey.value[0] || 'all'
-  if (key === 'all') return '全部窗口'
-  if (key === 'ungrouped') return '未分组'
-  const id = Number(key.replace('g-', ''))
-  const g = groupList.value.find(x => x.id === id)
-  return g ? g.name : '全部窗口'
-})
+
 
 const currentGroupFilter = computed<number | 'ungrouped' | undefined>(() => {
   const key = selectedGroupKey.value[0] || 'all'
@@ -513,6 +519,23 @@ const pagination = reactive({
 const selectedRowKeys = ref<number[]>([])
 const selectedRows = ref<ProfileRecord[]>([])
 
+// ==================== 搜索 ====================
+const searchKeyword = ref('')
+const activeKeyword = ref('')   // 真正参与请求的关键字（点击搜索/回车后才生效）
+
+function onSearch() {
+  activeKeyword.value = searchKeyword.value.trim()
+  pagination.current = 1
+  loadProfileList()
+}
+
+function onResetSearch() {
+  searchKeyword.value = ''
+  activeKeyword.value = ''
+  pagination.current = 1
+  loadProfileList()
+}
+
 function onSelectChange(keys: number[], rows: ProfileRecord[]) {
   selectedRowKeys.value = keys
   selectedRows.value = rows
@@ -543,7 +566,10 @@ function handleTableChange(pag: any) {
 async function loadProfileList() {
   loading.value = true
   try {
-    const list = await getProfileList(currentGroupFilter.value)
+    // 有关键词时只按关键词搜索（跨分组），不带 groupId
+    const list = activeKeyword.value
+      ? await getProfileList(undefined, activeKeyword.value)
+      : await getProfileList(currentGroupFilter.value)
     profileList.value = list
     pagination.total = list.length
   } catch (error) {
@@ -751,6 +777,9 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.profile-list-container {
+  padding: 24px;
+}
 
 .page-header {
   display: flex;

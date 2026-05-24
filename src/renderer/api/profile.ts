@@ -97,14 +97,20 @@ export interface LaunchResult {
 /**
  * 获取窗口列表
  * @param groupId 分组过滤：number=指定分组ID，'ungrouped'=未分组，undefined=全部
+ * @param keyword 关键词模糊搜索（标题/代理名/代理host/分组名）
  */
 export async function getProfileList(
-  groupId?: number | 'ungrouped' | null
+  groupId?: number | 'ungrouped' | null,
+  keyword?: string
 ): Promise<ProfileRecord[]> {
-  let url = '/profiles'
+  const params: string[] = []
   if (groupId !== undefined && groupId !== null) {
-    url += `?groupId=${groupId === 'ungrouped' ? 'null' : groupId}`
+    params.push(`groupId=${groupId === 'ungrouped' ? 'null' : groupId}`)
   }
+  if (keyword && keyword.trim()) {
+    params.push(`keyword=${encodeURIComponent(keyword.trim())}`)
+  }
+  const url = '/profiles' + (params.length ? `?${params.join('&')}` : '')
   const response = await request.get<any>(url)
   return response.data.data || []
 }
