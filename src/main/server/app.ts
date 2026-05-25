@@ -19,6 +19,7 @@ import fingerprintRouter from './routes/fingerprint'
 import cookieManagerRouter from './routes/cookie-manager'
 import platformAccountRouter from './routes/platform-account'
 import profileGroupRouter from './routes/profile-group'
+import aiRouter from './routes/ai'
 
 // Express 应用实例
 let app: Express | null = null
@@ -109,6 +110,9 @@ export function createApp(): Express {
 
   // ==================== Phase 5.0: 窗口分组 API ====================
   app.use('/api/v1/profile-groups', profileGroupRouter)
+
+  // ==================== Phase 6.0: AI 服务 API ====================
+  app.use('/api/v1/ai', aiRouter)
 
   // ==================== 捕获所有路由，返回 index.html (SPA 支持) ====================
   app.get('*', (req: Request, res: Response) => {

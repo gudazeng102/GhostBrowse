@@ -3,8 +3,8 @@
     "target": "ES2020",
     "module": "CommonJS",
     "lib": ["ES2020"],
-    "outDir": "./dist-electron/main",
-    "rootDir": "./src/main",
+    "outDir": "./dist-electron",
+    "rootDir": "./src",
     "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -15,6 +15,12 @@
     "allowSyntheticDefaultImports": true,
     "noImplicitAny": false
   },
-  "include": ["src/main/**/*"],
-  "exclude": ["node_modules", "dist", "dist-electron", "release"]
+  "include": ["src/main/**/*", "src/shared/**/*"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "dist-electron",
+    "release",
+    "src/shared/**/__tests__/**"
+  ]
 }
