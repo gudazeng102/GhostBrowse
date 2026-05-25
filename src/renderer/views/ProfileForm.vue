@@ -336,6 +336,7 @@
             <a-empty v-if="platformAccounts.length === 0" description="暂无账号，点击上方添加">
               <template #image>
                 <TwitterOutlined style="font-size: 40px; color: #1890ff;" />
+                <InstagramOutlined style="font-size: 40px; color: #1890ff;" />
               </template>
             </a-empty>
             
@@ -562,7 +563,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { LeftOutlined, QuestionCircleOutlined, UploadOutlined, SyncOutlined, ChromeOutlined, BulbOutlined, PlusOutlined, TwitterOutlined } from '@ant-design/icons-vue'
+import { LeftOutlined, QuestionCircleOutlined, UploadOutlined, SyncOutlined, ChromeOutlined, BulbOutlined, PlusOutlined, TwitterOutlined,InstagramOutlined  } from '@ant-design/icons-vue'
 import type { FormInstance } from 'ant-design-vue'
 import { getProxyList, type ProxyRecord } from '../api/proxy'
 import { getProfileDetail, createProfile, updateProfile, type ProfileDto, type ProfileRecord } from '../api/profile'
