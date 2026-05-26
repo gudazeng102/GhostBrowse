@@ -74,7 +74,7 @@ describe('normalizePlan', () => {
     expect(plan.constraints.view_count).toBe(10)
   })
 
-  it('position_plan 时强制 like_count=0, selective=false', () => {
+  it('position_plan 时从 plan 推导 like_count, selective=false', () => {
     const raw = {
       action: 'home_warming',
       target_accounts: [],
@@ -84,8 +84,11 @@ describe('normalizePlan', () => {
       pause_after: false
     }
     const plan = normalizePlan(raw)
-    expect(plan.constraints.like_count).toBe(0)
+    // like_count 不再强制归零，而是从 position_plan 统计 :like 次数
+    expect(plan.constraints.like_count).toBe(3)
     expect(plan.constraints.selective).toBe(false)
+    // 自动补 view
+    expect(plan.operations).toContain('view')
   })
 
   it('position_plan 最大位置超过 view_count 时自动修正', () => {

@@ -466,8 +466,20 @@ function createSessionTabsTable(): void {
  */
 function createTaskTables(): void {
   if (!db) return
-
   try {
+    // 检查旧表是否含外键（第一次运行含 FK，需重建）
+    const oldTpl = db!.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='task_templates'`).get() as { sql?: string } | undefined
+    const oldRuns = db!.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='task_runs'`).get() as { sql?: string } | undefined
+
+    const needRebuild = (oldTpl?.sql?.includes('REFERENCES')) || (oldRuns?.sql?.includes('REFERENCES'))
+
+    if (needRebuild) {
+      console.log('[DB] 检测到 task_tables 含外键，重建以去掉外键约束')
+      db!.pragma('foreign_keys = OFF')
+      db!.exec('DROP TABLE IF EXISTS task_runs')
+      db!.exec('DROP TABLE IF EXISTS task_templates')
+    }
+
     db!.exec(`
       CREATE TABLE IF NOT EXISTS task_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -476,8 +488,7 @@ function createTaskTables(): void {
         platform TEXT NOT NULL DEFAULT 'twitter',
         plan_json TEXT NOT NULL,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        updated_at INTEGER NOT NULL
       )
     `)
     db!.exec(`
@@ -494,16 +505,16 @@ function createTaskTables(): void {
         started_at INTEGER,
         finished_at INTEGER,
         error_message TEXT,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE,
-        FOREIGN KEY (template_id) REFERENCES task_templates(id) ON DELETE SET NULL
+        created_at INTEGER NOT NULL
       )
     `)
     db!.prepare('CREATE INDEX IF NOT EXISTS idx_task_runs_status ON task_runs(status, user_id)').run()
     db!.prepare('CREATE INDEX IF NOT EXISTS idx_task_runs_profile ON task_runs(profile_id)').run()
+
+    if (needRebuild) db!.pragma('foreign_keys = ON')
   } catch (err: any) {
     console.error('[DB] task_tables 创建失败:', err.message)
+    db!.pragma('foreign_keys = ON')
   }
 }
 

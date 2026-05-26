@@ -15,9 +15,9 @@ pnpm-lock.yaml
 *.log
 npm-debug.log*
 
-# Environment
-.env
-.env.local
+# # Environment
+# .env
+# .env.local
 
 # OS files
 .DS_Store

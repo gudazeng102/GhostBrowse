@@ -133,17 +133,17 @@ async function executeOperations(
     : 0
 
   if (plan.operations.includes('comment') && !slotMap) {
-    commentBudget = Math.min(3, Math.floor(maxView / 3))
+    // 只有 comment 操作（无 like/retweet）时，每条都评论
+    const hasOtherInteractions = plan.operations.some(op => op === 'like' || op === 'retweet' || op === 'follow')
+    commentBudget = hasOtherInteractions ? Math.min(3, Math.ceil(maxView / 2)) : maxView
   }
 
   callbacks.onLog(`开始执行: 目标浏览 ${maxView}, 点赞 ${maxLike}, 评论 ${commentBudget}`)
 
-  // 在浏览器内安装"已处理"标记系统：用 WeakSet 给每条 article 打标
-  // 不依赖 :nth-of-type，避免 X 的 virtualize（动态增删 DOM）干扰
+  // 在浏览器内安装"已处理"标记系统：用 Set 存推文 ID 或文本哈希
+  // X 的 virtualize 会销毁 DOM，不能用 WeakSet（旧引用失效）
   await driver.evaluate(`
-    if (!window.__gbMarkers) {
-      window.__gbMarkers = { processed: new WeakSet() };
-    }
+    window.__gbMarkers = { processedIds: new Set(), processedTexts: new Set() };
   `)
 
   let logicalIndex = 0
@@ -160,12 +160,14 @@ async function executeOperations(
         const sel = ${JSON.stringify(TWITTER_SELECTORS.item)};
         const items = document.querySelectorAll(sel);
         if (!items.length) return { count: 0, found: false };
-        // 清掉上一条的 data-gb-current
         document.querySelectorAll('[data-gb-current="1"]').forEach(el => el.removeAttribute('data-gb-current'));
         for (let i = 0; i < items.length; i++) {
           const el = items[i];
-          if (window.__gbMarkers.processed.has(el)) continue;
-          window.__gbMarkers.processed.add(el);
+          // 用文本哈希去重（不依赖 DOM 引用，virtualize 安全）
+          const text = el.querySelector('div[data-testid="tweetText"]')?.innerText || '';
+          const id = text.substring(0, 80);
+          if (window.__gbMarkers.processedTexts.has(id)) continue;
+          window.__gbMarkers.processedTexts.add(id);
           el.setAttribute('data-gb-current', '1');
           el.scrollIntoView({ behavior: 'instant', block: 'center' });
           return { count: items.length, found: true };
@@ -220,7 +222,7 @@ async function executeOperations(
             await doFollow(driver, tweetSelector, callbacks)
             break
         }
-      } catch (err) { callbacks.onError(`[第 ${logicalIndex} 条] ${op} 失败: ${err.message}`) }
+      } catch (err: any) { callbacks.onError(`[第 ${logicalIndex} 条] ${op} 失败: ${err.message}`) }
       await sleep(1000, 3000)
     }
 
@@ -252,8 +254,14 @@ function getOperationsForPosition(
     if (position % stride === 1) ops.push('like')
   }
   if (plan.operations.includes('comment') && commentBudget > 0) {
-    const stride = Math.max(1, Math.floor(maxView / 3))
-    if (position % stride === 0 && position > 0) ops.push('comment')
+    // 只有 comment 操作时，每条都评论；否则均匀分配
+    const hasOtherInteractions = plan.operations.some(op => op === 'like' || op === 'retweet' || op === 'follow')
+    if (!hasOtherInteractions) {
+      ops.push('comment')
+    } else {
+      const stride = Math.max(1, Math.floor(maxView / commentBudget))
+      if (position % stride === (stride > 1 ? 1 : 0) && position > 0) ops.push('comment')
+    }
   }
   return ops
 }
@@ -355,7 +363,20 @@ async function doComment(driver: CDPDriver, plan: TaskPlan, tweetSelector: strin
     })()
   `) as { ok: boolean }
   callbacks.onLog(submitted.ok ? '💬 评论已发送' : '评论发送按钮不可用')
-  await sleepFixed(2000)
+
+  // ✅ 关闭评论弹窗，标记所有可见推文为已处理（包括刚发的回复）
+  await sleepFixed(500)
+  await driver.pressKey('Escape')
+  await sleepFixed(1000)
+
+  await driver.evaluate(`
+    document.querySelectorAll(${JSON.stringify(TWITTER_SELECTORS.item)}).forEach(el => {
+      const text = el.querySelector('div[data-testid="tweetText"]')?.innerText || '';
+      window.__gbMarkers.processedTexts.add(text.substring(0, 80));
+      window.__gbMarkers.processedIds.add(text.substring(0, 80));
+    })
+  `)
+  await sleepFixed(500)
 }
 
 async function doFollow(driver: CDPDriver, tweetSelector: string, callbacks: TaskCallbacks): Promise<void> {

@@ -5,7 +5,7 @@
 
 import { reactive } from 'vue'
 import type { TaskPlan } from '../../shared/automation/task-types'
-import type { AIHealthInfo, ParseCommandResult, GenerateCommentResult } from '../api/ai'
+import type { AIHealthInfo, ParseCommandResult } from '../api/ai'
 
 interface AIStoreState {
   /** Ollama 健康信息 */
@@ -26,17 +26,6 @@ interface AIStoreState {
   /** 解析开始时间（用于显示耗时） */
   parseStartedAt: number
 
-  /** 评论原文 */
-  commentInput: string
-  /** 生成中... */
-  generating: boolean
-  /** 生成结果 */
-  commentResult: GenerateCommentResult | null
-  /** 生成错误 */
-  commentError: string | null
-  /** 生成开始时间 */
-  commentStartedAt: number
-
   /** 编辑中的 plan（克隆自 parseResult.plan，便于用户微调） */
   editedPlan: TaskPlan | null
 }
@@ -52,12 +41,6 @@ export const aiStore = reactive<AIStoreState>({
   parseError: null,
   parseStartedAt: 0,
 
-  commentInput: '刚发布了新功能，超开心！',
-  generating: false,
-  commentResult: null,
-  commentError: null,
-  commentStartedAt: 0,
-
   editedPlan: null
 })
 
@@ -67,13 +50,6 @@ export function resetParseState() {
   aiStore.parseResult = null
   aiStore.parseError = null
   aiStore.editedPlan = null
-}
-
-/** 重置评论相关状态 */
-export function resetCommentState() {
-  aiStore.generating = false
-  aiStore.commentResult = null
-  aiStore.commentError = null
 }
 
 /** 深拷贝 plan，用于编辑 */

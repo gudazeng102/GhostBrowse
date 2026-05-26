@@ -25,22 +25,9 @@ export interface ParseCommandResult {
   retries: number
 }
 
-export interface GenerateCommentResult {
-  comment: string
-  language: {
-    code: string
-    name: string
-    isEmojiOnly: boolean
-    instruction: string
-  }
-  rawOutput: string
-  fallbackToEmoji: boolean
-  retries: number
-}
-
 // ==================== API 函数 ====================
 
-/** AI 服务超时设置（评论 32B 思考可能需要 10 分钟） */
+/** AI 请求超时 */
 const AI_REQUEST_TIMEOUT = 15 * 60 * 1000
 
 /**
@@ -67,22 +54,6 @@ export async function parseCommand(
   const res = await request.post<any>(
     '/ai/parse-command',
     { command, platformId, taskId },
-    { timeout: AI_REQUEST_TIMEOUT }
-  )
-  return res.data.data
-}
-
-/**
- * 根据推文文本生成评论
- */
-export async function generateComment(
-  text: string,
-  platformId: string = 'twitter',
-  options: { taskId?: string; forceEmoji?: boolean } = {}
-): Promise<GenerateCommentResult> {
-  const res = await request.post<any>(
-    '/ai/generate-comment',
-    { text, platformId, ...options },
     { timeout: AI_REQUEST_TIMEOUT }
   )
   return res.data.data

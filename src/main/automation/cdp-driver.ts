@@ -149,6 +149,15 @@ export class CDPDriver {
   }
 
   /**
+   * 发送真实的按键（通过 CDP Input.dispatchKeyEvent）
+   */
+  async pressKey(key: string): Promise<void> {
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', key, windowsVirtualKeyCode: key === 'Escape' ? 27 : 0 })
+    await this.sleep(100)
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', key, windowsVirtualKeyCode: key === 'Escape' ? 27 : 0 })
+  }
+
+  /**
    * 等待一段时间
    */
   async sleep(ms: number): Promise<void> {

@@ -5,7 +5,6 @@
  * 接口：
  * - GET  /health         → Ollama 连通性 + 模型可用性
  * - POST /parse-command  → 自然语言 → TaskPlan
- * - POST /generate-comment → 推文文本 → 评论
  * - POST /cancel/:taskId → 取消正在进行的 AI 任务
  * - POST /raw-generate   → 原始 Ollama 调用（调试用）
  */
@@ -68,44 +67,6 @@ router.post('/parse-command', async (req: Request, res: Response) => {
     const status = err.name === 'RetryExhaustedError' ? 504 : 500
     res.status(status).json({
       code: status,
-      data: null,
-      message: err.message || String(err)
-    })
-  }
-})
-
-/**
- * POST /api/v1/ai/generate-comment
- * 根据推文内容生成评论
- *
- * Body: { text: string, platformId?: string, taskId?: string, forceEmoji?: boolean }
- */
-router.post('/generate-comment', async (req: Request, res: Response) => {
-  try {
-    const { text, platformId, taskId, forceEmoji } = req.body
-    if (!text || typeof text !== 'string') {
-      res.status(400).json({
-        code: 400,
-        data: null,
-        message: '缺少 text 参数'
-      })
-      return
-    }
-
-    const result = await aiService.generateComment(text, {
-      platformId: platformId || 'twitter',
-      taskId,
-      forceEmoji: forceEmoji === true
-    })
-
-    res.json({
-      code: 0,
-      data: result,
-      message: 'success'
-    })
-  } catch (err: any) {
-    res.status(500).json({
-      code: 500,
       data: null,
       message: err.message || String(err)
     })

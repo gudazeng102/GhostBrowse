@@ -148,16 +148,37 @@ export function normalizePlan(raw: any, userCommand?: string): TaskPlan {
 
   // === 强制修正规则 ===
 
-  // 1. 启用 position_plan 时，like_count = 0，selective = false
+  // 1. 启用 position_plan 时，selective = false，并从 position_plan 推导 like_count
   if (plan.constraints.position_plan) {
-    plan.constraints.like_count = 0
     plan.constraints.selective = false
+
+    // 从 position_plan 统计 like 次数（支持 1-3:like 范围语法）
+    const likeSegments = plan.constraints.position_plan.split(';')
+    let likeCount = 0
+    for (const seg of likeSegments) {
+      if (!seg.includes(':like')) continue
+      const part = seg.split(':')[0]
+      if (part.includes('-')) {
+        const [a, b] = part.split('-').map(Number)
+        likeCount += (b - a + 1)
+      } else {
+        likeCount++
+      }
+    }
+    plan.constraints.like_count = likeCount
 
     // view_count 必须覆盖 position_plan 最大位置
     const maxPos = getMaxPosition(plan.constraints.position_plan)
     if (plan.constraints.view_count < maxPos) {
       plan.constraints.view_count = maxPos
     }
+  }
+
+  // 1b. operations 中有交互操作但无 view，自动补 view
+  const hasView = plan.operations.includes('view')
+  const hasInteraction = plan.operations.some(op => op !== 'view')
+  if (!hasView && hasInteraction) {
+    plan.operations.unshift('view')
   }
 
   // 2. targeted_interaction 缺账号时从 userCommand 补抓
