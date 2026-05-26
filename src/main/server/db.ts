@@ -182,6 +182,7 @@ function runMigrations(): void {
   createSessionTabsTable()
   migrateCookieJsonColumn()
   createPlatformAccountsTable()
+  createTaskTables()
   migrateProfileGroupColumn()
 }
 
@@ -460,6 +461,52 @@ function createSessionTabsTable(): void {
 /**
  * 关闭数据库连接
  */
+/**
+ * 迭代 4.0: 任务队列 — task_templates + task_runs
+ */
+function createTaskTables(): void {
+  if (!db) return
+
+  try {
+    db!.exec(`
+      CREATE TABLE IF NOT EXISTS task_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        platform TEXT NOT NULL DEFAULT 'twitter',
+        plan_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `)
+    db!.exec(`
+      CREATE TABLE IF NOT EXISTS task_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        profile_id INTEGER NOT NULL,
+        template_id INTEGER,
+        plan_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','completed','failed','aborted')),
+        progress_json TEXT,
+        logs_json TEXT,
+        scheduled_at INTEGER,
+        started_at INTEGER,
+        finished_at INTEGER,
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE,
+        FOREIGN KEY (template_id) REFERENCES task_templates(id) ON DELETE SET NULL
+      )
+    `)
+    db!.prepare('CREATE INDEX IF NOT EXISTS idx_task_runs_status ON task_runs(status, user_id)').run()
+    db!.prepare('CREATE INDEX IF NOT EXISTS idx_task_runs_profile ON task_runs(profile_id)').run()
+  } catch (err: any) {
+    console.error('[DB] task_tables 创建失败:', err.message)
+  }
+}
+
 function createPlatformAccountsTable(): void {
   if (!db) return
   try {

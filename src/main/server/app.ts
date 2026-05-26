@@ -20,6 +20,8 @@ import cookieManagerRouter from './routes/cookie-manager'
 import platformAccountRouter from './routes/platform-account'
 import profileGroupRouter from './routes/profile-group'
 import aiRouter from './routes/ai'
+import taskQueueRouter from './routes/task-queue'
+import { initScheduler } from '../automation/task-scheduler'
 
 // Express 应用实例
 let app: Express | null = null
@@ -114,6 +116,9 @@ export function createApp(): Express {
   // ==================== Phase 6.0: AI 服务 API ====================
   app.use('/api/v1/ai', aiRouter)
 
+  // ==================== 迭代 4.0: 任务队列 API ====================
+  app.use('/api/v1/tasks', taskQueueRouter)
+
   // ==================== 捕获所有路由，返回 index.html (SPA 支持) ====================
   app.get('*', (req: Request, res: Response) => {
     const indexPath = path.join(distPath, 'index.html')
@@ -141,6 +146,8 @@ export function startServer(port: number = 3000, host: string = '0.0.0.0'): Prom
     // 初始化数据库
     try {
       initDatabase()
+      // 迭代 4.0: 初始化任务调度器（恢复崩溃前的 running 任务）
+      initScheduler()
     } catch (err) {
       console.error('[Express] 数据库初始化失败:', err)
       reject(err)
