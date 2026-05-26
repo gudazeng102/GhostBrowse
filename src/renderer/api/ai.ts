@@ -95,3 +95,43 @@ export async function cancelAITask(taskId: string): Promise<{ canceled: boolean 
   const res = await request.post<any>(`/ai/cancel/${encodeURIComponent(taskId)}`)
   return res.data.data
 }
+
+// ==================== 迭代 3.5: 任务执行 ====================
+
+export interface ExecuteTaskResponse {
+  taskId: string
+}
+
+export interface TaskStatus {
+  taskId: string
+  progress: import('../../shared/automation/task-types').TaskProgress | null
+  logs: string[]
+  running: boolean
+}
+
+/**
+ * 启动任务执行（在指定 Profile 的浏览器中执行 TaskPlan）
+ */
+export async function executeAITask(
+  profileId: number,
+  plan: import('../../shared/automation/task-types').TaskPlan
+): Promise<ExecuteTaskResponse> {
+  const res = await request.post<any>('/ai/execute', { profileId, plan })
+  return res.data.data
+}
+
+/**
+ * 获取任务执行状态
+ */
+export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
+  const res = await request.get<any>(`/ai/execute/${encodeURIComponent(taskId)}/status`)
+  return res.data.data
+}
+
+/**
+ * 中止任务执行
+ */
+export async function abortTask(taskId: string): Promise<{ canceled: boolean }> {
+  const res = await request.post<any>(`/ai/execute/${encodeURIComponent(taskId)}/abort`)
+  return res.data.data
+}
