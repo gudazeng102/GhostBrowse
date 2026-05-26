@@ -50,15 +50,16 @@ export async function parseCommand(
   const prompt = buildTwitterCommandPrompt(userCommand)
 
   // 创建 Ollama client
-  // 注：qwen3 等思考模型会先输出大量 <think> 内容，需较大 numPredict 防止 JSON 被截断
+  // 关闭 think 模式 → 速度提升 5~10 倍；命令解析是结构化输出，不需要思考
   const client = new OllamaClient({
     baseUrl: config.ollamaHost,
     model: config.commandModel,
     timeout: config.requestTimeoutMs,
-    numPredict: 4096,
-    numCtx: 8192,
+    numPredict: 512,
+    numCtx: 4096,
     temperature: 0.0,
-    topP: 0.1
+    topP: 0.1,
+    think: false
   })
 
   let lastRaw = ''

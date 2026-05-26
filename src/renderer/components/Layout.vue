@@ -61,6 +61,12 @@
             </template>
             <span>窗口管理</span>
           </a-menu-item>
+          <a-menu-item key="ai">
+            <template #icon>
+              <span class="menu-emoji">🤖</span>
+            </template>
+            <span>AI 控制台</span>
+          </a-menu-item>
         </a-menu>
 
         <!-- 收缩/展开按钮：固定在侧栏底部 -->
@@ -115,6 +121,8 @@ watch(
       selectedKeys.value = ['proxy']
     } else if (path === '/profile') {
       selectedKeys.value = ['profile']
+    } else if (path.startsWith('/ai')) {
+      selectedKeys.value = ['ai']
     }
   },
   { immediate: true }
@@ -131,6 +139,9 @@ function handleMenuClick({ key }: { key: string }) {
       break
     case 'profile':
       router.push('/profile')
+      break
+    case 'ai':
+      router.push('/ai')
       break
     default:
       router.push('/')

@@ -23,6 +23,12 @@ export interface OllamaConfig {
   numCtx?: number
   /** 最大预测 token 数，默认 800 */
   numPredict?: number
+  /**
+   * 是否启用思考模式（仅 qwen3 等思考模型有效）
+   * 设为 false 可极大提升速度（5~10 倍），适合结构化输出和短文本生成
+   * 默认 false（追求速度）
+   */
+  think?: boolean
 }
 
 export interface OllamaResponse {
@@ -43,7 +49,8 @@ const DEFAULT_CONFIG: Required<OllamaConfig> = {
   temperature: 0.0,
   topP: 0.1,
   numCtx: 8192,
-  numPredict: 800
+  numPredict: 800,
+  think: false
 }
 
 export class OllamaClient {
@@ -126,20 +133,28 @@ export class OllamaClient {
       const timeoutTimer = setTimeout(() => controller.abort(), this.config.timeout)
       if (externalSignal?.aborted) clearTimeout(timeoutTimer)
 
+      // 双重保险关闭思考模式：
+      // 1) Ollama 0.5+ 支持顶层 think 参数（qwen3 等思考模型）
+      // 2) qwen3 还支持 prompt 内 `/no_think` 指令（兼容老版 Ollama）
+      const finalPrompt = this.config.think ? prompt : `${prompt}\n\n/no_think`
+
+      const requestBody: any = {
+        model: this.config.model,
+        prompt: finalPrompt,
+        stream: false,
+        think: this.config.think,
+        options: {
+          temperature: this.config.temperature,
+          top_p: this.config.topP,
+          num_ctx: this.config.numCtx,
+          num_predict: this.config.numPredict
+        }
+      }
+
       const res = await fetch(`${this.config.baseUrl}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.config.model,
-          prompt,
-          stream: false,
-          options: {
-            temperature: this.config.temperature,
-            top_p: this.config.topP,
-            num_ctx: this.config.numCtx,
-            num_predict: this.config.numPredict
-          }
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal
       })
 

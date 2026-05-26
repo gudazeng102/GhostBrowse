@@ -73,7 +73,7 @@ export async function generateComment(
   const prompt = buildCommentPrompt(tweetText, language)
 
   // 4. 创建 Ollama client
-  // 注：qwen3 等思考模型先输出 <think>，需要给足 numPredict 让最终评论也能产生
+  // 关闭 think 模式 → 评论生成速度提升 5~10 倍；评论是短文本，不需要长思考
   const client = new OllamaClient({
     baseUrl: config.ollamaHost,
     model: config.commentModel,
@@ -81,8 +81,9 @@ export async function generateComment(
     // 评论用稍高一点的温度让结果更自然
     temperature: 0.7,
     topP: 0.9,
-    numPredict: 2048,
-    numCtx: 8192
+    numPredict: 200,
+    numCtx: 2048,
+    think: false
   })
 
   let lastRaw = ''
