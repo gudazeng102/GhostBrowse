@@ -8,6 +8,7 @@
 import { getDatabase } from '../server/db'
 import { executeTask, TaskCallbacks } from './task-executor'
 import { TaskPlan, TaskProgress } from '../../shared/automation/task-types'
+import { getActiveProfileIds } from '../browser/launcher'
 
 // ==================== 类型 ====================
 
@@ -248,6 +249,19 @@ export function getPoolStatus(userId: number): Record<number, { running: boolean
     if (!result[p.profile_id]) {
       result[p.profile_id] = { running: false, status: 'pending', runId: p.id }
     }
+  }
+
+  // 迭代 6.0: 包含已启动浏览器但空闲的窗口（无任务）
+  // getActiveProfileIds() 从 launcher.ts 的 profileProcessMap 获取已启动浏览器的 profile ID
+  try {
+    const activeProfileIds = getActiveProfileIds()
+    for (const profileId of activeProfileIds) {
+      if (!result[profileId]) {
+        result[profileId] = { running: false, status: 'idle', runId: null }
+      }
+    }
+  } catch (e) {
+    // launcher 未初始化或未导入时静默忽略
   }
 
   return result

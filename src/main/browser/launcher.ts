@@ -1391,6 +1391,14 @@ export function getChromeProcessPid(profileId: number): number {
   return profileProcessMap.get(profileId)?.pid ?? -1
 }
 
+/**
+ * 获取所有已启动浏览器的 profile ID 列表
+ * 用于群控页面判断哪些窗口正在运行（即使它们没有任务）
+ */
+export function getActiveProfileIds(): number[] {
+  return [...profileProcessMap.keys()]
+}
+
 // ==================== Phase 4.2: CDP 时区覆盖 ====================
 
 /**
