@@ -16,7 +16,9 @@ import {
   getTemplates,
   deleteTemplate,
   initScheduler,
-  getCurrentRun
+  getCurrentRuns,
+  getPoolStatus,
+  batchEnqueue
 } from '../../automation/task-scheduler'
 
 const router = Router()
@@ -75,8 +77,8 @@ router.delete('/templates/:templateId', (req: Request, res: Response) => {
 
 /** GET /api/v1/tasks/current */
 router.get('/current', (_req: Request, res: Response) => {
-  const run = getCurrentRun()
-  res.json({ code: 0, data: run, message: 'success' })
+  const runs = getCurrentRuns()
+  res.json({ code: 0, data: runs.length > 0 ? runs[0] : null, message: 'success' })
 })
 
 /** GET /api/v1/tasks/queue */
@@ -94,6 +96,30 @@ router.get('/history', (req: Request, res: Response) => {
   const rows = getHistory(userId, limit, offset)
   res.json({ code: 0, data: rows, message: 'success' })
 })
+
+// ==================== 迭代 6.0: 群控（必须在 :runId 之前） ====================
+
+/** POST /api/v1/tasks/batch-enqueue */
+router.post('/batch-enqueue', async (req: Request, res: Response) => {
+  try {
+    const { profileIds, plan, scheduledAt } = req.body
+    const userId = (req as any).userId || 1
+    if (!profileIds?.length || !plan) { res.status(400).json({ code: 400, data: null, message: '缺少 profileIds 或 plan' }); return }
+    const runs = await batchEnqueue(userId, profileIds, plan, scheduledAt)
+    res.json({ code: 0, data: runs, message: `已向 ${runs.length} 个窗口下发任务` })
+  } catch (err: any) {
+    res.status(500).json({ code: 500, data: null, message: err.message })
+  }
+})
+
+/** GET /api/v1/tasks/pool-status */
+router.get('/pool-status', (req: Request, res: Response) => {
+  const userId = (req as any).userId || 1
+  const status = getPoolStatus(userId)
+  res.json({ code: 0, data: status, message: 'success' })
+})
+
+// ==================== 查询 ====================
 
 /** GET /api/v1/tasks/:runId */
 router.get('/:runId', (req: Request, res: Response) => {

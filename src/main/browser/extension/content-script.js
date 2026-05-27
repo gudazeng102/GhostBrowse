@@ -518,7 +518,16 @@
     || hostname.endsWith('.office365.com');
   if (!isOutlookHost) return;
 
+  // signup.live.com（注册页）：不执行任何自动登录，避免干扰用户注册流程
+  if (hostname === 'signup.live.com') return;
+
+  var outlookAccount = __outlookConfig.platform_accounts.find(function(a) {
+    return a && a.platform === 'outlook' && a.is_active && a.account && a.password;
+  });
+  if (!outlookAccount) return;
+
   // Microsoft 官网入口页：直接跳转到登录页（更接近真实用户路径）
+  // 注意：此跳转仅在 outlookAccount 存在的情况下才执行
   if (hostname === 'www.microsoft.com' || hostname === 'microsoft.com') {
     if (window.__ghostbrowse_outlook_redirect_done__) return;
     window.__ghostbrowse_outlook_redirect_done__ = true;
@@ -528,16 +537,39 @@
     return;
   }
 
-  var outlookAccount = __outlookConfig.platform_accounts.find(function(a) {
-    return a && a.platform === 'outlook' && a.is_active && a.account && a.password;
-  });
-  if (!outlookAccount) return;
-
   // 防止多次执行
   if (window.__ghostbrowse_outlook_login_started__) return;
   window.__ghostbrowse_outlook_login_started__ = true;
 
   function olog(msg) { try { console.log('[GhostBrowse-Outlook]', msg); } catch (e) {} }
+
+  // ==================== 检测是否已登录 Outlook ====================
+  // 在自动登录前先判断当前页面是否已经是已登录状态（如 inbox 页），
+  // 避免在已登录状态下执行不必要的登录流程/干扰正常使用。
+  function checkOutlookLoginStatus() {
+    // 1. 已登录的 cookie 检测：RPSSecAuth 是 Outlook Web 的核心认证 cookie
+    var match = document.cookie.match(/(?:^|;\s*)RPSSecAuth=([^;]+)/);
+    var hasRpssAuth = !!(match && match[1] && match[1].length > 10);
+
+    // 2. 已登录的 cookie 检测：DefaultAnchorMailbox（邮箱锚定）
+    var anchorMatch = document.cookie.match(/(?:^|;\s*)DefaultAnchorMailbox=([^;]+)/);
+    var hasAnchor = !!(anchorMatch && anchorMatch[1]);
+
+    // 3. 当前 URL 路径：如果已经在 mail/ 路径下（inbox、drafts、sent 等），视为已登录
+    var path = (window.location.pathname || '').toLowerCase();
+    var isOnMailPath = path.indexOf('/mail/') !== -1 || path.indexOf('/owa/') !== -1;
+
+    // 4. Outlook 已登录 UI 元素检测（侧边栏、收件箱列表等）
+    var hasOutlookUI = !!(
+      document.querySelector('[data-testid="composer"]') ||
+      document.querySelector('[aria-label="新建邮件" i]') ||
+      document.querySelector('[aria-label="New mail" i]') ||
+      document.querySelector('div[role="navigation"][aria-label*="文件夹" i]') ||
+      document.querySelector('div[aria-label*="folder pane" i]')
+    );
+
+    return hasRpssAuth || hasAnchor || isOnMailPath || hasOutlookUI;
+  }
 
   function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
 
@@ -647,6 +679,14 @@
   // 3) "保持登录"页：是 / 否 → 默认点"是"保持登录
   async function executeOutlookLogin() {
     olog('开始 Outlook 自动登录流程，账号: ' + outlookAccount.account);
+
+    // ========== Step 0: 检测是否已登录（核心守卫）==========
+    // 如果当前浏览器已有 Outlook 登录态（如 inbox 页 / RPSSecAuth cookie），
+    // 直接跳过所有登录流程，避免干扰正常使用
+    if (checkOutlookLoginStatus()) {
+      olog('Outlook 已登录（检测到 RPSSecAuth / DefaultAnchorMailbox / mail路径 / Outlook UI），跳过自动登录');
+      return;
+    }
 
     // ========== 入口前置检测：页面是否已经是 KMSI / 隐私通知页 ==========
     // 密码提交后页面会刷新/跳转到 KMSI 页，content-script 重新注入，

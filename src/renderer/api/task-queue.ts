@@ -107,3 +107,27 @@ export async function getTaskTemplates(): Promise<TaskTemplate[]> {
 export async function deleteTaskTemplate(templateId: number): Promise<void> {
   await request.delete<any>(`/tasks/templates/${templateId}`)
 }
+
+// ==================== 迭代 6.0: 群控 ====================
+
+/** 批量入队 */
+export async function batchEnqueueTasks(params: {
+  profileIds: number[]
+  plan: any
+  scheduledAt?: number
+}): Promise<TaskRun[]> {
+  const res = await request.post<any>('/tasks/batch-enqueue', params)
+  return res.data.data
+}
+
+/** 获取池状态 */
+export interface PoolEntry {
+  running: boolean
+  status: string
+  runId: number | null
+}
+
+export async function getPoolStatus(): Promise<Record<number, PoolEntry>> {
+  const res = await request.get<any>('/tasks/pool-status')
+  return res.data.data
+}

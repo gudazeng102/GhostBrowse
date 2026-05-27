@@ -1,8 +1,8 @@
 /**
- * 任务调度器（迭代 4.0）
- * 内存队列 + 自动出队执行 + 状态持久化到 task_runs 表
+ * 任务调度器（迭代 6.0 — 多窗口群控）
+ * 支持多个 Profile 并行执行不同任务
  *
- * 当前为单窗口串行模式（多窗口并发留给迭代 6.0）
+ * 每个 profile 独立一个执行 slot，互不阻塞
  */
 
 import { getDatabase } from '../server/db'
@@ -45,15 +45,22 @@ export interface EnqueueOptions {
   plan: TaskPlan
   userId: number
   templateId?: number
-  scheduledAt?: number // 定时执行（unix ms）
+  scheduledAt?: number
 }
 
 // ==================== 调度器状态 ====================
 
-/** 当前正在运行的任务 */
-let currentRun: { runId: number; profileId: number; abortController: AbortController; logs: string[] } | null = null
+/** 每个 Profile 的运行时状态 */
+interface ProfileRun {
+  runId: number
+  profileId: number
+  abortController: AbortController
+  logs: string[]
+}
 
-/** 状态变更回调（供路由层注册，用于通知前端） */
+/** profileId → ProfileRun */
+const profileRuns = new Map<number, ProfileRun>()
+
 type StatusListener = () => void
 const statusListeners = new Set<StatusListener>()
 
@@ -82,52 +89,68 @@ export async function enqueueTask(opts: EnqueueOptions): Promise<TaskRunRow> {
   const row = db.prepare('SELECT * FROM task_runs WHERE id = ?').get(result.lastInsertRowid) as TaskRunRow
 
   notifyChange()
-  scheduleNext()
+  trySchedule(row.profile_id)
 
   return row
 }
 
 // ==================== 调度逻辑 ====================
 
-function scheduleNext(): void {
-  // 如果已经有正在运行的任务，不调度
-  if (currentRun) return
+/** 尝试为某个 profile 调度下一个 pending 任务 */
+function trySchedule(profileId: number): void {
+  // 如果该 profile 已经有任务在跑，跳过
+  if (profileRuns.has(profileId)) return
 
   const db = getDatabase()
   const now = Date.now()
 
-  // 取第一个 pending 且已到时间的任务
   const next = db
     .prepare(
       `SELECT * FROM task_runs
-       WHERE status = 'pending' AND (scheduled_at IS NULL OR scheduled_at <= ?)
+       WHERE status = 'pending' AND profile_id = ? AND (scheduled_at IS NULL OR scheduled_at <= ?)
        ORDER BY scheduled_at ASC NULLS FIRST, created_at ASC
        LIMIT 1`
     )
-    .get(now) as TaskRunRow | undefined
+    .get(profileId, now) as TaskRunRow | undefined
 
   if (!next) return
 
   startRun(next)
 }
 
+/** 全局调度：为所有有 pending 任务的 profile 尝试启动 */
+function scheduleAll(): void {
+  const db = getDatabase()
+  const now = Date.now()
+
+  const pendingProfiles = db
+    .prepare(
+      `SELECT DISTINCT profile_id FROM task_runs
+       WHERE status = 'pending' AND (scheduled_at IS NULL OR scheduled_at <= ?)`
+    )
+    .all(now) as { profile_id: number }[]
+
+  for (const { profile_id } of pendingProfiles) {
+    trySchedule(profile_id)
+  }
+}
+
 async function startRun(run: TaskRunRow): Promise<void> {
   const db = getDatabase()
   const plan: TaskPlan = JSON.parse(run.plan_json)
-
   const abortController = new AbortController()
   const logs: string[] = []
 
-  currentRun = {
+  const profileRun: ProfileRun = {
     runId: run.id,
     profileId: run.profile_id,
     abortController,
     logs
   }
 
-  // 更新为 running
-  db.prepare('UPDATE task_runs SET status = ?, started_at = ? WHERE id = ?').run('running', Date.now(), run.id)
+  profileRuns.set(run.profile_id, profileRun)
 
+  db.prepare('UPDATE task_runs SET status = ?, started_at = ? WHERE id = ?').run('running', Date.now(), run.id)
   notifyChange()
 
   const callbacks: TaskCallbacks = {
@@ -152,7 +175,6 @@ async function startRun(run: TaskRunRow): Promise<void> {
   try {
     await executeTask(run.profile_id, plan, callbacks, abortController.signal)
 
-    // 完成
     db.prepare('UPDATE task_runs SET status = ?, finished_at = ?, progress_json = ?, logs_json = ? WHERE id = ?').run(
       'completed',
       Date.now(),
@@ -167,23 +189,25 @@ async function startRun(run: TaskRunRow): Promise<void> {
       db.prepare('UPDATE task_runs SET status = ?, finished_at = ?, error_message = ?, logs_json = ? WHERE id = ?').run('failed', Date.now(), err.message || String(err), JSON.stringify(logs), run.id)
     }
   } finally {
-    currentRun = null
+    profileRuns.delete(run.profile_id)
     notifyChange()
 
-    // 5 分钟后清理旧运行记录 (8 天以上的记录)
+    // 清理 8 天前记录
     db.prepare("DELETE FROM task_runs WHERE status IN ('completed','failed','aborted') AND finished_at < ?").run(Date.now() - 8 * 86400000)
 
-    // 继续取下一个任务
-    scheduleNext()
+    // 继续为该 profile 调度下一个任务
+    trySchedule(run.profile_id)
   }
 }
 
 // ==================== 查询 ====================
 
-export function getCurrentRun(): TaskRunRow | null {
+export function getCurrentRuns(): TaskRunRow[] {
+  if (profileRuns.size === 0) return []
   const db = getDatabase()
-  if (!currentRun) return null
-  return db.prepare('SELECT * FROM task_runs WHERE id = ?').get(currentRun.runId) as TaskRunRow | null
+  const ids = [...profileRuns.values()].map(r => r.runId)
+  const placeholders = ids.map(() => '?').join(',')
+  return db.prepare(`SELECT * FROM task_runs WHERE id IN (${placeholders})`).all(...ids) as TaskRunRow[]
 }
 
 export function getQueue(userId: number): TaskRunRow[] {
@@ -205,6 +229,30 @@ export function getRunById(runId: number): TaskRunRow | null {
   return db.prepare('SELECT * FROM task_runs WHERE id = ?').get(runId) as TaskRunRow | null
 }
 
+/** 池状态：所有 profile 的运行状态 */
+export function getPoolStatus(userId: number): Record<number, { running: boolean; status: string; runId: number | null }> {
+  const result: Record<number, { running: boolean; status: string; runId: number | null }> = {}
+
+  // 先查所有运行中的
+  for (const [profileId, run] of profileRuns) {
+    result[profileId] = { running: true, status: 'running', runId: run.runId }
+  }
+
+  // 查数据库 pending 的
+  const db = getDatabase()
+  const pendingList = db
+    .prepare("SELECT * FROM task_runs WHERE user_id = ? AND status = 'pending' ORDER BY created_at ASC")
+    .all(userId) as TaskRunRow[]
+
+  for (const p of pendingList) {
+    if (!result[p.profile_id]) {
+      result[p.profile_id] = { running: false, status: 'pending', runId: p.id }
+    }
+  }
+
+  return result
+}
+
 // ==================== 操作 ====================
 
 export function abortRun(runId: number): boolean {
@@ -214,9 +262,9 @@ export function abortRun(runId: number): boolean {
   if (!run) return false
 
   if (run.status === 'running') {
-    // 如果正在运行，发 abort 信号
-    if (currentRun && currentRun.runId === runId) {
-      currentRun.abortController.abort()
+    const profileRun = profileRuns.get(run.profile_id)
+    if (profileRun && profileRun.runId === runId) {
+      profileRun.abortController.abort()
       return true
     }
     return false
@@ -243,7 +291,6 @@ export async function retryRun(runId: number): Promise<TaskRunRow | null> {
   const original = db.prepare('SELECT * FROM task_runs WHERE id = ?').get(runId) as TaskRunRow | undefined
   if (!original) return null
 
-  // 创建新运行记录
   return await enqueueTask({
     profileId: original.profile_id,
     plan: JSON.parse(original.plan_json),
@@ -253,16 +300,29 @@ export async function retryRun(runId: number): Promise<TaskRunRow | null> {
   })
 }
 
+/** 批量入队：给多个 profile 下发同一个 plan */
+export async function batchEnqueue(
+  userId: number,
+  profileIds: number[],
+  plan: TaskPlan,
+  scheduledAt?: number
+): Promise<TaskRunRow[]> {
+  const results: TaskRunRow[] = []
+  for (const profileId of profileIds) {
+    const run = await enqueueTask({ profileId, plan, userId, scheduledAt })
+    results.push(run)
+  }
+  return results
+}
+
 // ==================== 模板 ====================
 
 export function saveTemplate(userId: number, name: string, platform: string, plan: TaskPlan): TaskTemplateRow {
   const db = getDatabase()
   const now = Date.now()
-
   const result = db
     .prepare('INSERT INTO task_templates (user_id, name, platform, plan_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(userId, name, platform, JSON.stringify(plan), now, now)
-
   return db.prepare('SELECT * FROM task_templates WHERE id = ?').get(result.lastInsertRowid) as TaskTemplateRow
 }
 
@@ -277,14 +337,10 @@ export function deleteTemplate(templateId: number): boolean {
   return true
 }
 
-// ==================== 初始化（启动时恢复） ====================
+// ==================== 初始化 ====================
 
 export function initScheduler(): void {
   const db = getDatabase()
-
-  // 把上次未清理的 'running' 状态改为 'failed'（可能意外崩溃）
   db.prepare("UPDATE task_runs SET status = 'failed', finished_at = ?, error_message = '服务重启' WHERE status = 'running'").run(Date.now())
-
-  // 尝试启动下一个任务
-  scheduleNext()
+  scheduleAll()
 }

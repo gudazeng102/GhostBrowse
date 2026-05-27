@@ -67,6 +67,12 @@
             </template>
             <span>AI 控制台</span>
           </a-menu-item>
+          <a-menu-item key="group-control">
+            <template #icon>
+              <span class="menu-emoji">🗂️</span>
+            </template>
+            <span>群控管理</span>
+          </a-menu-item>
         </a-menu>
 
         <!-- 收缩/展开按钮：固定在侧栏底部 -->
@@ -123,6 +129,8 @@ watch(
       selectedKeys.value = ['profile']
     } else if (path.startsWith('/ai')) {
       selectedKeys.value = ['ai']
+    } else if (path.startsWith('/group-control')) {
+      selectedKeys.value = ['group-control']
     }
   },
   { immediate: true }
@@ -142,6 +150,9 @@ function handleMenuClick({ key }: { key: string }) {
       break
     case 'ai':
       router.push('/ai')
+      break
+    case 'group-control':
+      router.push('/group-control')
       break
     default:
       router.push('/')
