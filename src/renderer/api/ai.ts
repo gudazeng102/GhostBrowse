@@ -5,6 +5,7 @@
 
 import request from './request'
 import type { TaskPlan } from '../../shared/automation/task-types'
+import { parseCommandLocally } from '../../shared/automation/command-parser'
 
 // ==================== 类型定义 ====================
 
@@ -45,12 +46,28 @@ export async function getAIHealth(): Promise<AIHealthInfo> {
  * @param command 用户输入的自然语言
  * @param platformId 平台（默认 twitter）
  * @param taskId 可选任务 ID（便于后续 cancel）
+ *
+ * 迭代 7.0: 先尝试本地关键词解析，不命中再走 AI
  */
 export async function parseCommand(
   command: string,
   platformId: string = 'twitter',
   taskId?: string
 ): Promise<ParseCommandResult> {
+  // 先尝试本地关键词解析（0 延迟，无需 AI）
+  const localResult = parseCommandLocally(command)
+  if (localResult.plan && !localResult.needsAI) {
+    console.log(`[ParseCommand] 本地关键词解析命中: "${command}" →`, localResult.plan)
+    return {
+      plan: localResult.plan,
+      warnings: localResult.warnings,
+      rawOutput: command,
+      retries: 0
+    }
+  }
+
+  // 未命中 → 走 AI
+  console.log(`[ParseCommand] 本地解析未命中，回退到 AI: "${command}"`)
   const res = await request.post<any>(
     '/ai/parse-command',
     { command, platformId, taskId },

@@ -24,6 +24,13 @@ export interface TaskConstraints {
   position_plan?: string
 }
 
+/** 分段操作：从第 start 条到第 end 条执行指定操作 */
+export interface TaskSegment {
+  start: number
+  end: number
+  operations: OperationType[]
+}
+
 /** AI 解析后的任务计划 */
 export interface TaskPlan {
   /** 任务行为 */
@@ -34,6 +41,8 @@ export interface TaskPlan {
   operations: OperationType[]
   /** 约束 */
   constraints: TaskConstraints
+  /** 分段计划（可选，优先级高于 operations + constraints 的简单模式） */
+  segments?: TaskSegment[]
   /** 持续时间（分钟），0 表示按数量执行 */
   duration_minutes: number
   /** 完成后是否暂停 */

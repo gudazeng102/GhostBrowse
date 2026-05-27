@@ -12,7 +12,7 @@
           <a-button type="primary" :loading="batchLoading" @click="handleBatchParse">
             <template #icon><ThunderboltOutlined /></template>解析指令
           </a-button>
-          <a-button v-if="batchPlan" type="primary" @click="handleBatchSend" :loading="batchSending">
+          <a-button  type="primary" @click="handleBatchSend" :loading="batchSending">
             <template #icon><SendOutlined /></template>下发到所有运行中的窗口
           </a-button>
           <a-tag v-if="batchPlan" color="green">已解析</a-tag>
@@ -46,13 +46,13 @@
             </a-space>
           </template>
 
-          <template v-if="currentRunDetails[Number(rawId)]" #extra>
+          <template v-if="allRunDetails[Number(rawId)]" #extra>
             <a-button size="small" danger @click="abortProfile(Number(rawId))">
               <template #icon><StopOutlined /></template>中止
             </a-button>
           </template>
 
-          <div v-if="currentRunDetails[Number(rawId)]">
+          <div v-if="allRunDetails[Number(rawId)]">
             <a-row :gutter="8">
               <a-col :span="8"><a-statistic title="进度" :value="`${runProg(rawId)?.processed || 0}/${runProg(rawId)?.total || 0}`" /></a-col>
               <a-col :span="5"><a-statistic title="点赞" :value="runProg(rawId)?.liked || 0" /></a-col>
@@ -87,7 +87,7 @@ import { ref, onUnmounted, computed } from 'vue'
 import { message as antMessage } from 'ant-design-vue'
 import { ThunderboltOutlined, SendOutlined, StopOutlined } from '@ant-design/icons-vue'
 import { parseCommand } from '../../api/ai'
-import { getPoolStatus, getTaskQueue, batchEnqueueTasks, abortTaskRun } from '../../api/task-queue'
+import { getPoolStatus, getTaskQueue, batchEnqueueTasks, abortTaskRun, getTaskHistory } from '../../api/task-queue'
 import type { PoolEntry, TaskRun } from '../../api/task-queue'
 
 const batchCommand = ref('')
@@ -97,12 +97,14 @@ const batchSending = ref(false)
 
 const poolStatus = ref<Record<number, PoolEntry>>({})
 const queueItems = ref<TaskRun[]>([])
+// 已完成任务的本地缓存（保留日志和进度，即使从队列中消失）
+const completedRuns = ref<Record<number, TaskRun>>({})
 
-// 从 queueItems 中提取当前运行中的详细记录
-const currentRunDetails = computed(() => {
-  const map: Record<number, TaskRun> = {}
+// 合并当前运行中 + 已缓存完成的任务
+const allRunDetails = computed(() => {
+  const map: Record<number, TaskRun> = { ...completedRuns.value }
   for (const item of queueItems.value) {
-    if (item.status === 'running') {
+    if (item.status === 'running' || item.status === 'pending') {
       map[item.profile_id] = item
     }
   }
@@ -111,14 +113,14 @@ const currentRunDetails = computed(() => {
 
 function runProg(profileId: number | string) {
   const id = Number(profileId)
-  const run = currentRunDetails.value[id]
+  const run = allRunDetails.value[id] || completedRuns.value[id]
   if (!run?.progress_json) return null
   try { return JSON.parse(run.progress_json) } catch { return null }
 }
 
 function runLogs(profileId: number | string): string[] {
   const id = Number(profileId)
-  const run = currentRunDetails.value[id]
+  const run = allRunDetails.value[id] || completedRuns.value[id]
   if (!run?.logs_json) return []
   try { return JSON.parse(run.logs_json) as string[] } catch { return [] }
 }
@@ -130,6 +132,13 @@ async function refreshPool() {
   try {
     const [pool, queue] = await Promise.all([getPoolStatus(), getTaskQueue()])
     poolStatus.value = pool
+    // 缓存已消失的任务（completed / failed / aborted — 从队列中移除）
+    const newIds = new Set(queue.map(r => r.id))
+    for (const oldRun of queueItems.value) {
+      if (!newIds.has(oldRun.id) && oldRun.logs_json) {
+        completedRuns.value[oldRun.profile_id] = oldRun
+      }
+    }
     queueItems.value = queue
   } catch {}
 }
@@ -170,7 +179,7 @@ async function handleBatchSend() {
 }
 
 async function abortProfile(profileId: number) {
-  const run = currentRunDetails.value[profileId]
+  const run = allRunDetails.value[profileId]
   if (!run) return
   try {
     await abortTaskRun(run.id)

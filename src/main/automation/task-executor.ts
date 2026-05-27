@@ -243,6 +243,19 @@ function getOperationsForPosition(
   position: number, slotMap: SlotMap | null, plan: TaskPlan, likeBudget: number, commentBudget: number
 ): OperationType[] {
   const ops: OperationType[] = ['view']
+
+  // 优先匹配分段计划（segemts）
+  if (plan.segments && plan.segments.length > 0) {
+    for (const seg of plan.segments) {
+      if (position >= seg.start && position <= seg.end) {
+        for (const op of seg.operations) {
+          if (op !== 'view' && !ops.includes(op)) ops.push(op)
+        }
+      }
+    }
+    return ops
+  }
+
   if (slotMap) {
     const slot = slotMap.get(position)
     if (slot) for (const op of slot) { if (op !== 'view') ops.push(op) }
@@ -250,9 +263,13 @@ function getOperationsForPosition(
   }
   const maxView = plan.constraints.view_count || 10
   if (plan.operations.includes('like') && likeBudget > 0) {
-    const stride = Math.max(1, Math.floor(maxView / (plan.constraints.like_count || 1)))
-    if (position % stride === 1) ops.push('like')
+    const likeTarget = plan.constraints.like_count || 1
+    const stride = Math.max(1, Math.floor(maxView / likeTarget))
+    // stride <= 1 表示每条都点赞；否则按间隔均匀分配
+    if (stride <= 1 || position % stride === 1) ops.push('like')
   }
+  if (plan.operations.includes('retweet')) ops.push('retweet')
+  if (plan.operations.includes('follow')) ops.push('follow')
   if (plan.operations.includes('comment') && commentBudget > 0) {
     // 只有 comment 操作时，每条都评论；否则均匀分配
     const hasOtherInteractions = plan.operations.some(op => op === 'like' || op === 'retweet' || op === 'follow')
@@ -275,13 +292,17 @@ async function doLike(driver: CDPDriver, tweetSelector: string, callbacks: TaskC
       if (!btn) {
         const unlike = tweet.querySelector('button[data-testid="unlike"]');
         if (unlike) return { ok: true, already: true };
-        return { ok: false, reason: 'button_not_found' };
+        // 调试：列出推文内所有按钮的 data-testid
+        const allBtns = tweet.querySelectorAll('button[data-testid]');
+        const testids = Array.from(allBtns).map(function(b) { return b.getAttribute('data-testid'); });
+        return { ok: false, reason: 'button_not_found', debug: testids };
       }
       btn.click();
       return { ok: true };
     })()
-  `) as { ok: boolean; already?: boolean; reason?: string }
+  `) as { ok: boolean; already?: boolean; reason?: string; debug?: string[] }
   if (result.ok) { callbacks.onLog(result.already ? '已点赞过' : '❤️ 已点赞') }
+  else if (result.debug) { callbacks.onLog('点赞按钮未找到，当前推文中按钮 testid: ' + JSON.stringify(result.debug)) }
   else { callbacks.onLog('未找到点赞按钮，跳过') }
 }
 

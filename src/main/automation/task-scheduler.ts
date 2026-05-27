@@ -275,22 +275,22 @@ export function abortRun(runId: number): boolean {
 
   if (!run) return false
 
+  // 正在运行 → 终止执行器
   if (run.status === 'running') {
     const profileRun = profileRuns.get(run.profile_id)
     if (profileRun && profileRun.runId === runId) {
       profileRun.abortController.abort()
+      db.prepare('UPDATE task_runs SET status = ?, finished_at = ?, error_message = ? WHERE id = ?').run('aborted', Date.now(), '用户中止', runId)
+      notifyChange()
       return true
     }
-    return false
+    // running 但 profileRun 不存在（极端情况），仍标记中止
   }
 
-  if (run.status === 'pending') {
-    db.prepare('UPDATE task_runs SET status = ?, finished_at = ? WHERE id = ?').run('aborted', Date.now(), runId)
-    notifyChange()
-    return true
-  }
-
-  return false
+  // pending / completed / failed / aborted → 统一标记为 aborted
+  db.prepare('UPDATE task_runs SET status = ?, finished_at = ?, error_message = ? WHERE id = ?').run('aborted', Date.now(), '用户中止', runId)
+  notifyChange()
+  return true
 }
 
 export function deleteRun(runId: number): boolean {
