@@ -1,6 +1,10 @@
 /**
- * AI 服务 API 封装（迭代 3.0）
+ * AI 服务 API 封装
  * 调用主进程 Express 提供的 /api/v1/ai/* 接口
+ * 
+ * 群控管理中使用的功能：
+ *   - getAIHealth(): Ollama 健康检查
+ *   - parseCommand(): 自然语言 → TaskPlan（含本地关键词解析回退）
  */
 
 import request from './request'
@@ -43,18 +47,13 @@ export async function getAIHealth(): Promise<AIHealthInfo> {
 
 /**
  * 解析自然语言指令为 TaskPlan
- * @param command 用户输入的自然语言
- * @param platformId 平台（默认 twitter）
- * @param taskId 可选任务 ID（便于后续 cancel）
- *
- * 迭代 7.0: 先尝试本地关键词解析，不命中再走 AI
+ * 先尝试本地关键词解析（0 延迟），不命中再走 AI
  */
 export async function parseCommand(
   command: string,
   platformId: string = 'twitter',
   taskId?: string
 ): Promise<ParseCommandResult> {
-  // 先尝试本地关键词解析（0 延迟，无需 AI）
   const localResult = parseCommandLocally(command)
   if (localResult.plan && !localResult.needsAI) {
     console.log(`[ParseCommand] 本地关键词解析命中: "${command}" →`, localResult.plan)
@@ -66,60 +65,11 @@ export async function parseCommand(
     }
   }
 
-  // 未命中 → 走 AI
   console.log(`[ParseCommand] 本地解析未命中，回退到 AI: "${command}"`)
   const res = await request.post<any>(
     '/ai/parse-command',
     { command, platformId, taskId },
     { timeout: AI_REQUEST_TIMEOUT }
   )
-  return res.data.data
-}
-
-/**
- * 取消正在运行的 AI 任务
- */
-export async function cancelAITask(taskId: string): Promise<{ canceled: boolean }> {
-  const res = await request.post<any>(`/ai/cancel/${encodeURIComponent(taskId)}`)
-  return res.data.data
-}
-
-// ==================== 迭代 3.5: 任务执行 ====================
-
-export interface ExecuteTaskResponse {
-  taskId: string
-}
-
-export interface TaskStatus {
-  taskId: string
-  progress: import('../../shared/automation/task-types').TaskProgress | null
-  logs: string[]
-  running: boolean
-}
-
-/**
- * 启动任务执行（在指定 Profile 的浏览器中执行 TaskPlan）
- */
-export async function executeAITask(
-  profileId: number,
-  plan: import('../../shared/automation/task-types').TaskPlan
-): Promise<ExecuteTaskResponse> {
-  const res = await request.post<any>('/ai/execute', { profileId, plan })
-  return res.data.data
-}
-
-/**
- * 获取任务执行状态
- */
-export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
-  const res = await request.get<any>(`/ai/execute/${encodeURIComponent(taskId)}/status`)
-  return res.data.data
-}
-
-/**
- * 中止任务执行
- */
-export async function abortTask(taskId: string): Promise<{ canceled: boolean }> {
-  const res = await request.post<any>(`/ai/execute/${encodeURIComponent(taskId)}/abort`)
   return res.data.data
 }

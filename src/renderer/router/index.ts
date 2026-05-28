@@ -15,7 +15,6 @@ import ProxyForm from '../views/ProxyForm.vue'
 import ProfileList from '../views/ProfileList.vue'
 import ProfileForm from '../views/ProfileForm.vue'
 import CookieManager from '../views/CookieManager.vue'
-import AIConsole from '../views/ai/AIConsole.vue'
 import GroupControl from '../views/group-control/GroupControl.vue'
 
 // 导入认证页面组件
@@ -105,13 +104,6 @@ const routes: RouteRecordRaw[] = [
     name: 'CookieManager',
     component: CookieManager,
     meta: { title: 'Cookie 管理' }
-  },
-  // 迭代 3.0: AI 控制台
-  {
-    path: '/ai',
-    name: 'AIConsole',
-    component: AIConsole,
-    meta: { title: 'AI 控制台' }
   },
   // 迭代 6.0: 多窗口群控
   {

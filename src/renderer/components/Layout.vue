@@ -15,7 +15,6 @@
           class="header-logo-img header-logo-large"
           alt="GhostBrowse"
         />
-
       </div>
 
       <!-- Phase 1.8: 右上角用户信息和退出登录 -->
@@ -72,12 +71,6 @@
               <span class="menu-emoji">📋</span>
             </template>
             <span>窗口管理</span>
-          </a-menu-item>
-          <a-menu-item key="ai">
-            <template #icon>
-              <span class="menu-emoji">🤖</span>
-            </template>
-            <span>AI 控制台</span>
           </a-menu-item>
           <a-menu-item key="group-control">
             <template #icon>
