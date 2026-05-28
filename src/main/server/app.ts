@@ -58,6 +58,12 @@ export function createApp(): Express {
     ? path.join(process.cwd(), 'dist')
     : path.join(process.cwd(), 'dist')
   
+  // 迭代 8.0: 静态托管 resources/icons（供系统通知图标使用）
+  // 开发模式指向 d:/GhostBrowse/resources/icons，打包模式指向 process.resourcesPath
+  const iconsPath = isDev
+    ? path.join(process.cwd(), 'resources', 'icons')
+    : path.join(process.resourcesPath, 'icons')
+  app.use('/icons', express.static(iconsPath))
 
   app.use(express.static(distPath))
 

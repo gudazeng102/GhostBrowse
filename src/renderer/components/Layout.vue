@@ -3,8 +3,19 @@
     <!-- 顶部 Header -->
     <a-layout-header class="layout-header">
       <div class="logo">
-        <span class="logo-icon">👻</span>
-        <span v-if="!collapsed" class="logo-text">GhostBrowse</span>
+        <img
+          v-if="collapsed"
+          src="http://localhost:3000/icons/logo1.png"
+          class="header-logo-img header-logo-small"
+          alt="logo"
+        />
+        <img
+          v-else
+          src="http://localhost:3000/icons/logo2.png"
+          class="header-logo-img header-logo-large"
+          alt="GhostBrowse"
+        />
+
       </div>
 
       <!-- Phase 1.8: 右上角用户信息和退出登录 -->
@@ -36,6 +47,7 @@
         :collapsed-width="64"
         class="layout-sider"
       >
+
         <a-menu
           v-model:selectedKeys="selectedKeys"
           theme="dark"
@@ -174,7 +186,7 @@ function handleLogout() {
 .layout-header {
   display: flex;
   align-items: center;
-  padding: 0 24px;
+  padding: 0 20px;
   background: #001529;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
@@ -187,13 +199,48 @@ function handleLogout() {
   font-weight: 600;
 }
 
-.logo-icon {
-  font-size: 24px;
+.header-logo-img {
   margin-right: 8px;
+  object-fit: contain;
+}
+.header-logo-small {
+  width: 28px;
+  height: 28px;
+}
+.header-logo-large {
+  width: 162px;
+  height: 62px;
 }
 
 .logo-text {
   letter-spacing: 1px;
+}
+
+/* 侧边栏 Logo */
+.sider-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 10px;
+  gap: 8px;
+}
+.sider-logo-img {
+  object-fit: contain;
+}
+.sider-logo-small {
+  width: 28px;
+  height: 28px;
+}
+.sider-logo-large {
+  width: 32px;
+  height: 32px;
+}
+.sider-logo-text {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  white-space: nowrap;
 }
 
 .layout-sider {

@@ -176,13 +176,16 @@ async function startRun(run: TaskRunRow): Promise<void> {
   try {
     await executeTask(run.profile_id, plan, callbacks, abortController.signal)
 
-    db.prepare('UPDATE task_runs SET status = ?, finished_at = ?, progress_json = ?, logs_json = ? WHERE id = ?').run(
+    // 从 DB 读取执行期间的最终进度（executeTask 内部通过 onProgress 不断写入）
+    const finalRow = db.prepare('SELECT progress_json FROM task_runs WHERE id = ?').get(run.id) as { progress_json: string | null } | undefined
+    const finalProgress = finalRow?.progress_json ? JSON.parse(finalRow.progress_json) : null
+    db.prepare('UPDATE task_runs SET status = ?, finished_at = ?, logs_json = ? WHERE id = ?').run(
       'completed',
       Date.now(),
-      JSON.stringify({ processed: plan.constraints.view_count || 0, total: plan.constraints.view_count || 0, liked: 0, retweeted: 0, commented: 0 }),
       JSON.stringify(logs),
       run.id
     )
+    // 如果 finalProgress 存在，保留它（已完成状态不再写入新 progress，避免覆盖实时值）
   } catch (err: any) {
     if (abortController.signal.aborted) {
       db.prepare('UPDATE task_runs SET status = ?, finished_at = ?, error_message = ?, logs_json = ? WHERE id = ?').run('aborted', Date.now(), '用户中止', JSON.stringify(logs), run.id)

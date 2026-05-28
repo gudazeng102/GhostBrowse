@@ -114,6 +114,136 @@ async function navigateToStart(driver: CDPDriver, plan: TaskPlan, callbacks: Tas
   callbacks.onLog(found ? '推文已加载' : '未检测到推文，可能需要登录')
 }
 
+/**
+ * 迭代 8.0 rev3: 按 segments 执行，用文本哈希去重推进（不回滚）
+ *
+ * 核心：X 的虚拟滚动会复用 DOM 节点，DOM 索引（nextIdx）完全不可靠。
+ * 改用文本哈希标记已处理推文，每轮扫描所有 items，跳过已处理的，
+ * 只处理第一条未处理的。全部处理完就向下滚动加载新推文。
+ */
+async function executeSegments(
+  driver: CDPDriver,
+  plan: TaskPlan,
+  progress: TaskProgress,
+  callbacks: TaskCallbacks,
+  signal?: AbortSignal
+): Promise<void> {
+  const segments = plan.segments!
+
+  for (let si = 0; si < segments.length; si++) {
+    if (signal?.aborted) throw new Error('用户已暂停')
+    const seg = segments[si] as any
+
+    // 导航到首页（如果段标记了 navigate_home）
+    if (seg.navigate_home) {
+      callbacks.onLog('导航到首页...')
+      await driver.navigate(buildTwitterHomeUrl(), 3000)
+      await driver.waitForSelector(TWITTER_SELECTORS.item, 8000)
+      callbacks.onLog('推文已加载')
+      await sleepFixed(2000)
+    }
+
+    // 导航到指定账号（如果段标记了 target_account）
+    if (seg.target_account) {
+      const account = seg.target_account
+      callbacks.onLog(`导航到 @${account} 的主页...`)
+      await driver.navigate(buildTwitterUserUrl(account), 3000)
+      await driver.waitForSelector(TWITTER_SELECTORS.item, 8000)
+      callbacks.onLog('推文已加载')
+      await sleepFixed(2000)
+    }
+
+    const start = seg.start || 1
+    const end = seg.end || start
+    const ops = seg.operations || ['view']
+    let consecutiveEmpty = 0
+
+    // 安装跨段去重标记（滚动后 DOM 改变仍可识别）
+    await driver.evaluate(`
+      if (!window.__gbMarkers) window.__gbMarkers = { processedTexts: new Set() };
+    `)
+
+    for (let pos = start; pos <= end; pos++) {
+      if (signal?.aborted) throw new Error('用户已暂停')
+
+      // 找到第一条未处理的推文（按文本哈希跳过已处理的）
+      const found = await driver.evaluate(`
+        (function() {
+          var sel = ${JSON.stringify(TWITTER_SELECTORS.item)};
+          var items = document.querySelectorAll(sel);
+          if (!items.length) return false;
+          document.querySelectorAll('[data-gb-current="1"]').forEach(function(e) { e.removeAttribute('data-gb-current'); });
+          for (var i = 0; i < items.length; i++) {
+            var el = items[i];
+            var text = (el.querySelector('div[data-testid="tweetText"]') || {}).innerText || '';
+            var key = text.substring(0, 80);
+            if (window.__gbMarkers.processedTexts.has(key)) continue;
+            window.__gbMarkers.processedTexts.add(key);
+            el.setAttribute('data-gb-current', '1');
+            var rect = el.getBoundingClientRect();
+            if (rect.bottom < 0 || rect.top > window.innerHeight) {
+              el.scrollIntoView({ behavior: 'instant', block: 'start' });
+            }
+            return true;
+          }
+          return false;
+        })()
+      `) as boolean
+
+      if (!found) {
+        callbacks.onLog('当前推文已全部处理，向下滚动加载更多...')
+        await driver.evaluate('window.scrollBy(0, window.innerHeight * 1.5)')
+        await sleepFixed(3000)
+        consecutiveEmpty++
+        if (consecutiveEmpty >= 5) { callbacks.onLog('连续多次无新推文，结束此段'); break }
+        pos--
+        continue
+      }
+
+      consecutiveEmpty = 0
+      callbacks.onLog(`[第 ${pos} 条/${end}] 操作: ${ops.join(', ')}`)
+      await sleepFixed(800)
+
+      const tweetSelector = `${TWITTER_SELECTORS.item}[data-gb-current="1"]`
+
+      for (const op of ops) {
+        if (signal?.aborted) throw new Error('用户已暂停')
+        try {
+          switch (op) {
+            case 'like':
+              await doLike(driver, tweetSelector, callbacks); progress.liked++
+              break
+            case 'retweet':
+              await doRetweet(driver, tweetSelector, callbacks); progress.retweeted++
+              break
+            case 'comment':
+              await doComment(driver, plan, tweetSelector, callbacks); progress.commented++
+              break
+            case 'follow':
+              await doFollow(driver, tweetSelector, callbacks)
+              break
+          }
+        } catch (err: any) {
+          callbacks.onError(`段${si + 1}[第${pos}条] ${op} 失败: ${err.message}`)
+        }
+        await sleep(1000, 3000)
+      }
+
+      progress.processed++
+      callbacks.onProgress(progress)
+
+      // 关闭可能残留的弹窗（转推确认框 / 回复弹窗等），确保下一轮能正常获取推文
+      await driver.pressKey('Escape')
+      await sleepFixed(500)
+      // 向下滚动，让下一条推文进视口
+      await driver.evaluate('window.scrollBy(0, window.innerHeight * 0.6)')
+      await sleep(1000, 2000)
+    }
+  }
+
+  callbacks.onLog('所有分段执行完毕')
+}
+
 async function executeOperations(
   driver: CDPDriver,
   plan: TaskPlan,
@@ -133,15 +263,17 @@ async function executeOperations(
     : 0
 
   if (plan.operations.includes('comment') && !slotMap) {
-    // 只有 comment 操作（无 like/retweet）时，每条都评论
     const hasOtherInteractions = plan.operations.some(op => op === 'like' || op === 'retweet' || op === 'follow')
     commentBudget = hasOtherInteractions ? Math.min(3, Math.ceil(maxView / 2)) : maxView
   }
 
   callbacks.onLog(`开始执行: 目标浏览 ${maxView}, 点赞 ${maxLike}, 评论 ${commentBudget}`)
 
-  // 在浏览器内安装"已处理"标记系统：用 Set 存推文 ID 或文本哈希
-  // X 的 virtualize 会销毁 DOM，不能用 WeakSet（旧引用失效）
+  if (plan.segments && plan.segments.length > 0) {
+    await executeSegments(driver, plan, progress, callbacks, signal)
+    return
+  }
+
   await driver.evaluate(`
     window.__gbMarkers = { processedIds: new Set(), processedTexts: new Set() };
   `)
@@ -154,7 +286,6 @@ async function executeOperations(
     if (durationMs === 0 && progress.processed >= maxView) break
     if (durationMs > 0 && Date.now() - startTime >= durationMs) break
 
-    // 找到第一条未处理的推文，标记并滚到视口中央
     const found = await driver.evaluate(`
       (function() {
         const sel = ${JSON.stringify(TWITTER_SELECTORS.item)};
@@ -163,7 +294,6 @@ async function executeOperations(
         document.querySelectorAll('[data-gb-current="1"]').forEach(el => el.removeAttribute('data-gb-current'));
         for (let i = 0; i < items.length; i++) {
           const el = items[i];
-          // 用文本哈希去重（不依赖 DOM 引用，virtualize 安全）
           const text = el.querySelector('div[data-testid="tweetText"]')?.innerText || '';
           const id = text.substring(0, 80);
           if (window.__gbMarkers.processedTexts.has(id)) continue;
@@ -186,7 +316,6 @@ async function executeOperations(
 
     if (!found.found) {
       callbacks.onLog('视口推文已全部处理，向下滚动加载更多...')
-      // 多滚一些避免 X 没加载新内容
       await driver.evaluate('window.scrollBy(0, window.innerHeight * 1.2)')
       await sleepFixed(2500)
       consecutiveEmpty++
@@ -196,7 +325,6 @@ async function executeOperations(
 
     consecutiveEmpty = 0
 
-    // 滚动稳定 + 渲染按钮
     await sleepFixed(800)
 
     logicalIndex++
@@ -229,7 +357,6 @@ async function executeOperations(
     progress.processed++
     callbacks.onProgress(progress)
 
-    // 处理完后再小幅滚动，让下一条进入视口
     await driver.evaluate('window.scrollBy(0, window.innerHeight * 0.5)')
     await sleep(2000, 4000)
   }
@@ -244,7 +371,6 @@ function getOperationsForPosition(
 ): OperationType[] {
   const ops: OperationType[] = ['view']
 
-  // 优先匹配分段计划（segemts）
   if (plan.segments && plan.segments.length > 0) {
     for (const seg of plan.segments) {
       if (position >= seg.start && position <= seg.end) {
@@ -265,13 +391,11 @@ function getOperationsForPosition(
   if (plan.operations.includes('like') && likeBudget > 0) {
     const likeTarget = plan.constraints.like_count || 1
     const stride = Math.max(1, Math.floor(maxView / likeTarget))
-    // stride <= 1 表示每条都点赞；否则按间隔均匀分配
     if (stride <= 1 || position % stride === 1) ops.push('like')
   }
   if (plan.operations.includes('retweet')) ops.push('retweet')
   if (plan.operations.includes('follow')) ops.push('follow')
   if (plan.operations.includes('comment') && commentBudget > 0) {
-    // 只有 comment 操作时，每条都评论；否则均匀分配
     const hasOtherInteractions = plan.operations.some(op => op === 'like' || op === 'retweet' || op === 'follow')
     if (!hasOtherInteractions) {
       ops.push('comment')
@@ -292,7 +416,6 @@ async function doLike(driver: CDPDriver, tweetSelector: string, callbacks: TaskC
       if (!btn) {
         const unlike = tweet.querySelector('button[data-testid="unlike"]');
         if (unlike) return { ok: true, already: true };
-        // 调试：列出推文内所有按钮的 data-testid
         const allBtns = tweet.querySelectorAll('button[data-testid]');
         const testids = Array.from(allBtns).map(function(b) { return b.getAttribute('data-testid'); });
         return { ok: false, reason: 'button_not_found', debug: testids };
@@ -333,6 +456,11 @@ async function doRetweet(driver: CDPDriver, tweetSelector: string, callbacks: Ta
     })()
   `) as { ok: boolean }
   callbacks.onLog(confirmed.ok ? '🔁 已转推' : '未找到转推确认按钮')
+  // 关闭确认弹窗，确保后续找推文不受遮挡
+  if (confirmed.ok) {
+    await sleepFixed(300)
+    await driver.pressKey('Escape')
+  }
 }
 
 async function doComment(driver: CDPDriver, plan: TaskPlan, tweetSelector: string, callbacks: TaskCallbacks): Promise<void> {
@@ -385,7 +513,6 @@ async function doComment(driver: CDPDriver, plan: TaskPlan, tweetSelector: strin
   `) as { ok: boolean }
   callbacks.onLog(submitted.ok ? '💬 评论已发送' : '评论发送按钮不可用')
 
-  // ✅ 关闭评论弹窗，标记所有可见推文为已处理（包括刚发的回复）
   await sleepFixed(500)
   await driver.pressKey('Escape')
   await sleepFixed(1000)
