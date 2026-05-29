@@ -106,3 +106,23 @@ CREATE TABLE IF NOT EXISTS profile_groups (
 );
 
 CREATE INDEX IF NOT EXISTS idx_profile_groups_user ON profile_groups(user_id);
+
+-- =====================================================
+-- 迭代 5.0: 采集结果表
+-- =====================================================
+CREATE TABLE IF NOT EXISTS extraction_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  profile_id INTEGER,
+  task_run_id INTEGER REFERENCES task_runs(id),
+  platform TEXT NOT NULL DEFAULT 'twitter',
+  target_type TEXT NOT NULL DEFAULT 'tweet',
+  target TEXT,
+  user_name TEXT,
+  data_type TEXT NOT NULL DEFAULT 'tweet',
+  raw_data TEXT NOT NULL,
+  collected_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_extraction_task_run ON extraction_results(task_run_id);
+CREATE INDEX IF NOT EXISTS idx_extraction_target ON extraction_results(platform, target_type);

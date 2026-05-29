@@ -140,7 +140,16 @@
               <a-col :span="5"><a-statistic title="转发" :value="runProg(rawId)?.retweeted || 0" /></a-col>
               <a-col :span="6"><a-statistic title="评论" :value="runProg(rawId)?.commented || 0" /></a-col>
             </a-row>
+            <!-- 迭代 5.2: 采集统计 -->
+            <a-row v-if="runProg(rawId)?.collected" :gutter="8" style="margin-top:4px">
+              <a-col :span="12"><a-statistic title="采集" :value="runProg(rawId)?.collected || 0" /></a-col>
+            </a-row>
             <a-progress v-if="runProg(rawId)?.total" :percent="Math.round((runProg(rawId)!.processed / runProg(rawId)!.total) * 100)" status="active" size="small" class="progress-bar" />
+            <a-space style="margin-top:4px">
+              <a-button v-if="runHasExtraction(rawId)" size="small" @click="viewExtractionResults(rawId)">
+                <EyeOutlined /> 查看采集结果
+              </a-button>
+            </a-space>
             <div class="logs-box-small">
               <div v-for="(log, i) in runLogs(rawId)" :key="i" class="log-line" :class="{ 'log-error': log.includes('ERROR') || log.includes('失败') }">{{ log }}</div>
               <div v-if="!runLogs(rawId).length" class="hint">暂无日志</div>
@@ -151,15 +160,55 @@
       </div>
       <a-empty v-if="!Object.keys(poolStatus).length" description="没有运行中的窗口" />
     </a-card>
+    <!-- 采集结果抽屉 -->
+    <a-drawer
+      title="采集结果"
+      :open="extractionDrawer.visible"
+      @close="extractionDrawer.visible = false"
+      :width="500"
+    >
+      <template #extra>
+        <a-button :href="extractionDrawer.csvUrl" target="_blank" size="small" v-if="extractionDrawer.results.length">
+          📥 导出 CSV
+        </a-button>
+      </template>
+      <a-spin :spinning="extractionDrawer.loading">
+        <a-table
+          :dataSource="extractionDrawer.results"
+          :columns="extractionResultColumns"
+          :pagination="{ pageSize: 15 }"
+          size="small"
+          rowKey="id"
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'content'">
+              {{ parseDataField(record.raw_data, 'text')?.substring(0, 100) || '—' }}
+            </template>
+            <template v-else-if="column.key === 'author'">
+              {{ parseDataField(record.raw_data, 'authorName') || '—' }}
+            </template>
+            <template v-else-if="column.key === 'time'">
+              {{ parseDataField(record.raw_data, 'time')?.substring(0, 10) || '—' }}
+            </template>
+            <template v-else-if="column.key === 'stats'">
+              ❤{{ parseDataField(record.raw_data, 'likes') || '0' }}
+              🔁{{ parseDataField(record.raw_data, 'retweets') || '0' }}
+            </template>
+          </template>
+        </a-table>
+        <div v-if="!extractionDrawer.loading && !extractionDrawer.results.length" class="hint" style="text-align:center;padding:24px">暂无采集数据</div>
+      </a-spin>
+    </a-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onUnmounted, computed, h, watch } from 'vue'
-import { message as antMessage, Modal } from 'ant-design-vue'
-import { ThunderboltOutlined, SendOutlined, StopOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
+import { message as antMessage, Modal, Drawer, Table } from 'ant-design-vue'
+import { ThunderboltOutlined, SendOutlined, StopOutlined, QuestionCircleOutlined, EyeOutlined } from '@ant-design/icons-vue'
 import { parseCommand } from '../../api/ai'
 import { getPoolStatus, getTaskQueue, batchEnqueueTasks, abortTaskRun, getTaskTemplates, saveTaskTemplate, deleteTaskTemplate } from '../../api/task-queue'
+import { getExtractionResults, getExtractionCsvUrl } from '../../api/extraction'
 import type { PoolEntry, TaskRun, TaskTemplate } from '../../api/task-queue'
 
 // ==================== 状态 ====================
@@ -449,6 +498,46 @@ function runLogs(profileId: number | string): string[] {
   const run = allRunDetails.value[id] || completedRuns.value[id]
   if (!run?.logs_json) return []
   try { return JSON.parse(run.logs_json) as string[] } catch { return [] }
+}
+
+// 迭代 5.2: 采集结果抽屉
+const extractionDrawer = ref({ visible: false, runId: 0, results: [] as any[], loading: false, csvUrl: '' })
+
+const extractionResultColumns = [
+  { title: '内容', key: 'content', width: 300 },
+  { title: '作者', key: 'author', width: 100 },
+  { title: '时间', key: 'time', width: 100 },
+  { title: '统计', key: 'stats', width: 100 }
+]
+
+function parseDataField(raw: string, field: string): string {
+  try { return JSON.parse(raw)[field] || '' } catch { return '' }
+}
+
+function runHasExtraction(profileId: number | string): boolean {
+  const id = Number(profileId)
+  const run = allRunDetails.value[id] || completedRuns.value[id]
+  if (!run) return false
+  try {
+    const plan = JSON.parse(run.plan_json)
+    return plan?.action === 'extraction' && plan?.extraction?.targetType
+  } catch { return false }
+}
+
+async function viewExtractionResults(profileId: number | string) {
+  const id = Number(profileId)
+  const run = allRunDetails.value[id] || completedRuns.value[id]
+  if (!run) return
+  extractionDrawer.value = { visible: true, runId: run.id, results: [], loading: true, csvUrl: '' }
+  try {
+    const results = await getExtractionResults(run.id)
+    extractionDrawer.value.results = results
+    extractionDrawer.value.csvUrl = getExtractionCsvUrl(run.id)
+  } catch (e: any) {
+    antMessage.error(e.message || '查询失败')
+  } finally {
+    extractionDrawer.value.loading = false
+  }
 }
 
 function statusClass(entry: PoolEntry) { return entry.running ? 'status-running' : (entry.status === 'pending' ? 'status-pending' : 'status-idle') }

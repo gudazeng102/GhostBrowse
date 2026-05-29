@@ -4,10 +4,10 @@
  */
 
 /** 操作类型 */
-export type OperationType = 'like' | 'retweet' | 'comment' | 'view' | 'subscribe' | 'upvote' | 'follow'
+export type OperationType = 'like' | 'retweet' | 'comment' | 'view' | 'subscribe' | 'upvote' | 'follow' | 'collect'
 
 /** 任务行为 */
-export type TaskAction = 'targeted_interaction' | 'home_warming' | 'following_warming' | 'custom'
+export type TaskAction = 'targeted_interaction' | 'home_warming' | 'following_warming' | 'custom' | 'extraction'
 
 /** 任务状态 */
 export type TaskStatus = 'pending' | 'running' | 'paused' | 'done' | 'error' | 'aborted'
@@ -31,6 +31,33 @@ export interface TaskSegment {
   operations: OperationType[]
 }
 
+/** 采集数据类型 */
+export type CollectTargetType = 'tweet' | 'user_profile' | 'followers' | 'following' | 'hashtag_tweets' | 'comments'
+
+/** 迭代 5.0: 采集任务计划（扩展 TaskPlan） */
+export interface ExtractionPlan {
+  /** 采集目标类型 */
+  targetType: CollectTargetType
+  /** 目标标识（@用户名 / #话题 / 关键词） */
+  target: string
+  /** 最大采集数量 */
+  maxCount: number
+  /** 平台 */
+  platform: string
+  /** 是否需要在采集前检查登录态 */
+  requireLogin: boolean
+}
+
+/** 迭代 5.3: 采集后的联动操作配置 */
+export interface FollowUpAction {
+  /** 操作类型：like / retweet / comment */
+  operations: OperationType[]
+  /** 执行数量（0 表示全部） */
+  count: number
+  /** 评论内容（可选，留空则 AI 生成） */
+  commentText?: string
+}
+
 /** AI 解析后的任务计划 */
 export interface TaskPlan {
   /** 任务行为 */
@@ -43,6 +70,8 @@ export interface TaskPlan {
   constraints: TaskConstraints
   /** 分段计划（可选，优先级高于 operations + constraints 的简单模式） */
   segments?: TaskSegment[]
+  /** 采集配置（可选，仅 extraction 类型使用） */
+  extraction?: ExtractionPlan
   /** 持续时间（分钟），0 表示按数量执行 */
   duration_minutes: number
   /** 完成后是否暂停 */
@@ -69,6 +98,8 @@ export interface TaskProgress {
   stage?: string
   /** 错误信息 */
   error?: string
+  /** 采集数量（迭代 5.0） */
+  collected?: number
 }
 
 /** 完整任务记录（包含运行时状态） */

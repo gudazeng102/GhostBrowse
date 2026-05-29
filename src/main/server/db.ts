@@ -75,7 +75,6 @@ function migrateProfilesTable(): void {
     `).get()
 
     if (!tableExists) {
-
       return
     }
 
@@ -184,6 +183,24 @@ function runMigrations(): void {
   createPlatformAccountsTable()
   createTaskTables()
   migrateProfileGroupColumn()
+  migrateExtractionResultsColumn()
+}
+
+/**
+ * 迭代 5.4: 为 extraction_results 表添加 user_name 字段
+ */
+function migrateExtractionResultsColumn(): void {
+  if (!db) return
+  try {
+    const columns = db!.prepare('PRAGMA table_info(extraction_results)').all() as any[]
+    const hasUserName = columns.some(col => col.name === 'user_name')
+    if (!hasUserName) {
+      db!.prepare('ALTER TABLE extraction_results ADD COLUMN user_name TEXT').run()
+      console.log('[DB] extraction_results 表已添加 user_name 字段')
+    }
+  } catch (err: any) {
+    console.error('[DB Migrate] extraction_results user_name 字段迁移失败:', err.message)
+  }
 }
 
 /**

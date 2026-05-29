@@ -16,6 +16,7 @@ import ProfileList from '../views/ProfileList.vue'
 import ProfileForm from '../views/ProfileForm.vue'
 import CookieManager from '../views/CookieManager.vue'
 import GroupControl from '../views/group-control/GroupControl.vue'
+import ExtractionConsole from '../views/extraction/ExtractionConsole.vue'
 
 // 导入认证页面组件
 import Login from '../views/Login.vue'
@@ -111,6 +112,13 @@ const routes: RouteRecordRaw[] = [
     name: 'GroupControl',
     component: GroupControl,
     meta: { title: '群控管理' }
+  },
+  // 迭代 5.0: 数据采集
+  {
+    path: '/extraction',
+    name: 'ExtractionConsole',
+    component: ExtractionConsole,
+    meta: { title: '数据采集' }
   }
 ]
 

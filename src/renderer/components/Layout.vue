@@ -15,6 +15,7 @@
           class="header-logo-img header-logo-large"
           alt="GhostBrowse"
         />
+        <span v-if="!collapsed" class="logo-text">GhostBrowse</span>
       </div>
 
       <!-- Phase 1.8: 右上角用户信息和退出登录 -->
@@ -78,6 +79,12 @@
             </template>
             <span>群控管理</span>
           </a-menu-item>
+          <a-menu-item key="extraction">
+            <template #icon>
+              <span class="menu-emoji">📊</span>
+            </template>
+            <span>数据采集</span>
+          </a-menu-item>
         </a-menu>
 
         <!-- 收缩/展开按钮：固定在侧栏底部 -->
@@ -132,10 +139,10 @@ watch(
       selectedKeys.value = ['proxy']
     } else if (path === '/profile') {
       selectedKeys.value = ['profile']
-    } else if (path.startsWith('/ai')) {
-      selectedKeys.value = ['ai']
     } else if (path.startsWith('/group-control')) {
       selectedKeys.value = ['group-control']
+    } else if (path.startsWith('/extraction')) {
+      selectedKeys.value = ['extraction']
     }
   },
   { immediate: true }
@@ -158,6 +165,9 @@ function handleMenuClick({ key }: { key: string }) {
       break
     case 'group-control':
       router.push('/group-control')
+      break
+    case 'extraction':
+      router.push('/extraction')
       break
     default:
       router.push('/')

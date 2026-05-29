@@ -170,11 +170,74 @@ async function startRun(run: TaskRunRow): Promise<void> {
     },
     onComplete: () => {
       console.log(`[TaskScheduler:${run.id}] 任务完成`)
+    },
+    // 迭代 5.0: 采集数据回写入 extraction_results 表
+    onData: (type: string, data: string) => {
+      try {
+        const plan = JSON.parse(run.plan_json) as TaskPlan
+        const extraction = plan.extraction
+        // 从 raw_data 中解析 handle 作为 user_name
+        let userName: string | null = null
+        if (type === 'user_profile') {
+          try {
+            const parsed = JSON.parse(data)
+            userName = parsed.handle || null
+          } catch {}
+        }
+        db.prepare(`
+          INSERT INTO extraction_results (user_id, profile_id, task_run_id, platform, target_type, target, user_name, data_type, raw_data, collected_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(run.user_id, run.profile_id, run.id, extraction?.platform || 'twitter', extraction?.targetType || 'tweet', extraction?.target || null, userName, type, data, Date.now())
+      } catch (e: any) {
+        console.error(`[TaskScheduler:${run.id}] onData 写入失败:`, e.message)
+      }
     }
   }
 
   try {
     await executeTask(run.profile_id, plan, callbacks, abortController.signal)
+
+    // 迭代 5.3: 采集完成后自动创建联动养号任务
+    if (plan.action === 'extraction' && plan.extraction) {
+      const extraction = plan.extraction
+      // 从 extraction_results 表读取本次采集到的推文 URL
+      const collected = db.prepare('SELECT raw_data FROM extraction_results WHERE task_run_id = ? ORDER BY id ASC').all(run.id) as { raw_data: string }[]
+      // 从请求中的 followUp 参数（存在 task_runs 的原始 request body 里）
+      const planObj = db.prepare('SELECT plan_json FROM task_runs WHERE id = ?').get(run.id) as { plan_json: string } | undefined
+      let followUp: any = null
+      try {
+        const parsed = JSON.parse(planObj?.plan_json || '{}')
+        followUp = parsed.followUp
+      } catch {}
+
+      if (followUp && followUp.operations && followUp.operations.length > 0 && collected.length > 0) {
+        const count = Math.min(followUp.count || collected.length, collected.length)
+        const ops = followUp.operations as string[]
+        logs.push(`[${new Date().toLocaleTimeString()}] 采集完成，自动发起 ${count} 条联动操作...`)
+
+        // 构建 segments：对前 count 条采集到的推文执行指定操作
+        const segments = []
+        let pos = 1
+        for (let i = 0; i < count; i++) {
+          segments.push({ start: pos, end: pos, operations: ops })
+          pos++
+        }
+
+        const followUpPlan: TaskPlan = {
+          action: 'targeted_interaction',
+          target_accounts: plan.target_accounts,
+          operations: ops as import('../../shared/automation/task-types').OperationType[],
+          constraints: { view_count: count, like_count: ops.includes('like') ? count : 0, selective: false },
+          segments,
+          duration_minutes: 0,
+          pause_after: false,
+          platform: extraction.platform || 'twitter',
+          raw_command: `[联动] 对采集到的 ${count} 条推文执行 ${ops.join('/')}`
+        }
+        await enqueueTask({ profileId: run.profile_id, plan: followUpPlan, userId: run.user_id })
+        logs.push(`[${new Date().toLocaleTimeString()}] ✅ 联动任务已入队 (${count} 条, ${ops.join('/')})`)
+      }
+    }
 
     // 从 DB 读取执行期间的最终进度（executeTask 内部通过 onProgress 不断写入）
     const finalRow = db.prepare('SELECT progress_json FROM task_runs WHERE id = ?').get(run.id) as { progress_json: string | null } | undefined
@@ -185,7 +248,6 @@ async function startRun(run: TaskRunRow): Promise<void> {
       JSON.stringify(logs),
       run.id
     )
-    // 如果 finalProgress 存在，保留它（已完成状态不再写入新 progress，避免覆盖实时值）
   } catch (err: any) {
     if (abortController.signal.aborted) {
       db.prepare('UPDATE task_runs SET status = ?, finished_at = ?, error_message = ?, logs_json = ? WHERE id = ?').run('aborted', Date.now(), '用户中止', JSON.stringify(logs), run.id)

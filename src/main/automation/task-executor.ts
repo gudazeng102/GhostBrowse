@@ -11,6 +11,7 @@ import { Logger } from '../../shared/utils/logger'
 import { TWITTER_SELECTORS } from '../../shared/platforms/twitter/selectors'
 import { buildTwitterHomeUrl, buildTwitterFollowingUrl, buildTwitterUserUrl } from '../../shared/platforms/twitter/urls'
 import { generateComment } from '../ai/comment-generator'
+import { extractTweetFromElement, CHECK_LOGIN_CODE, EXTRACT_USER_PROFILE_CODE } from '../../shared/platforms/twitter/extractor'
 
 const logger = new Logger('TaskExecutor')
 
@@ -21,6 +22,8 @@ export interface TaskCallbacks {
   onLog: (message: string) => void
   onError: (error: string) => void
   onComplete: () => void
+  /** 迭代 5.0: 采集数据回调 */
+  onData?: (type: string, data: string) => void
 }
 
 export async function executeTask(
@@ -50,6 +53,16 @@ export async function executeTask(
     callbacks.onProgress(progress)
 
     if (signal?.aborted) throw new Error('用户已暂停')
+
+    // 迭代 5.0: 采集任务走独立路径
+    if (plan.action === 'extraction' && plan.extraction) {
+      await executeExtraction(driver, plan, progress, callbacks, signal)
+      progress.stage = 'done'
+      callbacks.onProgress(progress)
+      callbacks.onLog('采集任务执行完毕')
+      callbacks.onComplete()
+      return
+    }
 
     await navigateToStart(driver, plan, callbacks)
     if (signal?.aborted) throw new Error('用户已暂停')
@@ -112,6 +125,191 @@ async function navigateToStart(driver: CDPDriver, plan: TaskPlan, callbacks: Tas
   await driver.navigate(url, 3000)
   const found = await driver.waitForSelector(TWITTER_SELECTORS.item, 10000)
   callbacks.onLog(found ? '推文已加载' : '未检测到推文，可能需要登录')
+}
+
+/**
+ * 迭代 5.0: 采集执行器
+ * 先检查登录态，再导航到目标页，逐条提取推文数据
+ */
+async function executeExtraction(
+  driver: CDPDriver,
+  plan: TaskPlan,
+  progress: TaskProgress,
+  callbacks: TaskCallbacks,
+  signal?: AbortSignal
+): Promise<void> {
+  const extraction = plan.extraction!
+  
+  // Step 1: 检查登录态
+  if (extraction.requireLogin && extraction.platform === 'twitter') {
+    callbacks.onLog('检查 Twitter 登录态...')
+    const loginCheck = await driver.evaluate(CHECK_LOGIN_CODE) as { loggedIn: boolean; isLoginPage: boolean }
+    if (loginCheck.isLoginPage || !loginCheck.loggedIn) {
+      callbacks.onLog('❌ Twitter 未登录，无法执行采集任务')
+      throw new Error('Twitter 未登录，请先配置平台账号并启动登录后再试')
+    }
+    callbacks.onLog('✅ Twitter 已登录')
+  }
+
+  // Step 2: 根据目标类型导航
+  const target = extraction.target
+  let url = 'https://x.com/home'
+
+  // 迭代 5.4: 用户信息采集 — 支持多账号逗号分隔
+  if (extraction.targetType === 'user_profile') {
+    // 拆分多个账号（支持中文逗号）
+    const accounts = target.split(/[,，\n\r]+/).map(a => a.trim().replace(/^@/, '')).filter(Boolean)
+    const totalAccounts = accounts.length
+    progress.total = totalAccounts
+    progress.collected = 0
+    callbacks.onLog(`开始采集 ${totalAccounts} 个账号的用户信息...`)
+
+    // 每个账号有单独的 30 秒超时，防止卡死
+    for (let i = 0; i < accounts.length; i++) {
+      if (signal?.aborted) throw new Error('用户已暂停')
+      const account = accounts[i]
+      const accountStartTime = Date.now()
+      callbacks.onLog(`[${i + 1}/${totalAccounts}] 正在采集 @${account} 的信息...`)
+
+      try {
+        await driver.navigate(`https://x.com/${account}`, 3000)
+
+        // 等 UserName 出现（8s 超时，不抛错）
+        await driver.waitForSelector('div[data-testid="UserName"]', 8000).catch(() => {
+          callbacks.onLog(`⚠️ @${account} 页面加载未完成，尝试提取...`)
+        })
+
+        // 固定等 2s 让页面渲染稳定（不依赖 accountStartTime）
+        await sleepFixed(2000)
+
+        // evaluate 本身自带 CDP 超时，不加额外 Promise.race
+        const dataJson = await driver.evaluate(EXTRACT_USER_PROFILE_CODE)
+          .catch(() => null) as string | null
+
+        if (dataJson && callbacks.onData) {
+          callbacks.onData('user_profile', dataJson)
+          callbacks.onLog(`✅ 已采集 ${i + 1}/${totalAccounts}：${account}`)
+        } else {
+          callbacks.onLog(`⚠️ @${account} 提取数据为空，跳过`)
+        }
+      } catch (err: any) {
+        callbacks.onLog(`⚠️ @${account} 采集异常: ${(err.message || String(err)).substring(0, 60)}`)
+      }
+
+      progress.collected = i + 1
+      progress.processed = i + 1
+      callbacks.onProgress(progress)
+      await sleepFixed(1000)
+    }
+    callbacks.onLog(`用户信息采集完成，共 ${progress.collected}/${totalAccounts} 个账号`)
+    return
+  }
+
+  // 原有逻辑：推文采集
+  switch (extraction.targetType) {
+    case 'tweet':
+    case 'followers':
+    case 'following':
+      const cleanTarget = target.replace(/^@/, '')
+      url = `https://x.com/${cleanTarget}`
+      break
+    case 'hashtag_tweets':
+      const tag = target.replace(/^#/, '')
+      url = `https://x.com/hashtag/${tag}`
+      break
+    default:
+      url = 'https://x.com/home'
+  }
+  callbacks.onLog(`导航到采集目标: ${url}`)
+  await driver.navigate(url, 3000)
+  await driver.waitForSelector(TWITTER_SELECTORS.item, 10000)
+  callbacks.onLog('目标页面已加载')
+  await sleepFixed(2000)
+
+  // Step 3: 逐条采集推文
+  const maxCount = extraction.maxCount || 100
+  progress.total = maxCount
+  progress.collected = 0
+  callbacks.onLog(`开始采集，目标 ${maxCount} 条...`)
+
+  let consecutiveEmpty = 0
+  let noNewDataTime = Date.now()
+
+  while (progress.collected! < maxCount) {
+    if (signal?.aborted) throw new Error('用户已暂停')
+
+    // 超时保护：超过 90 秒没有获取到新数据自动结束
+    if (Date.now() - noNewDataTime > 90 * 1000) {
+      callbacks.onLog('⏰ 超时未获取到新数据，采集结束')
+      break
+    }
+
+    const found = await driver.evaluate(`
+      (function() {
+        var sel = ${JSON.stringify(TWITTER_SELECTORS.item)};
+        var items = document.querySelectorAll(sel);
+        if (!items.length) return false;
+        document.querySelectorAll('[data-gb-current="1"]').forEach(function(e) { e.removeAttribute('data-gb-current'); });
+        for (var i = 0; i < items.length; i++) {
+          var el = items[i];
+          var text = (el.querySelector('div[data-testid="tweetText"]') || {}).innerText || '';
+          var key = text.substring(0, 80);
+          if (window.__gbMarkers && window.__gbMarkers.processedTexts && window.__gbMarkers.processedTexts.has(key)) continue;
+          if (!window.__gbMarkers) window.__gbMarkers = { processedTexts: new Set() };
+          window.__gbMarkers.processedTexts.add(key);
+          el.setAttribute('data-gb-current', '1');
+          var rect = el.getBoundingClientRect();
+          if (rect.bottom < 0 || rect.top > window.innerHeight) {
+            el.scrollIntoView({ behavior: 'instant', block: 'start' });
+          }
+          return true;
+        }
+        return false;
+      })()
+    `) as boolean
+
+    if (!found) {
+      callbacks.onLog('当前无新推文，滚动加载更多...')
+      await driver.evaluate('window.scrollBy(0, window.innerHeight * 1.5)')
+      await sleepFixed(3000)
+      consecutiveEmpty++
+      // 也计入无数据超时（滚动后依然无新推文）
+      if (consecutiveEmpty >= 3) { callbacks.onLog('⚠️ 连续多次滚动后无新推文，采集结束'); break }
+      continue
+    }
+
+    consecutiveEmpty = 0
+    callbacks.onLog(`正在采集第 ${progress.collected! + 1} 条...`)
+    await sleepFixed(800)
+
+    const tweetSelector = `${TWITTER_SELECTORS.item}[data-gb-current="1"]`
+    const dataJson = await driver.evaluate(extractTweetFromElement(tweetSelector)) as string | null
+
+    if (dataJson) {
+      if (callbacks.onData) callbacks.onData('tweet', dataJson)
+      progress.collected = (progress.collected || 0) + 1
+      progress.processed = progress.collected
+      callbacks.onLog(`📊 已采集 ${progress.collected}/${maxCount} 条`)
+      callbacks.onProgress(progress)
+      noNewDataTime = Date.now() // reset 超时计时器
+    } else {
+      // DOM 节点已消失或提取失败 -> 标记为已处理并跳过，防止死循环
+      callbacks.onLog(`⚠️ 第 ${progress.collected! + 1} 条提取失败，标记已处理并跳过`)
+      // 仍递增 collected，避免卡在最后一条上
+      progress.collected = (progress.collected || 0) + 1
+      progress.processed = progress.collected
+      callbacks.onProgress(progress)
+    }
+
+    // 移除当前标记（防止后续同一元素残留 data-gb-current 干扰）
+    await driver.evaluate(`document.querySelectorAll('[data-gb-current="1"]').forEach(function(e){ e.removeAttribute('data-gb-current') })`)
+    await driver.pressKey('Escape')
+    await sleepFixed(300)
+    await driver.evaluate('window.scrollBy(0, window.innerHeight * 0.8)')
+    await sleep(1000, 2000)
+  }
+
+  callbacks.onLog(`采集完成，共获取 ${progress.collected}/${maxCount} 条数据`)
 }
 
 /**

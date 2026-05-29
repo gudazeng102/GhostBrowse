@@ -71,10 +71,27 @@ export class CDPDriver {
    * 导航到 URL
    */
   async navigate(url: string, waitMs = 2000): Promise<void> {
-    await this.send('Page.enable')
-    await this.send('Page.navigate', { url })
+    // 只发送 navigation 命令，不重复 Page.enable
+    // 加超时保护，防止 CDP 卡死导致整个循环停止
+    try {
+      await this.sendWithTimeout('Page.navigate', { url }, 10000)
+    } catch (err: any) {
+      // navigate 超时不影响后续命令
+    }
     // 等待页面基本加载
     await this.sleep(waitMs)
+  }
+
+  /**
+   * 带超时的 send，避免 CDP 卡死整个流程
+   */
+  private async sendWithTimeout(method: string, params?: any, timeoutMs = 10000): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`CDP ${method} 超时 (${timeoutMs}ms)`))
+      }, timeoutMs)
+      this.send(method, params).then(v => { clearTimeout(timer); resolve(v) }).catch(e => { clearTimeout(timer); reject(e) })
+    })
   }
 
   /**
