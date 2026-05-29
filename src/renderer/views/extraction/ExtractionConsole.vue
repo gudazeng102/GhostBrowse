@@ -122,6 +122,11 @@
           </div>
         </div>
         <div class="collect-note">⚠️ X 页面显示的关注数可能高于实际采集数，差额通常为已注销/冻结/私密的账号，属于正常现象</div>
+        <a-space v-if="collectProgress.stage === 'done'" style="margin-top:8px">
+          <a-button :href="getApiCsvUrl(collectProgress.taskId)" target="_blank" type="primary" ghost>
+            📥 API 采集用户数据导出
+          </a-button>
+        </a-space>
       </a-space>
     </a-card>
 
@@ -174,7 +179,7 @@ import { ref, reactive, onUnmounted, computed } from 'vue'
 import { message as antMessage } from 'ant-design-vue'
 import { SendOutlined, StopOutlined } from '@ant-design/icons-vue'
 import { enqueueExtraction, getExtractionResults, getExtractionCsvUrl } from '../../api/extraction'
-import { fullCollect, getCollectProgress } from '../../api/x-graphql'
+import { fullCollect, getCollectProgress, getApiCsvUrl } from '../../api/x-graphql'
 import { getPoolStatus, getTaskQueue, abortTaskRun, getTaskHistory } from '../../api/task-queue'
 import type { PoolEntry, TaskRun } from '../../api/task-queue'
 

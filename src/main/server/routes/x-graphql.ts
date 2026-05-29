@@ -219,6 +219,52 @@ router.get('/collect-progress/:taskId', (req: Request, res: Response) => {
 })
 
 /**
+ * GET /api/v1/x/export-api-csv/:taskId
+ * 导出 API 采集的用户数据（仅 api_source='api' 的 user_profile 数据）
+ */
+router.get('/export-api-csv/:taskId', (req: Request, res: Response) => {
+  const taskId = String(req.params.taskId)
+  const progress = getProgress(taskId)
+  if (!progress) {
+    res.status(404).json({ code: 404, data: null, message: '任务不存在或已完成' })
+    return
+  }
+
+  const db = getDatabase()
+  // 通过进度对象中的 target 找到对应的 extraction_results
+  const rows = db.prepare(
+    "SELECT * FROM extraction_results WHERE target = ? AND data_type = 'user_profile' AND api_source = 'api' ORDER BY id ASC"
+  ).all(`@${progress.target}`) as any[]
+
+  if (rows.length === 0) {
+    res.status(404).json({ code: 404, data: null, message: '没有可导出的数据' })
+    return
+  }
+
+  let csv = 'id,显示名,用户名,简介,关注,粉丝,推文数,位置,加入日期,认证,头像URL,个人主页\n'
+  for (const row of rows) {
+    let data: any = {}
+    try { data = JSON.parse(row.raw_data) } catch {}
+    const displayName = (data.displayName || '').replace(/"/g, '""')
+    const userName = row.user_name ? '@' + row.user_name : ''
+    const bio = (data.bio || '').replace(/"/g, '""')
+    const following = data.following || ''
+    const followers = data.followers || ''
+    const tweetCount = data.tweetCount || ''
+    const location = (data.location || '').replace(/"/g, '""')
+    const joinDate = data.joinDate || ''
+    const verified = data.verified === 'true' ? '是' : '否'
+    const avatarUrl = data.avatarUrl || ''
+    const profileUrl = data.profileUrl || ''
+    csv += `${row.id},"${displayName}",${userName},"${bio}",${following},${followers},${tweetCount},"${location}",${joinDate},${verified},"${avatarUrl}",${profileUrl}\n`
+  }
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+  res.setHeader('Content-Disposition', `attachment; filename="api_collect_${progress.target}.csv"`)
+  res.send('\ufeff' + csv)
+})
+
+/**
  * POST /api/v1/x/full-collect
  * 带实时进度回传
  */

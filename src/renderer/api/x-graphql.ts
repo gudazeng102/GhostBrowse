@@ -37,3 +37,8 @@ export async function getCollectProgress(taskId: string): Promise<{
   const res = await request.get<any>(`/x/collect-progress/${taskId}`)
   return res.data.data
 }
+
+/** 采集完成后获取 CSV 下载 URL */
+export function getApiCsvUrl(taskId: string): string {
+  return `http://localhost:3000/api/v1/x/export-api-csv/${taskId}`
+}
