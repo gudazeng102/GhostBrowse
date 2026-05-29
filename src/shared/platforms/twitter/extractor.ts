@@ -71,6 +71,35 @@ export const CHECK_LOGIN_CODE = `
 `
 
 /**
+ * 迭代 5.4: 提取关注列表
+ * 从 /following 页面提取当前可见的所有用户卡片
+ * 返回 JSON 数组字符串，每个元素含 displayName / handle / bio / avatarUrl
+ */
+export const EXTRACT_FOLLOWING_LIST_CODE = `
+  (function() {
+    var items = document.querySelectorAll('[data-testid="UserCell"]');
+    var results = [];
+    for (var i = 0; i < items.length; i++) {
+      var el = items[i];
+      var nameEl = el.querySelector('div[data-testid="User-Name"]');
+      var name = nameEl ? (nameEl.innerText || '').split('\\n')[0] || '' : '';
+      var handle = '';
+      var link = el.querySelector('a[href*="/"]');
+      if (link) {
+        var href = link.getAttribute('href') || '';
+        handle = href.split('/').filter(Boolean)[0] || '';
+      }
+      var bioEl = el.querySelector('div[data-testid="UserDescription"]');
+      var bio = bioEl ? bioEl.innerText : '';
+      var avatarEl = el.querySelector('img[src*="profile_images"]');
+      var avatar = avatarEl ? avatarEl.getAttribute('src') || '' : '';
+      results.push(JSON.stringify({ displayName: name, handle: handle, bio: bio, avatarUrl: avatar }));
+    }
+    return '[' + results.join(',') + ']';
+  })()
+`
+
+/**
  * 迭代 5.4: 提取用户资料
  * 从用户主页提取头像/简介/关注数/粉丝数/位置/加入日期
  * 一次性提取，不滚动

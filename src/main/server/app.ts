@@ -22,6 +22,7 @@ import profileGroupRouter from './routes/profile-group'
 import aiRouter from './routes/ai'
 import taskQueueRouter from './routes/task-queue'
 import extractionRouter from './routes/extraction'
+import xGraphqlRouter from './routes/x-graphql'
 import { initScheduler } from '../automation/task-scheduler'
 
 // Express 应用实例
@@ -128,6 +129,9 @@ export function createApp(): Express {
 
   // ==================== 迭代 5.0: 数据采集 API ====================
   app.use('/api/v1/extraction', extractionRouter)
+
+  // ==================== 迭代 6.0: X GraphQL API 路由 ====================
+  app.use('/api/v1/x', xGraphqlRouter)
 
   // ==================== 捕获所有路由，返回 index.html (SPA 支持) ====================
   app.get('*', (req: Request, res: Response) => {

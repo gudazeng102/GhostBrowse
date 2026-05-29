@@ -11,7 +11,7 @@ import { Logger } from '../../shared/utils/logger'
 import { TWITTER_SELECTORS } from '../../shared/platforms/twitter/selectors'
 import { buildTwitterHomeUrl, buildTwitterFollowingUrl, buildTwitterUserUrl } from '../../shared/platforms/twitter/urls'
 import { generateComment } from '../ai/comment-generator'
-import { extractTweetFromElement, CHECK_LOGIN_CODE, EXTRACT_USER_PROFILE_CODE } from '../../shared/platforms/twitter/extractor'
+import { extractTweetFromElement, CHECK_LOGIN_CODE, EXTRACT_USER_PROFILE_CODE, EXTRACT_FOLLOWING_LIST_CODE } from '../../shared/platforms/twitter/extractor'
 
 const logger = new Logger('TaskExecutor')
 
@@ -155,6 +155,93 @@ async function executeExtraction(
   const target = extraction.target
   let url = 'https://x.com/home'
 
+  // 迭代 5.4: 采集指定用户的关注列表
+  if (extraction.targetType === 'following') {
+    const cleanTarget = target.replace(/^@/, '').trim()
+    if (!cleanTarget) { callbacks.onLog('⚠️ 目标账号为空'); return }
+    callbacks.onLog(`开始采集 @${cleanTarget} 的关注列表...`)
+
+    // 导航到关注页
+    await driver.navigate(`https://x.com/${cleanTarget}/following`, 3000)
+    await sleepFixed(3000)
+
+    // 关注列表不设上限，有多少采多少
+    progress.total = 9999
+    progress.collected = 0
+
+    // 先滚动加载关注列表（不设 maxCount 限制）
+    let consecutiveEmpty = 0
+    let handles: string[] = []
+    while (true) {
+      if (signal?.aborted) throw new Error('用户已暂停')
+
+      // 提取当前可见的关注用户
+      const listJson = await driver.evaluate(EXTRACT_FOLLOWING_LIST_CODE).catch(() => '[]') as string
+      let items: any[] = []
+      try { items = JSON.parse(listJson) } catch {}
+
+      if (items.length === 0) {
+        callbacks.onLog('滚动加载更多关注用户...')
+        await driver.evaluate('window.scrollBy(0, window.innerHeight * 1.5)')
+        await sleepFixed(3000)
+        consecutiveEmpty++
+        if (consecutiveEmpty >= 5) { callbacks.onLog('⚠️ 已加载全部关注用户'); break }
+        continue
+      }
+
+      consecutiveEmpty = 0
+      const before = handles.length
+      const seen = new Set(handles)
+      for (const item of items) {
+        if (item.handle && !seen.has(item.handle)) {
+          seen.add(item.handle)
+          handles.push(item.handle)
+        }
+      }
+      const newCount = handles.length - before
+      callbacks.onLog(`已发现 ${handles.length} 个关注用户`)
+
+      // 本轮无新数据 → 滚动继续加载
+      if (newCount === 0) {
+        await driver.evaluate('window.scrollBy(0, window.innerHeight * 1.5)')
+        await sleepFixed(3000)
+        consecutiveEmpty++
+        if (consecutiveEmpty >= 3) { callbacks.onLog('⚠️ 无更多关注用户'); break }
+      }
+    }
+
+    callbacks.onLog(`共发现 ${handles.length} 个关注用户，开始逐个采集资料...`)
+    progress.total = handles.length
+    progress.collected = 0
+
+    for (let i = 0; i < handles.length; i++) {
+      if (signal?.aborted) throw new Error('用户已暂停')
+      const account = handles[i]
+      callbacks.onLog(`正在采集第 ${i + 1} 个（@${account}）...`)
+
+      try {
+        await driver.navigate(`https://x.com/${account}`, 3000)
+        await driver.waitForSelector('div[data-testid="UserName"]', 8000).catch(() => {})
+        await sleepFixed(2000)
+
+        const dataJson = await driver.evaluate(EXTRACT_USER_PROFILE_CODE).catch(() => null) as string | null
+        if (dataJson && callbacks.onData) {
+          callbacks.onData('user_profile', dataJson)
+        }
+        progress.collected = i + 1
+        progress.processed = i + 1
+        callbacks.onLog(`✅ ${i + 1}/${handles.length}：${account}`)
+        callbacks.onProgress(progress)
+      } catch (err: any) {
+        callbacks.onLog(`⚠️ @${account} 采集异常: ${(err.message || '').substring(0, 50)}`)
+      }
+      await sleepFixed(1000)
+    }
+
+    callbacks.onLog(`关注列表采集完成，共 ${progress.collected}/${handles.length} 个账号`)
+    return
+  }
+
   // 迭代 5.4: 用户信息采集 — 支持多账号逗号分隔
   if (extraction.targetType === 'user_profile') {
     // 拆分多个账号（支持中文逗号）
@@ -209,7 +296,6 @@ async function executeExtraction(
   switch (extraction.targetType) {
     case 'tweet':
     case 'followers':
-    case 'following':
       const cleanTarget = target.replace(/^@/, '')
       url = `https://x.com/${cleanTarget}`
       break

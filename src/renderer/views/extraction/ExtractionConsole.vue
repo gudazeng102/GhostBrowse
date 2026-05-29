@@ -11,7 +11,11 @@
           <a-select-option value="tweet">📖 指定账号的推文</a-select-option>
           <a-select-option value="hashtag_tweets"># 话题推文</a-select-option>
           <a-select-option value="user_profile">👤 用户信息</a-select-option>
+          <a-select-option value="following">👥 指定用户关注用户</a-select-option>
         </a-select>
+
+        <!-- 迭代 6.2: API 模式开关（仅关注列表可用） -->
+        <a-switch v-if="targetType === 'following'" v-model:checked="apiMode" checked-children="API 采集" un-checked-children="浏览器采集" style="margin-bottom:8px" />
 
         <!-- 迭代 5.4: 用户信息用大输入框，支持逗号分隔 -->
         <a-textarea
@@ -22,14 +26,14 @@
           style="width:500px"
         />
         <a-input
-          v-else
+          v-if="targetType !== 'user_profile'"
           v-model:value="target"
-          placeholder="目标（@用户名 / #话题）"
+          :placeholder="targetType === 'following' ? '输入要采集关注列表的账号，例如：@elonmusk' : '目标（@用户名 / #话题）'"
           style="width:400px"
         />
 
-        <!-- 用户信息不需要条数，推文/话题才需要 -->
-        <template v-if="targetType !== 'user_profile'">
+        <!-- 用户信息 和 关注列表不需要条数，推文/话题才需要 -->
+        <template v-if="targetType === 'tweet' || targetType === 'hashtag_tweets'">
           <a-input-number v-model:value="maxCount" :min="1" :max="500" style="width:120px" />
           <span style="margin-left:8px">条</span>
         </template>
@@ -81,10 +85,10 @@
           </template>
           <div v-if="allRunDetails[Number(rawId)]">
             <a-row :gutter="8">
-              <a-col :span="8"><a-statistic title="进度" :value="`${runProg(rawId)?.processed || 0}/${runProg(rawId)?.total || 0}`" /></a-col>
+              <a-col :span="8"><a-statistic title="进度" :value="`${runProg(rawId)?.processed || 0}`" /></a-col>
               <a-col :span="5"><a-statistic title="采集" :value="runProg(rawId)?.collected || 0" /></a-col>
             </a-row>
-            <a-progress v-if="runProg(rawId)?.total" :percent="Math.round((runProg(rawId)!.processed / runProg(rawId)!.total) * 100)" status="active" size="small" class="progress-bar" />
+            <a-progress v-if="runProg(rawId)?.total && runProg(rawId)!.total < 1000" :percent="Math.round((runProg(rawId)!.processed / runProg(rawId)!.total) * 100)" status="active" size="small" class="progress-bar" />
             <div class="logs-box-small">
               <div v-for="(log, i) in runLogs(rawId)" :key="i" class="log-line" :class="{ 'log-error': log.includes('ERROR') || log.includes('失败') }">{{ log }}</div>
               <div v-if="!runLogs(rawId).length" class="hint">暂无日志</div>
@@ -94,6 +98,31 @@
         </a-card>
       </div>
       <a-empty v-if="!Object.keys(poolStatus).length" description="没有运行中的窗口" />
+    </a-card>
+
+    <!-- API 采集进度 -->
+    <a-card v-if="collectProgress" size="small" class="section-card">
+      <template #title>
+        <span>🔬 API 采集进度</span>
+        <a-tag :color="collectProgress.stage === 'done' ? 'green' : (collectProgress.stage === 'error' ? 'red' : 'processing')" style="margin-left:8px">
+          {{ collectProgress.stage === 'done' ? '完成' : (collectProgress.stage === 'error' ? '失败' : '执行中') }}
+        </a-tag>
+      </template>
+      <a-space direction="vertical" style="width:100%">
+        <a-row :gutter="8" v-if="collectProgress.stage !== 'fetching_following'">
+          <a-col :span="6"><a-statistic title="关注总数" :value="collectProgress.totalFound" /></a-col>
+          <a-col :span="6"><a-statistic title="已查详情" :value="collectProgress.detailsQueried" /></a-col>
+          <a-col :span="6"><a-statistic title="详情总数" :value="collectProgress.detailsTotal" /></a-col>
+          <a-col :span="6"><a-statistic title="已入库" :value="collectProgress.inserted" /></a-col>
+        </a-row>
+        <a-progress v-if="collectProgress.detailsTotal > 0" :percent="Math.round((collectProgress.detailsQueried / collectProgress.detailsTotal) * 100)" size="small" />
+        <div class="logs-box-small" style="max-height:150px">
+          <div v-for="(log, i) in collectProgress.logs" :key="i" class="log-line" :class="'log-' + log.type">
+            [{{ log.time }}] {{ log.msg }}
+          </div>
+        </div>
+        <div class="collect-note">⚠️ X 页面显示的关注数可能高于实际采集数，差额通常为已注销/冻结/私密的账号，属于正常现象</div>
+      </a-space>
     </a-card>
 
     <!-- 结果展示 -->
@@ -145,6 +174,7 @@ import { ref, reactive, onUnmounted, computed } from 'vue'
 import { message as antMessage } from 'ant-design-vue'
 import { SendOutlined, StopOutlined } from '@ant-design/icons-vue'
 import { enqueueExtraction, getExtractionResults, getExtractionCsvUrl } from '../../api/extraction'
+import { fullCollect, getCollectProgress } from '../../api/x-graphql'
 import { getPoolStatus, getTaskQueue, abortTaskRun, getTaskHistory } from '../../api/task-queue'
 import type { PoolEntry, TaskRun } from '../../api/task-queue'
 
@@ -152,6 +182,7 @@ const targetType = ref('tweet')
 const target = ref('')
 const maxCount = ref(50)
 const sending = ref(false)
+const apiMode = ref(false)
 
 const followUpOps = reactive({ like: false, retweet: false, comment: false })
 const followUpCount = ref(5)
@@ -210,19 +241,31 @@ async function handleEnqueue() {
 
   sending.value = true
   try {
-    const result = await enqueueExtraction({
-      targetType: targetType.value,
-      target: normalizedTarget,
-      maxCount: maxCount.value,
-      profileIds: runningIds,
-      followUp: ops.length > 0 ? {
-        operations: ops,
-        count: followUpCount.value,
-        commentText: followUpComment.value || undefined
-      } : undefined
-    })
-    const msg = ops.length > 0 ? `并向每个窗口自动下发 ${followUpCount.value} 条联动操作` : ''
-    antMessage.success(`已向 ${result.runs?.length || 0} 个窗口下发采集任务${msg}`)
+    if (targetType.value === 'following' && apiMode.value) {
+      const cleanTarget = target.value.replace(/^@/, '').trim()
+      const firstProfileId = runningIds[0]
+      if (!firstProfileId) { antMessage.warning('没有活跃的窗口'); return }
+
+      const { taskId } = await fullCollect(cleanTarget, firstProfileId)
+      antMessage.success(`✅ API 采集已启动，任务 ID: ${taskId}，可在进度面板中查看实时状态`)
+
+      // 启动进度轮询
+      startProgressPolling(taskId)
+    } else {
+      const result = await enqueueExtraction({
+        targetType: targetType.value,
+        target: normalizedTarget,
+        maxCount: maxCount.value,
+        profileIds: runningIds,
+        followUp: ops.length > 0 ? {
+          operations: ops,
+          count: followUpCount.value,
+          commentText: followUpComment.value || undefined
+        } : undefined
+      })
+      const msg = ops.length > 0 ? `并向每个窗口自动下发 ${followUpCount.value} 条联动操作` : ''
+      antMessage.success(`已向 ${result.runs?.length || 0} 个窗口下发采集任务${msg}`)
+    }
   } catch (e: any) {
     antMessage.error(e.message || '下发失败')
   } finally {
@@ -364,6 +407,41 @@ async function quickViewResults(profileId: number | string) {
   await handleSearch()
 }
 
+// ==================== API 采集进度轮询 ====================
+
+/** 当前 API 采集进度 */
+const collectProgress = ref<{
+  taskId: string
+  stage: string
+  totalFound: number
+  detailsQueried: number
+  detailsTotal: number
+  inserted: number
+  logs: { time: string; msg: string; type: string }[]
+  error?: string
+} | null>(null)
+
+/** 启动进度轮询（每秒查一次） */
+let collectTimer: ReturnType<typeof setInterval> | null = null
+
+async function startProgressPolling(taskId: string) {
+  collectTimer = setInterval(async () => {
+    try {
+      const p = await getCollectProgress(taskId)
+      collectProgress.value = p
+      if (p.stage === 'done' || p.stage === 'error') {
+        if (collectTimer) { clearInterval(collectTimer); collectTimer = null }
+        // 完成后刷新下拉结果列表
+        await refreshCompletedRuns()
+      }
+    } catch {}
+  }, 2000)
+}
+
+onUnmounted(() => {
+  if (collectTimer) clearInterval(collectTimer)
+})
+
 // 3 秒轮询
 let timer: ReturnType<typeof setInterval> | null = null
 timer = setInterval(refreshPool, 3000)
@@ -384,4 +462,5 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .status-running { font-size: 14px; }
 .status-pending { font-size: 14px; }
 .status-idle { font-size: 14px; }
+.collect-note { color: #ff4d4f; font-size: 12px; margin-top: 8px; padding: 4px 8px; background: #fff2f0; border-radius: 4px; }
 </style>

@@ -184,6 +184,24 @@ function runMigrations(): void {
   createTaskTables()
   migrateProfileGroupColumn()
   migrateExtractionResultsColumn()
+  migrateExtractionSourceColumn()
+}
+
+/**
+ * 迭代 6.0: 为 extraction_results 表添加 api_source 字段
+ */
+function migrateExtractionSourceColumn(): void {
+  if (!db) return
+  try {
+    const columns = db!.prepare('PRAGMA table_info(extraction_results)').all() as any[]
+    const hasSource = columns.some(col => col.name === 'api_source')
+    if (!hasSource) {
+      db!.prepare("ALTER TABLE extraction_results ADD COLUMN api_source TEXT DEFAULT 'browser'").run()
+      console.log('[DB] extraction_results 表已添加 api_source 字段')
+    }
+  } catch (err: any) {
+    console.error('[DB Migrate] extraction_results api_source 字段迁移失败:', err.message)
+  }
 }
 
 /**
