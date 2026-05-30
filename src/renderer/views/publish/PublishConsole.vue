@@ -83,40 +83,6 @@
       </a-table>
     </a-card>
 
-    <!-- 发布记录 -->
-    <a-card size="small" class="section-card" title="发布记录">
-      <template #extra>
-        <a-select v-model:value="recordFilter" style="width:120px" @change="loadRecords">
-          <a-select-option value="">全部</a-select-option>
-          <a-select-option value="success">成功</a-select-option>
-          <a-select-option value="failed">失败</a-select-option>
-          <a-select-option value="pending">待执行</a-select-option>
-          <a-select-option value="cancelled">已取消</a-select-option>
-        </a-select>
-      </template>
-      <a-table
-        :data-source="records"
-        :columns="recordColumns"
-        :pagination="{ current: page, pageSize: pageSize, total: total, onChange: onPageChange }"
-        size="small"
-        :loading="recordLoading"
-        row-key="id"
-      >
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'status'">
-            <a-tag :color="recordColor(record.status)">{{ recordLabel(record.status) }}</a-tag>
-          </template>
-          <template v-if="column.key === 'action'">
-            <template v-if="record.status === 'pending' || record.status === 'scheduled'">
-              <a-button size="small" danger @click="handleCancel(record.id)">取消</a-button>
-            </template>
-            <template v-if="record.tweetUrl">
-              <a-button size="small" type="link" :href="record.tweetUrl" target="_blank">查看</a-button>
-            </template>
-          </template>
-        </template>
-      </a-table>
-    </a-card>
 
     <!-- 发布预览弹窗 -->
     <a-modal
@@ -140,7 +106,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { fetchPublishAccounts, fetchPublishRecords, createPublishTask, cancelPublishTask, checkPublishHealth } from '../../api/publish'
+import { fetchPublishAccounts, createPublishTask, checkPublishHealth } from '../../api/publish'
 
 interface AccountItem {
   profileId: number
@@ -150,17 +116,6 @@ interface AccountItem {
   todayCount: number
 }
 
-interface RecordItem {
-  id: number
-  batchId: string
-  profileId: number
-  content: string
-  status: string
-  executeAt: number
-  tweetUrl: string | null
-  errorMsg: string | null
-  createdAt: number
-}
 
 interface PreviewAccountInfo {
   profileId: string
@@ -180,13 +135,6 @@ const delayMinutes = ref(5)
 const publishing = ref(false)
 const previewVisible = ref(false)
 
-const records = ref<RecordItem[]>([])
-const recordLoading = ref(false)
-const recordFilter = ref('')
-const page = ref(1)
-const pageSize = ref(20)
-const total = ref(0)
-
 const checkingId = ref<number | null>(null)
 
 const delayOptions = [
@@ -205,13 +153,6 @@ const accountColumns = [
   { title: '操作', key: 'action' },
 ]
 
-const recordColumns = [
-  { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
-  { title: '内容', dataIndex: 'content', key: 'content', ellipsis: true },
-  { title: '状态', dataIndex: 'status', key: 'status', width: 80 },
-  { title: '时间', dataIndex: 'executeAt', key: 'executeAt', width: 160 },
-  { title: '操作', key: 'action', width: 120 },
-]
 
 const accountOptions = computed(() => {
   return accounts.value
@@ -259,20 +200,6 @@ function statusLabel(s: string) {
   return '已掉线'
 }
 
-function recordColor(s: string) {
-  if (s === 'success') return 'green'
-  if (s === 'failed') return 'red'
-  if (s === 'cancelled') return 'default'
-  return 'blue'
-}
-
-function recordLabel(s: string) {
-  if (s === 'success') return '成功'
-  if (s === 'failed') return '失败'
-  if (s === 'pending' || s === 'scheduled') return '待执行'
-  if (s === 'cancelled') return '已取消'
-  return s
-}
 
 function getProfileName(pid: string) {
   const id = parseInt(pid)
@@ -295,18 +222,6 @@ async function loadAccounts() {
   }
 }
 
-async function loadRecords() {
-  recordLoading.value = true
-  try {
-    const data = await fetchPublishRecords({ page: page.value, pageSize: pageSize.value, status: recordFilter.value || undefined })
-    records.value = data.records as RecordItem[]
-    total.value = data.total
-  } catch (e: any) {
-    message.error('加载记录失败: ' + (e.message || ''))
-  } finally {
-    recordLoading.value = false
-  }
-}
 
 async function checkHealth(profileId: number) {
   checkingId.value = profileId
@@ -338,8 +253,6 @@ async function handlePublish() {
     previewVisible.value = false
     content.value = ''
     selectedProfileIds.value = []
-    page.value = 1
-    await loadRecords()
   } catch (e: any) {
     message.error('创建任务失败: ' + (e.message || ''))
   } finally {
@@ -347,24 +260,8 @@ async function handlePublish() {
   }
 }
 
-async function handleCancel(id: number) {
-  try {
-    await cancelPublishTask(id)
-    message.success('任务已取消')
-    await loadRecords()
-  } catch (e: any) {
-    message.error('取消失败: ' + (e.message || ''))
-  }
-}
-
-function onPageChange(p: number) {
-  page.value = p
-  loadRecords()
-}
-
 onMounted(() => {
   loadAccounts()
-  loadRecords()
 })
 </script>
 

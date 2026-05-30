@@ -20,11 +20,12 @@
       <a-table
         :data-source="records"
         :columns="columns"
-        :pagination="{ current: page, pageSize: pageSize, total: total, showTotal: (t) => `共 ${t} 条`, onChange: onPageChange }"
+        :pagination="paginationConfig"
         :loading="loading || batchDeleting"
         size="middle"
-        :row-selection="{ selectedRowKeys: selectedRowKeys, onChange: (keys) => { selectedRowKeys = keys } }"
+        :row-selection="rowSelection"
         row-key="id"
+        @change="handleTableChange"
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'status'">
@@ -40,8 +41,7 @@
           </template>
           <template v-if="column.key === 'action'">
             <a-space>
-              <!-- <a-button v-if="record.status === 'pending' || record.status === 'scheduled'" size="small" @click="handleExecuteNow(record.id)">立即发布</a-button> -->
-               <a-button  size="small" @click="handleExecuteNow(record.id)">立即发布</a-button>
+              <a-button v-if="record.status === 'pending' || record.status === 'scheduled'" size="small" @click="handleExecuteNow(record.id)">立即发布</a-button>
               <a-button v-if="record.status === 'pending' || record.status === 'scheduled'" size="small" danger @click="handleCancel(record.id)">取消</a-button>
               <a-popconfirm title="确定删除此记录？" @confirm="handleDelete(record.id)" ok-text="确定" cancel-text="取消">
                 <a-button size="small" danger :loading="deletingId === record.id">删除</a-button>
@@ -62,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import { fetchPublishRecords, cancelPublishTask, deletePublishRecord, batchDeletePublishRecords, navigateToTweet, executeNowPublishTask } from '../../api/publish'
 
@@ -87,6 +87,21 @@ const total = ref(0)
 const selectedRowKeys = ref<number[]>([])
 const deletingId = ref<number | null>(null)
 const batchDeleting = ref(false)
+
+const paginationConfig = computed(() => ({
+  current: page.value,
+  pageSize: pageSize.value,
+  total: total.value,
+  showSizeChanger: true,
+  showTotal: (t: number) => `共 ${t} 条`
+}))
+
+const rowSelection = computed(() => ({
+  selectedRowKeys: selectedRowKeys.value,
+  onChange: (keys: number[]) => {
+    selectedRowKeys.value = keys
+  }
+}))
 
 const columns = [
   { title: '', dataIndex: 'id', key: 'checkbox', width: 40 },
@@ -189,8 +204,9 @@ async function handleBatchDelete() {
   }
 }
 
-function onPageChange(p: number) {
-  page.value = p
+function handleTableChange(pagination: any) {
+  page.value = pagination.current || 1
+  pageSize.value = pagination.pageSize || pageSize.value
   loadRecords()
 }
 
