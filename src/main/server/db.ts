@@ -185,6 +185,7 @@ function runMigrations(): void {
   migrateProfileGroupColumn()
   migrateExtractionResultsColumn()
   migrateExtractionSourceColumn()
+  createPublishTables()
 }
 
 /**
@@ -586,6 +587,33 @@ function createPlatformAccountsTable(): void {
     }
   } catch (err: any) {
     console.error('[DB] platform_accounts 表创建失败:', err.message)
+  }
+}
+
+/**
+ * 迭代 6.0: 联动发布模块 - 创建发布队列和日志表
+ * 由 migrations.sql 中的 CREATE TABLE IF NOT EXISTS 处理，
+ * 此函数用于兼容已有数据库的增量迁移
+ */
+function createPublishTables(): void {
+  if (!db) return
+  try {
+    // publish_queue 和 publish_logs 表由 migrations.sql 中的
+    // CREATE TABLE IF NOT EXISTS 自动创建，此处仅做兼容性校验
+    const hasQueue = db!.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='publish_queue'"
+    ).get()
+    if (!hasQueue) {
+      console.error('[DB] publish_queue 表未创建，请检查 migrations.sql')
+    }
+    const hasLogs = db!.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='publish_logs'"
+    ).get()
+    if (!hasLogs) {
+      console.error('[DB] publish_logs 表未创建，请检查 migrations.sql')
+    }
+  } catch (err: any) {
+    console.error('[DB] publish 表校验失败:', err.message)
   }
 }
 

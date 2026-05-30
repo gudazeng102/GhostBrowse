@@ -74,21 +74,29 @@ export class XGraphQLClient {
     if (!this.cookies) throw new Error('未设置 Cookie')
     const headers: Record<string, string> = {
       'authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
-      'content-type': 'application/json',
+      'content-type': 'application/json; charset=utf-8',
       'x-csrf-token': this.cookies.ct0,
       'cookie': Object.entries(this.cookies).map(([k, v]) => `${k}=${v}`).join('; '),
       'x-twitter-active-user': 'yes',
       'x-twitter-client-language': 'en',
       'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36',
       'origin': 'https://x.com',
-      'referer': 'https://x.com/'
+      'referer': 'https://x.com/',
+      'sec-fetch-site': 'same-origin',
+'sec-fetch-mode': 'cors',
+'sec-fetch-dest': 'empty',
+'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+'accept': '*/*',
+'te': 'trailers',
+
     }
     const body: any = { variables }
     if (features) body.features = features
+    const payload = Buffer.from(JSON.stringify(body), 'utf8')
     const res = await this.httpFetch(`https://x.com/i/api/graphql/${queryId}/${queryName}`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body: payload,
       timeout: 30000
     })
     const rateLimit: XRateLimit = {

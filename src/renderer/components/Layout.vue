@@ -13,9 +13,8 @@
           v-else
           src="http://localhost:3000/icons/logo2.png"
           class="header-logo-img header-logo-large"
-          alt="GhostBrowse"
         />
-        <span v-if="!collapsed" class="logo-text">GhostBrowse</span>
+        <span v-if="!collapsed" class="logo-text"></span>
       </div>
 
       <!-- Phase 1.8: 右上角用户信息和退出登录 -->
@@ -79,12 +78,18 @@
             </template>
             <span>群控管理</span>
           </a-menu-item>
-          <a-menu-item key="extraction">
-            <template #icon>
-              <span class="menu-emoji">📊</span>
-            </template>
-            <span>数据采集</span>
-          </a-menu-item>
+          <a-sub-menu key="extraction">
+            <template #icon><span class="menu-emoji">📊</span></template>
+            <template #title><span>数据采集</span></template>
+            <a-menu-item key="extraction">📊 采集控制台</a-menu-item>
+          </a-sub-menu>
+          <a-sub-menu key="publish">
+            <template #icon><span class="menu-emoji">📣</span></template>
+            <template #title><span>平台发布</span></template>
+            <a-menu-item key="publish-new">📝 联动发布</a-menu-item>
+            <a-menu-item key="publish-records">📋 发布列表</a-menu-item>
+          </a-sub-menu>
+
         </a-menu>
 
         <!-- 收缩/展开按钮：固定在侧栏底部 -->
@@ -143,6 +148,9 @@ watch(
       selectedKeys.value = ['group-control']
     } else if (path.startsWith('/extraction')) {
       selectedKeys.value = ['extraction']
+    } else if (path.startsWith('/publish')) {
+      if (path === '/publish') selectedKeys.value = ['publish-new']
+      else selectedKeys.value = ['publish-records']
     }
   },
   { immediate: true }
@@ -168,6 +176,12 @@ function handleMenuClick({ key }: { key: string }) {
       break
     case 'extraction':
       router.push('/extraction')
+      break
+    case 'publish-new':
+      router.push('/publish')
+      break
+    case 'publish-records':
+      router.push('/publish-records')
       break
     default:
       router.push('/')

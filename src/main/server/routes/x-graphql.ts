@@ -110,7 +110,7 @@ router.get('/capture-queryid', async (req: Request, res: Response) => {
                       return fetch(${JSON.stringify(bundleUrl)})
                         .then(r => r.text())
                         .then(code => {
-                          var names = ['Following', 'UserByScreenName', 'UserByRestId'];
+                          var names = ['Following', 'UserByScreenName', 'UserByRestId', 'CreateTweet'];
                           var result = {};
                           for (var n = 0; n < names.length; n++) {
                             var re1 = new RegExp(names[n] + '"[\\\\s\\\\S]{0,20}?"([a-zA-Z0-9_-]+)"');

@@ -23,7 +23,9 @@ import aiRouter from './routes/ai'
 import taskQueueRouter from './routes/task-queue'
 import extractionRouter from './routes/extraction'
 import xGraphqlRouter from './routes/x-graphql'
+import publishRouter from './routes/publish'
 import { initScheduler } from '../automation/task-scheduler'
+import { startPublishScheduler } from './services/publish-scheduler'
 
 // Express 应用实例
 let app: Express | null = null
@@ -133,6 +135,9 @@ export function createApp(): Express {
   // ==================== 迭代 6.0: X GraphQL API 路由 ====================
   app.use('/api/v1/x', xGraphqlRouter)
 
+  // ==================== 迭代 6.0: 联动发布模块 API ====================
+  app.use('/api/v1/publish', publishRouter)
+
   // ==================== 捕获所有路由，返回 index.html (SPA 支持) ====================
   app.get('*', (req: Request, res: Response) => {
     const indexPath = path.join(distPath, 'index.html')
@@ -153,7 +158,7 @@ export function createApp(): Express {
 /**
  * 启动 Express 服务器
  */
-export function startServer(port: number = 3000, host: string = '0.0.0.0'): Promise<void> {
+export function startServer(port: number = 3000, host: string = '127.0.0.1'): Promise<void> {
   return new Promise((resolve, reject) => {
     const appInstance = createApp()
 
@@ -162,6 +167,7 @@ export function startServer(port: number = 3000, host: string = '0.0.0.0'): Prom
       initDatabase()
       // 迭代 4.0: 初始化任务调度器（恢复崩溃前的 running 任务）
       initScheduler()
+      startPublishScheduler()
     } catch (err) {
       console.error('[Express] 数据库初始化失败:', err)
       reject(err)

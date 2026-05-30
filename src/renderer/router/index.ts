@@ -17,6 +17,8 @@ import ProfileForm from '../views/ProfileForm.vue'
 import CookieManager from '../views/CookieManager.vue'
 import GroupControl from '../views/group-control/GroupControl.vue'
 import ExtractionConsole from '../views/extraction/ExtractionConsole.vue'
+import PublishConsole from '../views/publish/PublishConsole.vue'
+import PublishRecords from '../views/publish/PublishRecords.vue'
 
 // 导入认证页面组件
 import Login from '../views/Login.vue'
@@ -119,6 +121,18 @@ const routes: RouteRecordRaw[] = [
     name: 'ExtractionConsole',
     component: ExtractionConsole,
     meta: { title: '数据采集' }
+  },
+  {
+    path: '/publish',
+    name: 'PublishConsole',
+    component: PublishConsole,
+    meta: { title: '联动发布' }
+  },
+  {
+    path: '/publish-records',
+    name: 'PublishRecords',
+    component: PublishRecords,
+    meta: { title: '发布列表' }
   }
 ]
 

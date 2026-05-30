@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS proxy_checks (
   checked_at INTEGER NOT NULL
 );
 
-// 创建索引以提升查询性能
+-- 创建索引以提升查询性能
 CREATE INDEX IF NOT EXISTS idx_profiles_proxy_id ON profiles(proxy_id);
 CREATE INDEX IF NOT EXISTS idx_proxy_checks_proxy_id ON proxy_checks(proxy_id);
 CREATE INDEX IF NOT EXISTS idx_proxy_checks_checked_at ON proxy_checks(checked_at);
@@ -126,3 +126,43 @@ CREATE TABLE IF NOT EXISTS extraction_results (
 
 CREATE INDEX IF NOT EXISTS idx_extraction_task_run ON extraction_results(task_run_id);
 CREATE INDEX IF NOT EXISTS idx_extraction_target ON extraction_results(platform, target_type);
+
+-- =====================================================
+-- 迭代 6.0: 联动发布模块 - 发布队列
+-- =====================================================
+CREATE TABLE IF NOT EXISTS publish_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id TEXT NOT NULL,
+  profile_id INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  raw_content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','scheduled','processing','success','failed','cancelled')),
+  execute_at INTEGER NOT NULL,
+  sequence INTEGER NOT NULL,
+  tweet_id TEXT,
+  tweet_url TEXT,
+  error_msg TEXT,
+  retry_count INTEGER DEFAULT 0,
+  media_urls TEXT,
+  created_at INTEGER DEFAULT (strftime('%s', 'now')),
+  updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_publish_queue_status ON publish_queue(status, execute_at);
+CREATE INDEX IF NOT EXISTS idx_publish_queue_batch ON publish_queue(batch_id);
+CREATE INDEX IF NOT EXISTS idx_publish_queue_profile ON publish_queue(profile_id);
+
+-- =====================================================
+-- 迭代 6.0: 联动发布模块 - 调度日志
+-- =====================================================
+CREATE TABLE IF NOT EXISTS publish_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  message TEXT NOT NULL,
+  task_id INTEGER,
+  details TEXT,
+  created_at INTEGER DEFAULT (strftime('%s', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_publish_logs_created ON publish_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_publish_logs_event ON publish_logs(event_type);
