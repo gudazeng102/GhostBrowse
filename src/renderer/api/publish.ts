@@ -33,6 +33,28 @@ export interface PublishRecordsResponse {
   records: PublishRecord[]
 }
 
+export interface PublishFailureLog {
+  id: number
+  batchId: string
+  profileId: number
+  profileName: string
+  content: string
+  status: string
+  executeAt: number
+  errorMsg: string | null
+  retryCount: number
+  createdAt: number
+  updatedAt: number
+  logMessages: string
+}
+
+export interface PublishFailureLogsResponse {
+  total: number
+  page: number
+  pageSize: number
+  records: PublishFailureLog[]
+}
+
 export async function fetchPublishAccounts(): Promise<PublishAccount[]> {
   const res = await request.get('/publish/accounts')
   return res.data.data
@@ -61,9 +83,25 @@ export async function fetchPublishRecords(params?: {
   return res.data.data
 }
 
+export async function fetchPublishFailureLogs(params?: {
+  page?: number
+  pageSize?: number
+}): Promise<PublishFailureLogsResponse> {
+  const res = await request.get('/publish/failure-logs', { params })
+  return res.data.data
+}
+
 export async function checkPublishHealth(profileId: number): Promise<{ status: string; username: string }> {
   const res = await request.get('/publish/health/' + profileId)
   return res.data.data
+}
+
+export async function executeNowPublishTask(id: number): Promise<void> {
+  await request.post('/publish/execute-now/' + id)
+}
+
+export async function navigateToTweet(profileId: number, url: string): Promise<void> {
+  await request.post('/publish/navigate', { profileId, url })
 }
 
 export async function deletePublishRecord(id: number): Promise<void> {
@@ -74,4 +112,3 @@ export async function batchDeletePublishRecords(ids: number[]): Promise<{ delete
   const res = await request.post('/publish/records/batch-delete', { ids })
   return res.data.data
 }
-

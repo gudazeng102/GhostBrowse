@@ -235,13 +235,9 @@ const previewAccounts = computed((): PreviewAccountInfo[] => {
   const list: PreviewAccountInfo[] = []
 
   for (let i = 0; i < shuffled.length; i++) {
-    let delay = base
-    if (i === 0) {
-      delay += 120 * 1000
-    } else {
-      delay += 75 * 1000
-    }
-    const estTime = new Date(now + delay).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    const estTime = isImmediate.value
+      ? '5秒内'
+      : new Date(now + base + 5000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
     list.push({
       profileId: shuffled[i],
       displayName: getProfileName(shuffled[i]),

@@ -71,7 +71,7 @@ export async function executePublish(profileId: number, content: string): Promis
       media: { media_entities: [], possibly_sensitive: false },
       semantic_annotation_ids: [],
       disallowed_reply_options: null,
-      semantic_annotation_options: { source: "Htl" }
+      semantic_annotation_options: { composition_signal_1: true, source: "Profile" }
     }
 
     const { data } = await client.graphqlRequest(
@@ -81,17 +81,28 @@ export async function executePublish(profileId: number, content: string): Promis
       CREATE_TWEET_FEATURES
     )
 
-    const tweetResult = data?.data?.create_tweet?.tweet_results?.result
-    const errors = data?.errors
+    const tweetResults = data?.data?.create_tweet?.tweet_results
+    const tweetResult = tweetResults?.result
 
     if (tweetResult) {
       const restId = tweetResult.rest_id
-      const screenName = tweetResult.core?.user_results?.result?.legacy?.screen_name || ""
-      const tweetUrl = "https://x.com/" + screenName + "/status/" + restId
+      const u = tweetResult.core?.user_results?.result
+      const screenName = u?.core?.screen_name || u?.legacy?.screen_name || u?.screen_name || ""
+      const tweetUrl = screenName
+        ? "https://x.com/" + screenName + "/status/" + restId
+        : "https://x.com/i/web/status/" + restId
       logger.info("[Executor] OK: " + tweetUrl)
       return { success: true, tweetId: restId, tweetUrl, username: screenName }
     }
 
+    if (tweetResults && Object.keys(tweetResults).length === 0) {
+      return {
+        success: false,
+        errorMsg: "X软拒绝：CreateTweet 返回空 tweet_results（可能是风控/重复内容/请求上下文不足）"
+      }
+    }
+
+    const errors = data?.errors
     if (errors && errors.length > 0) {
       const err = errors[0]
       let msg = err.message || "Unknown"
@@ -101,19 +112,14 @@ export async function executePublish(profileId: number, content: string): Promis
       return { success: false, errorMsg: msg }
     }
 
-    return { success: false, errorMsg: "Publish failed" }
+    const raw = JSON.stringify(data || {}).substring(0, 500)
+    return { success: false, errorMsg: "Publish failed: " + raw }
   } catch (err: any) {
     const msg = err.message || String(err)
     logger.error("[Executor] " + msg)
-    if (msg.includes("auth_token") || msg.includes("ct0") || msg.includes("401") || msg.includes("403")) {
-      return { success: false, errorMsg: "Cookie expired" }
-    }
-    if (msg.includes("429") || msg.includes("Rate Limit")) {
-      return { success: false, errorMsg: "Rate limited (429)" }
-    }
-    if (msg.includes("ECONNREFUSED") || msg.includes("refused")) {
-      return { success: false, errorMsg: "Window closed" }
-    }
+    if (msg.includes("auth_token") || msg.includes("ct0") || msg.includes("401") || msg.includes("403")) return { success: false, errorMsg: "Cookie expired" }
+    if (msg.includes("429") || msg.includes("Rate Limit")) return { success: false, errorMsg: "Rate limited (429)" }
+    if (msg.includes("ECONNREFUSED") || msg.includes("refused")) return { success: false, errorMsg: "Window closed" }
     return { success: false, errorMsg: msg.substring(0, 200) }
   }
 }

@@ -19,6 +19,7 @@ import GroupControl from '../views/group-control/GroupControl.vue'
 import ExtractionConsole from '../views/extraction/ExtractionConsole.vue'
 import PublishConsole from '../views/publish/PublishConsole.vue'
 import PublishRecords from '../views/publish/PublishRecords.vue'
+import PublishFailureLogs from '../views/publish/PublishFailureLogs.vue'
 
 // 导入认证页面组件
 import Login from '../views/Login.vue'
@@ -133,6 +134,12 @@ const routes: RouteRecordRaw[] = [
     name: 'PublishRecords',
     component: PublishRecords,
     meta: { title: '发布列表' }
+  },
+  {
+    path: '/publish-failure-logs',
+    name: 'PublishFailureLogs',
+    component: PublishFailureLogs,
+    meta: { title: '发布失败日志' }
   }
 ]
 

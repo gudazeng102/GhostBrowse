@@ -23,7 +23,7 @@
         :pagination="{ current: page, pageSize: pageSize, total: total, showTotal: (t) => `共 ${t} 条`, onChange: onPageChange }"
         :loading="loading || batchDeleting"
         size="middle"
-        :row-selection="{ selectedRowKeys: selectedRowKeys, onChange: (keys: any[]) => { selectedRowKeys.value = keys } }"
+        :row-selection="{ selectedRowKeys: selectedRowKeys, onChange: (keys) => { selectedRowKeys = keys } }"
         row-key="id"
       >
         <template #bodyCell="{ column, record }">
@@ -40,11 +40,13 @@
           </template>
           <template v-if="column.key === 'action'">
             <a-space>
+              <!-- <a-button v-if="record.status === 'pending' || record.status === 'scheduled'" size="small" @click="handleExecuteNow(record.id)">立即发布</a-button> -->
+               <a-button  size="small" @click="handleExecuteNow(record.id)">立即发布</a-button>
               <a-button v-if="record.status === 'pending' || record.status === 'scheduled'" size="small" danger @click="handleCancel(record.id)">取消</a-button>
               <a-popconfirm title="确定删除此记录？" @confirm="handleDelete(record.id)" ok-text="确定" cancel-text="取消">
                 <a-button size="small" danger :loading="deletingId === record.id">删除</a-button>
               </a-popconfirm>
-              <a-button v-if="record.tweetUrl" size="small" type="link" :href="record.tweetUrl" target="_blank">查看推文</a-button>
+              <a-button v-if="record.tweetUrl" size="small" type="link" @click="handleNavigate(record.profileId, record.tweetUrl)">查看推文</a-button>
             </a-space>
           </template>
         </template>
@@ -52,7 +54,7 @@
         <template #expandedRowRender="{ record }">
           <p v-if="record.content" class="detail-content"><strong>完整内容：</strong>{{ record.content }}</p>
           <p v-if="record.errorMsg" class="detail-error"><strong>错误信息：</strong>{{ record.errorMsg }}</p>
-          <p v-if="record.tweetUrl" class="detail-url"><strong>推文链接：</strong><a :href="record.tweetUrl" target="_blank">{{ record.tweetUrl }}</a></p>
+          <p v-if="record.tweetUrl" class="detail-url"><strong>推文链接：</strong>{{ record.tweetUrl }}</p>
         </template>
       </a-table>
     </a-card>
@@ -62,7 +64,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { fetchPublishRecords, cancelPublishTask, deletePublishRecord, batchDeletePublishRecords } from '../../api/publish'
+import { fetchPublishRecords, cancelPublishTask, deletePublishRecord, batchDeletePublishRecords, navigateToTweet, executeNowPublishTask } from '../../api/publish'
 
 interface RecordItem {
   id: number
@@ -93,7 +95,7 @@ const columns = [
   { title: '内容', dataIndex: 'content', key: 'content' },
   { title: '状态', dataIndex: 'status', key: 'status', width: 80 },
   { title: '时间', dataIndex: 'createdAt', key: 'time', width: 160 },
-  { title: '操作', key: 'action', width: 200 },
+  { title: '操作', key: 'action', width: 260 },
 ]
 
 function tagColor(s: string) {
@@ -130,6 +132,16 @@ async function loadRecords() {
   }
 }
 
+async function handleExecuteNow(id: number) {
+  try {
+    await executeNowPublishTask(id)
+    message.success("任务已加入执行队列")
+    await loadRecords()
+  } catch (e: any) {
+    message.error("操作失败: " + (e.message || ""))
+  }
+}
+
 async function handleCancel(id: number) {
   try {
     await cancelPublishTask(id)
@@ -137,6 +149,15 @@ async function handleCancel(id: number) {
     await loadRecords()
   } catch (e: any) {
     message.error('取消失败: ' + (e.message || ''))
+  }
+}
+
+async function handleNavigate(profileId: number, url: string) {
+  try {
+    await navigateToTweet(profileId, url)
+    message.success('已跳转到推文页面')
+  } catch (e: any) {
+    message.error('跳转失败: ' + (e.message || '窗口未运行'))
   }
 }
 

@@ -88,6 +88,7 @@
             <template #title><span>平台发布</span></template>
             <a-menu-item key="publish-new">📝 联动发布</a-menu-item>
             <a-menu-item key="publish-records">📋 发布列表</a-menu-item>
+            <a-menu-item key="publish-failure-logs">❌ 失败日志</a-menu-item>
           </a-sub-menu>
 
         </a-menu>
@@ -150,6 +151,7 @@ watch(
       selectedKeys.value = ['extraction']
     } else if (path.startsWith('/publish')) {
       if (path === '/publish') selectedKeys.value = ['publish-new']
+      else if (path === '/publish-failure-logs') selectedKeys.value = ['publish-failure-logs']
       else selectedKeys.value = ['publish-records']
     }
   },
@@ -182,6 +184,9 @@ function handleMenuClick({ key }: { key: string }) {
       break
     case 'publish-records':
       router.push('/publish-records')
+      break
+    case 'publish-failure-logs':
+      router.push('/publish-failure-logs')
       break
     default:
       router.push('/')
