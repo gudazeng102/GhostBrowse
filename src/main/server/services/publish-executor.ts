@@ -3,16 +3,24 @@
  * 通过 X GraphQL API + 真实 queryId 发布推文
  */
 import { XGraphQLClient } from './x-graphql-client'
+import { uploadImagesForProfile } from './x-media-uploader'
 import { Logger } from '../../../shared/utils/logger'
 
 const logger = new Logger("PublishExecutor")
+
+export interface PublishMediaInput {
+  localPath: string
+  mime?: string
+}
 
 export interface PublishResult {
   success: boolean
   tweetId?: string
   tweetUrl?: string
   errorMsg?: string
+  errorStage?: 'media_upload' | 'create_tweet' | 'pre_check'
   username?: string
+  mediaIds?: string[]
 }
 
 const CREATE_TWEET_QID = "H-t2v_HvFR07ZBP9aOeKoA"
@@ -56,19 +64,40 @@ const CREATE_TWEET_FEATURES = {
   responsive_web_graphql_timeline_navigation_enabled: true
 }
 
-export async function executePublish(profileId: number, content: string): Promise<PublishResult> {
+export async function executePublish(
+  profileId: number,
+  content: string,
+  media?: PublishMediaInput[]
+): Promise<PublishResult> {
   try {
-    logger.info("[Executor] 开始为 Profile " + profileId + " 发布推文")
+    const mediaCount = media?.length || 0
+    logger.info("[Executor] 开始为 Profile " + profileId + " 发布推文 (media=" + mediaCount + ")")
 
     const client = new XGraphQLClient()
     const cookies = await client.loadCookiesFromProfile(profileId)
     if (!cookies.auth_token || !cookies.ct0) {
-      return { success: false, errorMsg: "Not logged in" }
+      return { success: false, errorMsg: "Not logged in", errorStage: 'pre_check' }
     }
+
+    // 1) 媒体上传阶段：用当前 profile 登录态把图片上传，拿到本账号专属 media_id
+    let uploadedMediaIds: string[] = []
+    if (media && media.length > 0) {
+      try {
+        const uploaded = await uploadImagesForProfile(profileId, media)
+        uploadedMediaIds = uploaded.map(u => u.mediaId)
+        logger.info("[Executor] 媒体上传完成 profile=" + profileId + " ids=" + uploadedMediaIds.join(","))
+      } catch (e: any) {
+        const msg = e.message || String(e)
+        logger.error("[Executor] 媒体上传失败 profile=" + profileId + " : " + msg)
+        return { success: false, errorMsg: "媒体上传失败: " + msg, errorStage: 'media_upload' }
+      }
+    }
+
+    const mediaEntities = uploadedMediaIds.map(id => ({ media_id: id, tagged_users: [] as any[] }))
 
     const variables = {
       tweet_text: content,
-      media: { media_entities: [], possibly_sensitive: false },
+      media: { media_entities: mediaEntities, possibly_sensitive: false },
       semantic_annotation_ids: [],
       disallowed_reply_options: null,
       semantic_annotation_options: { composition_signal_1: true, source: "Profile" }
@@ -92,12 +121,13 @@ export async function executePublish(profileId: number, content: string): Promis
         ? "https://x.com/" + screenName + "/status/" + restId
         : "https://x.com/i/web/status/" + restId
       logger.info("[Executor] OK: " + tweetUrl)
-      return { success: true, tweetId: restId, tweetUrl, username: screenName }
+      return { success: true, tweetId: restId, tweetUrl, username: screenName, mediaIds: uploadedMediaIds }
     }
 
     if (tweetResults && Object.keys(tweetResults).length === 0) {
       return {
         success: false,
+        errorStage: 'create_tweet',
         errorMsg: "X软拒绝：CreateTweet 返回空 tweet_results（可能是风控/重复内容/请求上下文不足）"
       }
     }
@@ -109,17 +139,17 @@ export async function executePublish(profileId: number, content: string): Promis
       if (err.code === 187) msg = "Duplicate (187)"
       else if (err.code === 326) msg = "Account restricted (326)"
       logger.error("[Executor] " + msg)
-      return { success: false, errorMsg: msg }
+      return { success: false, errorMsg: msg, errorStage: 'create_tweet' }
     }
 
     const raw = JSON.stringify(data || {}).substring(0, 500)
-    return { success: false, errorMsg: "Publish failed: " + raw }
+    return { success: false, errorMsg: "Publish failed: " + raw, errorStage: 'create_tweet' }
   } catch (err: any) {
     const msg = err.message || String(err)
     logger.error("[Executor] " + msg)
-    if (msg.includes("auth_token") || msg.includes("ct0") || msg.includes("401") || msg.includes("403")) return { success: false, errorMsg: "Cookie expired" }
-    if (msg.includes("429") || msg.includes("Rate Limit")) return { success: false, errorMsg: "Rate limited (429)" }
-    if (msg.includes("ECONNREFUSED") || msg.includes("refused")) return { success: false, errorMsg: "Window closed" }
-    return { success: false, errorMsg: msg.substring(0, 200) }
+    if (msg.includes("auth_token") || msg.includes("ct0") || msg.includes("401") || msg.includes("403")) return { success: false, errorMsg: "Cookie expired", errorStage: 'pre_check' }
+    if (msg.includes("429") || msg.includes("Rate Limit")) return { success: false, errorMsg: "Rate limited (429)", errorStage: 'create_tweet' }
+    if (msg.includes("ECONNREFUSED") || msg.includes("refused")) return { success: false, errorMsg: "Window closed", errorStage: 'pre_check' }
+    return { success: false, errorMsg: msg.substring(0, 200), errorStage: 'create_tweet' }
   }
 }

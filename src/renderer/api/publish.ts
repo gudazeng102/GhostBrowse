@@ -112,3 +112,19 @@ export async function batchDeletePublishRecords(ids: number[]): Promise<{ delete
   const res = await request.post('/publish/records/batch-delete', { ids })
   return res.data.data
 }
+
+/**
+ * 迭代 6.x: 带媒体的发布任务创建（multipart/form-data）
+ * 不替代 createPublishTask，纯文字发布仍走 JSON
+ */
+export async function createPublishTaskWithMedia(
+  formData: FormData,
+  onUploadProgress?: (progressEvent: any) => void
+): Promise<{ batchId: string; taskCount: number; mediaCount: number }> {
+  const res = await request.post('/publish/task', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+    onUploadProgress
+  })
+  return res.data.data
+}
