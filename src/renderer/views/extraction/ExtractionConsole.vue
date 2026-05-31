@@ -34,8 +34,8 @@
 
         <!-- 用户信息 和 关注列表不需要条数，推文/话题才需要 -->
         <template v-if="targetType === 'tweet' || targetType === 'hashtag_tweets'">
-          <a-input-number v-model:value="maxCount" :min="1" :max="500" style="width:120px" />
-          <span style="margin-left:8px">条</span>
+          <a-input-number v-model:value="maxCount" :min="1" :max="500" style="width:120px" />      <span style="margin-left:8px">条</span>
+    
         </template>
         <a-divider style="font-size:12px;margin:8px 0">采集后自动操作（可选）</a-divider>
         <a-space wrap>

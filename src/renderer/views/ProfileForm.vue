@@ -110,10 +110,6 @@
               <a-col :span="8">
                 <a-form-item label="Chrome 版本" name="chromeVersion">
                   <a-select v-model:value="formState.chromeVersion">
-                    <a-select-option value="121">Chrome 121</a-select-option>
-                    <a-select-option value="122">Chrome 122</a-select-option>
-                    <a-select-option value="123">Chrome 123</a-select-option>
-                    <a-select-option value="124">Chrome 124</a-select-option>
                     <a-select-option value="140">Chrome 140</a-select-option>
                     <a-select-option value="141">Chrome 141</a-select-option>
                     <a-select-option value="142">Chrome 142</a-select-option>
@@ -121,6 +117,7 @@
                     <a-select-option value="144">Chrome 144</a-select-option>
                     <a-select-option value="145">Chrome 145</a-select-option>
                     <a-select-option value="147">Chrome 147</a-select-option>
+                    <a-select-option value="148">Chrome 148</a-select-option>
                   </a-select>
                 </a-form-item>
               </a-col>
@@ -591,7 +588,7 @@ const smartConfigLoading = ref(false)
 
 // 浏览器设定卡片数据
 const browserSettings = computed(() => {
-  const version = formState.chromeVersion || '128'
+  const version = formState.chromeVersion || '148'
   const defaultUA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version}.0.0.0 Safari/537.36`
   return {
     browser: `SunBrowser [Chrome ${version}]`,
@@ -947,7 +944,7 @@ const cookiePlaceholder = computed(() => '粘贴 JSON 数组，例如：\n[\n  {
 const canImport = computed(() => importMode.value === 'paste' ? formState.cookieText.trim().length > 0 : importFileJson.value !== null)
 
 const formState: any = reactive({
-  title: '', proxyId: undefined, groupId: undefined, chromeVersion: '121', os: 'windows',
+  title: '', proxyId: undefined, groupId: undefined, chromeVersion: '148', os: 'windows',
   webrtcMode: 'replace', timezoneMode: 'ip', geolocationMode: 'ip', languageMode: 'mask',
   uiLanguage: 'zh-CN', screenResolution: '1920x1080', font: 'Microsoft YaHei,Arial',
   canvasMode: 'noise', webglMode: 'mock', mediaDeviceMode: 'mock', startupUrl: '',

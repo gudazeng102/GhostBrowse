@@ -402,17 +402,14 @@ export interface LaunchResult {
 
 /** Chrome 版本对应的 User-Agent */
 const CHROME_USER_AGENTS: Record<string, string> = {
-  '121': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.86 Safari/537.36',
-  '122': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36',
-  '123': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6312.87 Safari/537.36',
-  '124': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.79 Safari/537.36',
   '140': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.7339.81 Safari/537.36',
   '141': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.7390.77 Safari/537.36',
   '142': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.7444.60 Safari/537.36',
   '143': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.7499.41 Safari/537.36',
   '144': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.7559.97 Safari/537.36',
   '145': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.7632.76 Safari/537.36',
-  '147': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.7727.56 Safari/537.36'
+  '147': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.7727.56 Safari/537.36',
+  '148': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7759.0 Safari/537.36'
 }
 
 // ==================== Phase 2.6: 内嵌 Chromium 路径管理 ====================
@@ -466,7 +463,7 @@ function findAvailableChromePath(preferredVersion: string): string | null {
   }
 
   // 2. 尝试其他版本的内嵌 Chromium（按版本号降序）
-  for (const version of ['147', '145', '144', '143', '142', '141', '140', '124', '123', '122', '121',]) {
+  for (const version of ['148', '147', '145', '144', '143', '142', '141', '140']) {
     if (version === preferredVersion) continue
     const otherPath = getEmbeddedChromeExePath(version)
     if (fs.existsSync(otherPath)) {
@@ -802,7 +799,7 @@ function generateExtension(
   const config = {
     profile_id: profile.id,
     // Phase 4.0: 传递浏览器版本和操作系统，供 userAgentData 使用
-    chrome_version: profile.chromeVersion || '128',
+    chrome_version: profile.chromeVersion || '148',
     os: profile.os || 'windows',
     canvas_mode: profile.canvasMode || 'noise',
     webgl_mode: profile.webglMode || 'mock',
@@ -841,7 +838,7 @@ export async function launchChrome(
   proxy: Proxy | null
 ): Promise<LaunchResult> {
   // 在 launchChrome 函数开头
-  const rawVersion = profile.chromeVersion || '128'
+  const rawVersion = profile.chromeVersion || '148'
   const version = rawVersion.replace(/^Chrome\s*/i, '').trim()  // ✅ 提取纯数字
 
   // === Phase 2.6: 查找可用的 Chrome 路径 ===
@@ -950,7 +947,7 @@ export async function launchChrome(
   }
   
   // === 获取 User-Agent ===
-  const userAgent = CHROME_USER_AGENTS[version] || CHROME_USER_AGENTS['128']
+  const userAgent = CHROME_USER_AGENTS[version] || CHROME_USER_AGENTS['148']
   
   // === 解析分辨率 ===
   const resolution = profile.screenResolution || '1920x1080'

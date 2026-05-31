@@ -9,12 +9,19 @@
 
     <a-row :gutter="16">
       <!-- 左侧：分组侧边栏 -->
-      <a-col :span="5">
-        <a-card :bordered="false" class="group-sidebar">
+      <a-col
+        :span="groupSidebarCollapsed ? 3 : 5"
+        class="group-sidebar-col"
+      >
+        <a-card
+          :bordered="false"
+          class="group-sidebar"
+          :class="{ 'group-sidebar-collapsed': groupSidebarCollapsed }"
+        >
           <template #title>
-            <span>📂 分组</span>
+            <span class="group-card-title">📂 分组</span>
           </template>
-          <template #extra>
+          <template v-if="!groupSidebarCollapsed" #extra>
             <a-button type="link" size="small" @click="openGroupModal()">
               ＋ 新建
             </a-button>
@@ -26,16 +33,20 @@
               :class="{ active: selectedGroupKey[0] === 'all' }"
               @click="selectGroup('all')"
             >
-              <span class="group-item-label">📁 全部窗口</span>
-              <a-tag color="default">{{ totalCount }}</a-tag>
+              <span class="group-item-label" title="全部窗口">
+                <span class="group-collapse-icon" :class="{ visible: groupSidebarCollapsed }">🖥️</span>
+                <span class="group-label-text" :class="{ hidden: groupSidebarCollapsed }">全部窗口({{ totalCount }})</span>
+              </span>
             </div>
             <div
               class="group-item"
               :class="{ active: selectedGroupKey[0] === 'ungrouped' }"
               @click="selectGroup('ungrouped')"
             >
-              <span class="group-item-label">📭 未分组</span>
-              <a-tag color="default">{{ ungroupedCount }}</a-tag>
+              <span class="group-item-label" title="未分组">
+                <span class="group-collapse-icon" :class="{ visible: groupSidebarCollapsed }">📭</span>
+                <span class="group-label-text" :class="{ hidden: groupSidebarCollapsed }">📭 未分组({{ ungroupedCount }})</span>
+              </span>
             </div>
             <div
               v-for="g in groupList"
@@ -44,12 +55,12 @@
               :class="{ active: selectedGroupKey[0] === `g-${g.id}` }"
               @click="selectGroup(`g-${g.id}`)"
             >
-              <span class="group-item-label">
+              <span class="group-item-label" :title="g.name">
                 <span class="group-color-dot" :style="{ background: g.color }"></span>
-                {{ g.name }}
+                <span class="group-name-text" :class="{ hidden: groupSidebarCollapsed }">{{ g.name }}({{ g.profileCount || 0 }})</span>
               </span>
-              <span class="group-item-actions" @click.stop>
-                <a-tag color="default">{{ g.profileCount || 0 }}</a-tag>
+              <span class="group-item-actions" :class="{ hidden: groupSidebarCollapsed }" @click.stop>
+  
                 <a-button
                   type="text"
                   size="small"
@@ -70,12 +81,18 @@
                 </a-button>
               </span>
             </div>
+            <div class="group-collapse-toggle" @click="toggleGroupSidebar">
+              {{ groupSidebarCollapsed ? '展开' : '收起' }}
+            </div>
           </div>
         </a-card>
       </a-col>
 
       <!-- 右侧：窗口表格 -->
-      <a-col :span="19">
+      <a-col
+        :span="groupSidebarCollapsed ? 21 : 19"
+        class="profile-table-col"
+      >
         <a-card :bordered="false">
           <template #title>
             <span>窗口列表</span>
@@ -280,6 +297,7 @@ const groupList = ref<ProfileGroup[]>([])
 const ungroupedCount = ref(0)
 const totalCount = ref(0)
 const selectedGroupKey = ref<string[]>(['all'])
+const groupSidebarCollapsed = ref(false)
 
 const colorPresets = [
   '#1890ff', '#52c41a', '#faad14', '#f5222d',
@@ -325,6 +343,10 @@ function selectGroup(key: string) {
   if (selectedGroupKey.value[0] === key) return
   selectedGroupKey.value = [key]
   loadProfileList()
+}
+
+function toggleGroupSidebar() {
+  groupSidebarCollapsed.value = !groupSidebarCollapsed.value
 }
 
 function confirmDeleteGroup(g: ProfileGroup) {
@@ -778,7 +800,7 @@ onUnmounted(() => {
 
 <style scoped>
 .profile-list-container {
-  padding: 24px;
+  padding: 0;
 }
 
 .page-header {
@@ -794,8 +816,35 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+.group-sidebar-col,
+.profile-table-col {
+  transition:
+    flex 0.24s ease,
+    flex-basis 0.24s ease,
+    max-width 0.24s ease;
+}
+
+.group-sidebar {
+  transition:
+    width 0.24s ease,
+    max-width 0.24s ease,
+    box-shadow 0.24s ease;
+}
+
 .group-sidebar :deep(.ant-card-body) {
   padding: 8px;
+  transition: padding 0.24s ease;
+}
+
+.group-sidebar :deep(.ant-card-head) {
+  min-height: 40px;
+}
+
+.group-card-title {
+  font-size: 12px;
+  text-align: left;
+  justify-content: left;
+  display: flex;
 }
 
 .group-list {
@@ -812,7 +861,11 @@ onUnmounted(() => {
   border-radius: 6px;
   cursor: pointer;
   user-select: none;
-  transition: background 0.2s;
+  transition:
+    background 0.2s,
+    padding 0.24s ease,
+    justify-content 0.24s ease;
+  font-size: 12px;
 }
 
 .group-item:hover {
@@ -828,27 +881,152 @@ onUnmounted(() => {
 .group-item-label {
   display: inline-flex;
   align-items: center;
-  flex: 1;
+  flex: 0 1 auto;
+  max-width: 100px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+  transition:
+    max-width 0.24s ease,
+    justify-content 0.24s ease;
+}
+
+.group-label-text {
+  display: inline-block;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 0.18s ease,
+    transform 0.24s ease,
+    max-width 0.24s ease;
+}
+
+.group-label-text.hidden {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-6px);
+}
+
+.group-name-text {
+  display: inline-block;
+  max-width: calc(100px - 14px);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 0.18s ease,
+    transform 0.24s ease,
+    max-width 0.24s ease;
+}
+
+.group-name-text.hidden {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-6px);
 }
 
 .group-item-actions {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  font-size: 12px;
+  max-width: 52px;
+  opacity: 1;
+  transform: translateX(0);
+  overflow: hidden;
+  transition:
+    opacity 0.18s ease,
+    transform 0.24s ease,
+    max-width 0.24s ease;
+}
+
+.group-item-actions.hidden {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(8px);
+  pointer-events: none;
 }
 
 .group-item .action-btn {
   opacity: 0;
   padding: 0 4px;
+  font-size: 12px;
+  line-height: 1;
   transition: opacity 0.2s;
 }
 
 .group-item:hover .action-btn {
   opacity: 1;
+}
+
+.group-collapse-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0;
+  opacity: 0;
+  transform: scale(0.8);
+  font-size: 12px;
+  overflow: hidden;
+  transition:
+    width 0.24s ease,
+    opacity 0.18s ease,
+    transform 0.24s ease;
+}
+
+.group-collapse-icon.visible {
+  width: 18px;
+  opacity: 1;
+  transform: scale(1);
+}
+
+.group-sidebar-collapsed .group-item {
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.group-sidebar-collapsed .group-item-label {
+  flex: none;
+  max-width: 24px;
+  justify-content: center;
+}
+
+.group-sidebar-collapsed .group-color-dot {
+  width: 10px;
+  height: 10px;
+  margin-right: 0;
+}
+
+.group-color-dot {
+  transition:
+    width 0.24s ease,
+    height 0.24s ease,
+    margin 0.24s ease,
+    transform 0.24s ease;
+}
+
+.group-collapse-toggle {
+  margin-top: 6px;
+  padding: 6px 0;
+  border-top: 1px solid #f0f0f0;
+  color: #1677ff;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: center;
+  user-select: none;
+}
+
+.group-collapse-toggle:hover {
+  background: #f5f5f5;
 }
 
 .group-color-dot {
