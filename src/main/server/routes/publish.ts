@@ -13,6 +13,7 @@ import { getRunningProfiles, isProfileRunning } from "../../browser/launcher"
 import { XGraphQLClient } from "../services/x-graphql-client"
 import { executePublish, PublishMediaInput } from "../services/publish-executor"
 import { parseMediaUrls } from "../services/publish-scheduler"
+import { resolveCurrentXUsername } from "../services/x-username-resolver"
 
 const router = Router()
 
@@ -81,12 +82,20 @@ router.get("/accounts", async (_req, res) => {
     const nowUnix = Math.floor(Date.now() / 1000)
     for (const p of all) {
       let status = "offline"
+      let username = ""
       if (running.indexOf(p.id) >= 0) {
-        try { const c = new XGraphQLClient(); const k = await c.loadCookiesFromProfile(p.id); if (k.auth_token) status = "healthy" } catch {}
+        try {
+          const c = new XGraphQLClient()
+          const k = await c.loadCookiesFromProfile(p.id)
+          if (k.auth_token) {
+            status = "healthy"
+            username = await resolveCurrentXUsername(p.id)
+          }
+        } catch {}
       }
       const st = db.prepare("SELECT COUNT(*) as c FROM publish_queue WHERE profile_id=? AND status='success' AND created_at>?")
       const cr: any = st.get([p.id, nowUnix - 86400])
-      result.push({ profileId: p.id, profileName: p.title, username: "", status, todayCount: cr?.c || 0, lastCheckTime: Date.now() })
+      result.push({ profileId: p.id, profileName: p.title, username, status, todayCount: cr?.c || 0, lastCheckTime: Date.now() })
     }
     res.json({ code: 0, data: result, message: "ok" })
   } catch (e: any) { res.status(500).json({ code: 500, message: e.message }) }

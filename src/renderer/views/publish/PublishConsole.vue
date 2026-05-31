@@ -111,6 +111,9 @@
               {{ statusLabel(record.status) }}
             </a-tag>
           </template>
+          <template v-if="column.key === 'username'">
+            {{ formatUsername(record.username) }}
+          </template>
           <template v-if="column.key === 'action'">
             <a-button size="small" @click="checkHealth(record.profileId)" :loading="checkingId === record.profileId">检测</a-button>
           </template>
@@ -214,7 +217,7 @@ const accountColumns = [
 const accountOptions = computed(() => {
   return accounts.value
     .filter(a => a.status !== 'offline')
-    .map(a => ({ value: String(a.profileId), label: `${a.profileName} (@${a.username || '?'})` }))
+    .map(a => ({ value: String(a.profileId), label: `${a.profileName} (${formatUsername(a.username)})` }))
 })
 
 const currentCharLimit = computed(() => isSubscribedUser.value ? 10000 : 280)
@@ -275,10 +278,14 @@ function statusLabel(s: string) {
   if (s === 'suspected') return '疑似失效'
   return '已掉线'
 }
+function formatUsername(username?: string) {
+  const raw = String(username || '').trim().replace(/^@+/, '')
+  return raw ? `@${raw}` : '@?'
+}
 function getProfileName(pid: string) {
   const id = parseInt(pid)
   const a = accountsMap.value[id]
-  return a ? `${a.profileName} (@${a.username || '?'})` : `Profile ${pid}`
+  return a ? `${a.profileName} (${formatUsername(a.username)})` : `Profile ${pid}`
 }
 
 async function loadAccounts() {
