@@ -1,17 +1,27 @@
 /**
- * AI 服务配置
- * 优先读取环境变量，提供合理默认值
+ * AI 服务配置（DeepSeek + 可选 Ollama 降级）
+ *
+ * 默认使用 DeepSeek API；如需切回 Ollama，设置环境变量 AI_PROVIDER=ollama。
  */
 
 export interface AIConfig {
-  /** Ollama 服务 host（如 http://10.0.0.115:11434） */
+  /** 当前 AI 提供商：deepseek | ollama */
+  provider: 'deepseek' | 'ollama'
+
+  // --- DeepSeek 配置 ---
+  /** DeepSeek API Key */
+  deepseekApiKey: string
+  /** DeepSeek API 地址 */
+  deepseekBaseUrl: string
+  /** DeepSeek 默认模型 */
+  deepseekModel: string
+
+  // --- Ollama 配置（保留兼容）---
   ollamaHost: string
-  /** 默认模型 */
   defaultModel: string
-  /** 评论生成模型（可与默认模型不同，便于用更小模型评论） */
   commentModel: string
-  /** 命令解析模型 */
   commandModel: string
+
   /** 单次请求超时（ms） */
   requestTimeoutMs: number
   /** 命令解析重试次数 */
@@ -29,13 +39,18 @@ export function loadAIConfig(): AIConfig {
   if (cached) return cached
 
   cached = {
+    provider: (process.env.AI_PROVIDER || 'deepseek') as 'deepseek' | 'ollama',
+
+    deepseekApiKey: process.env.DEEPSEEK_API_KEY || 'sk-753cdb5b8ce74b9f928aa0db7fcd22f7',
+    deepseekBaseUrl: (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, ''),
+    deepseekModel: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+
     ollamaHost: (process.env.OLLAMA_HOST || 'http://localhost:11434').replace(/\/+$/, ''),
-    // 默认模型：qwen3:32b-q4_K_M（高质量但较慢，需 ~20GB 显存）
     defaultModel: process.env.OLLAMA_MODEL || 'qwen3:32b-q4_K_M',
     commentModel: process.env.OLLAMA_COMMENT_MODEL || process.env.OLLAMA_MODEL || 'qwen3:32b-q4_K_M',
     commandModel: process.env.OLLAMA_COMMAND_MODEL || process.env.OLLAMA_MODEL || 'qwen3:32b-q4_K_M',
-    // 32B 模型评论思考较慢，超时给到 10 分钟
-    requestTimeoutMs: parseInt(process.env.OLLAMA_TIMEOUT_MS || '600000', 10),
+
+    requestTimeoutMs: parseInt(process.env.AI_TIMEOUT_MS || process.env.OLLAMA_TIMEOUT_MS || '120000', 10),
     commandMaxRetries: parseInt(process.env.AI_COMMAND_RETRIES || '3', 10),
     commentMaxRetries: parseInt(process.env.AI_COMMENT_RETRIES || '1', 10)
   }

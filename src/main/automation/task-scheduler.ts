@@ -8,6 +8,7 @@
 import { getDatabase } from '../server/db'
 import { executeTask, TaskCallbacks } from './task-executor'
 import { TaskPlan, TaskProgress } from '../../shared/automation/task-types'
+import { normalizePlan } from '../../shared/automation/task-validator'
 import { getActiveProfileIds } from '../browser/launcher'
 
 // ==================== 类型 ====================
@@ -138,7 +139,23 @@ function scheduleAll(): void {
 
 async function startRun(run: TaskRunRow): Promise<void> {
   const db = getDatabase()
-  const plan: TaskPlan = JSON.parse(run.plan_json)
+  let plan: TaskPlan = JSON.parse(run.plan_json)
+
+  // 兜底：对已入库的 plan 也执行 normalizePlan 修正
+  // 主要修正：AI 自创 segments 但没有 comment 等问题
+  try {
+    const normalized = normalizePlan(plan, plan.raw_command)
+    // 只有产生了有效修正才写回 DB
+    if (normalized.return_to_home !== plan.return_to_home ||
+        normalized.constraints.position_plan !== plan.constraints.position_plan ||
+        normalized.operations.length !== plan.operations.length ||
+        normalized.segments !== plan.segments) {
+      plan = normalized
+      db.prepare('UPDATE task_runs SET plan_json = ? WHERE id = ?').run(JSON.stringify(normalized), run.id)
+    }
+  } catch (e: any) {
+    console.warn(`[TaskScheduler:${run.id}] normalizePlan 修正失败（不影响执行）: ${e.message}`)
+  }
   const abortController = new AbortController()
   const logs: string[] = []
 

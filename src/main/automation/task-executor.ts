@@ -57,6 +57,14 @@ export async function executeTask(
     // 迭代 5.0: 采集任务走独立路径
     if (plan.action === 'extraction' && plan.extraction) {
       await executeExtraction(driver, plan, progress, callbacks, signal)
+
+      if (plan.return_to_home) {
+        callbacks.onLog('操作完成，正在导航回首页...')
+        await driver.navigate('https://x.com/home', 3000)
+        await sleepFixed(1000)
+        callbacks.onLog('已回到首页')
+      }
+
       progress.stage = 'done'
       callbacks.onProgress(progress)
       callbacks.onLog('采集任务执行完毕')
@@ -76,6 +84,13 @@ export async function executeTask(
     progress.stage = 'executing'
     callbacks.onProgress(progress)
     await executeOperations(driver, plan, slotMap, progress, callbacks, signal)
+
+    if (plan.return_to_home) {
+      callbacks.onLog('操作完成，正在导航回首页...')
+      await driver.navigate('https://x.com/home', 3000)
+      await sleepFixed(1000)
+      callbacks.onLog('已回到首页')
+    }
 
     progress.stage = 'done'
     callbacks.onProgress(progress)
@@ -510,7 +525,12 @@ async function executeSegments(
         } catch (err: any) {
           callbacks.onError(`段${si + 1}[第${pos}条] ${op} 失败: ${err.message}`)
         }
-        await sleep(1000, 3000)
+        // 按操作类型区分间隔：点赞/转发/关注 +3s，评论 +5s
+        if (op === 'comment') {
+          await sleep(6000, 8000)
+        } else {
+          await sleep(4000, 6000)
+        }
       }
 
       progress.processed++
@@ -519,9 +539,9 @@ async function executeSegments(
       // 关闭可能残留的弹窗（转推确认框 / 回复弹窗等），确保下一轮能正常获取推文
       await driver.pressKey('Escape')
       await sleepFixed(500)
-      // 向下滚动，让下一条推文进视口
+      // 向下滚动，让下一条推文进视口（浏览 +2s）
       await driver.evaluate('window.scrollBy(0, window.innerHeight * 0.6)')
-      await sleep(1000, 2000)
+      await sleep(3000, 4000)
     }
   }
 
@@ -635,14 +655,19 @@ async function executeOperations(
             break
         }
       } catch (err: any) { callbacks.onError(`[第 ${logicalIndex} 条] ${op} 失败: ${err.message}`) }
-      await sleep(1000, 3000)
+      // 按操作类型区分间隔：点赞/转发/关注 +3s，评论 +5s
+      if (op === 'comment') {
+        await sleep(6000, 8000)
+      } else {
+        await sleep(4000, 6000)
+      }
     }
 
     progress.processed++
     callbacks.onProgress(progress)
 
     await driver.evaluate('window.scrollBy(0, window.innerHeight * 0.5)')
-    await sleep(2000, 4000)
+    await sleep(4000, 6000)
   }
 
   if (plan.pause_after) {
@@ -759,8 +784,14 @@ async function doComment(driver: CDPDriver, plan: TaskPlan, tweetSelector: strin
   if (!tweetText) { callbacks.onLog('推文文本为空，跳过评论'); return }
 
   callbacks.onLog('正在为推文生成评论...')
-  const result = await generateComment(tweetText, { platformId: plan.platform || 'twitter' })
-  callbacks.onLog('AI 评论: ' + result.comment)
+  let result
+  try {
+    result = await generateComment(tweetText, { platformId: plan.platform || 'twitter' })
+    callbacks.onLog('AI 评论: ' + result.comment)
+  } catch (err: any) {
+    callbacks.onLog(`AI 评论生成失败: ${err.message}，跳过评论`)
+    return
+  }
 
   const opened = await driver.evaluate(`
     (function() {
@@ -795,7 +826,13 @@ async function doComment(driver: CDPDriver, plan: TaskPlan, tweetSelector: strin
       return { ok: true };
     })()
   `) as { ok: boolean }
-  callbacks.onLog(submitted.ok ? '💬 评论已发送' : '评论发送按钮不可用')
+  if (!submitted.ok) {
+    callbacks.onLog('评论发送按钮不可用，关闭弹窗后继续')
+    await driver.pressKey('Escape')
+    await sleepFixed(500)
+    return
+  }
+  callbacks.onLog('💬 评论已发送')
 
   await sleepFixed(500)
   await driver.pressKey('Escape')

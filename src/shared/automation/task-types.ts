@@ -80,6 +80,8 @@ export interface TaskPlan {
   platform?: string
   /** 用户原始指令（可选，便于追溯） */
   raw_command?: string
+  /** 所有操作完成后是否导航回首页 */
+  return_to_home?: boolean
 }
 
 /** 任务进度 */

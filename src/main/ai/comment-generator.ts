@@ -1,11 +1,11 @@
 /**
  * 评论生成器
- * 基于推文内容用 Ollama AI 生成评论
+ * 基于推文内容用 AI（DeepSeek）生成评论
  *
- * 流程：tweetText → detectLanguage → buildPrompt → Ollama → cleanComment → 评论
+ * 流程：tweetText → detectLanguage → buildPrompt → DeepSeek → cleanComment → 评论
  */
 
-import { OllamaClient } from '../../shared/ai/ollama-client'
+import { DeepSeekClient } from '../../shared/ai/deepseek-client'
 import { detectLanguage, LanguageInfo } from '../../shared/ai/language-detector'
 import { buildCommentPrompt, pickRandomEmoji } from '../../shared/ai/prompts/comment-reply'
 import { getPlatformById } from '../../shared/platforms'
@@ -72,18 +72,16 @@ export async function generateComment(
   // 3. 构建 prompt
   const prompt = buildCommentPrompt(tweetText, language)
 
-  // 4. 创建 Ollama client
-  // 关闭 think 模式 → 评论生成速度提升 5~10 倍；评论是短文本，不需要长思考
-  const client = new OllamaClient({
-    baseUrl: config.ollamaHost,
-    model: config.commentModel,
+  // 4. 创建 AI 客户端
+  const client = new DeepSeekClient({
+    apiKey: config.deepseekApiKey,
+    baseUrl: config.deepseekBaseUrl,
+    model: config.deepseekModel,
     timeout: config.requestTimeoutMs,
     // 评论用稍高一点的温度让结果更自然
     temperature: 0.7,
     topP: 0.9,
-    numPredict: 200,
-    numCtx: 2048,
-    think: false
+    maxTokens: 200
   })
 
   let lastRaw = ''
@@ -95,7 +93,7 @@ export async function generateComment(
         const resp = await client.generate(prompt, { signal: options.signal })
         lastRaw = resp.content
 
-        // 平台特定清洗（含 think 检测、长度裁剪、前缀去除）
+        // 平台特定清洗（含长度裁剪、前缀去除）
         const cleaned = platform.cleanComment(resp.content, language)
         if (!cleaned) {
           throw new Error('清洗后评论为空')

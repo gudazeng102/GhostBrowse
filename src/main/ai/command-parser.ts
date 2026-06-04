@@ -1,11 +1,11 @@
 /**
  * 命令解析器
- * 将用户自然语言指令通过 Ollama AI 解析为 TaskPlan
+ * 将用户自然语言指令通过 AI（DeepSeek）解析为 TaskPlan
  *
- * 流程：userCommand → buildPrompt → Ollama → extractJSON → normalizePlan → TaskPlan
+ * 流程：userCommand → buildPrompt → DeepSeek → extractJSON → normalizePlan → TaskPlan
  */
 
-import { OllamaClient } from '../../shared/ai/ollama-client'
+import { DeepSeekClient } from '../../shared/ai/deepseek-client'
 import { extractValidJSON } from '../../shared/ai/json-extractor'
 import { stripThinkingBlocks } from '../../shared/ai/thinking-filter'
 import { buildTwitterCommandPrompt } from '../../shared/ai/prompts/twitter-command'
@@ -49,17 +49,16 @@ export async function parseCommand(
   // 构建 prompt
   const prompt = buildTwitterCommandPrompt(userCommand)
 
-  // 创建 Ollama client
-  // 关闭 think 模式 → 速度提升 5~10 倍；命令解析是结构化输出，不需要思考
-  const client = new OllamaClient({
-    baseUrl: config.ollamaHost,
-    model: config.commandModel,
+  // 创建 AI 客户端
+  const client = new DeepSeekClient({
+    apiKey: config.deepseekApiKey,
+    baseUrl: config.deepseekBaseUrl,
+    model: config.deepseekModel,
     timeout: config.requestTimeoutMs,
-    numPredict: 512,
-    numCtx: 4096,
+    // 命令解析用低温度确保稳定输出
     temperature: 0.0,
     topP: 0.1,
-    think: false
+    maxTokens: 512
   })
 
   let lastRaw = ''
