@@ -82,6 +82,8 @@ export interface TaskPlan {
   raw_command?: string
   /** 所有操作完成后是否导航回首页 */
   return_to_home?: boolean
+  /** 预置评论内容（不为空时，AI 不再重新生成，直接使用此内容评论） */
+  presetCommentText?: string
 }
 
 /** 任务进度 */

@@ -116,7 +116,8 @@ export function normalizePlan(raw: any, userCommand?: string): TaskPlan {
     },
     duration_minutes: 0,
     pause_after: false,
-    raw_command: userCommand
+    raw_command: userCommand,
+    presetCommentText: raw.presetCommentText
   }
 
   if (raw.constraints && typeof raw.constraints === 'object') {

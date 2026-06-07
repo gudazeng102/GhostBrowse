@@ -24,6 +24,9 @@ import taskQueueRouter from './routes/task-queue'
 import extractionRouter from './routes/extraction'
 import xGraphqlRouter from './routes/x-graphql'
 import publishRouter from './routes/publish'
+import trendRadarRouter from './routes/trend-radar'
+import trendingRouter from './routes/trending'
+import composeRouter from './routes/compose'
 import { initScheduler } from '../automation/task-scheduler'
 import { startPublishScheduler } from './services/publish-scheduler'
 
@@ -137,6 +140,15 @@ export function createApp(): Express {
 
   // ==================== 迭代 6.0: 联动发布模块 API ====================
   app.use('/api/v1/publish', publishRouter)
+
+  // ==================== 迭代 8.0: Trend Radar 热点分析 API ====================
+  app.use('/api/v1/trend-radar', trendRadarRouter)
+
+  // ==================== 迭代 8.0: X 热搜话题抓取 API ====================
+  app.use('/api/v1/trending', trendingRouter)
+
+  // ==================== 迭代 8.0: 发推页面 API ====================
+  app.use('/api/v1/compose', composeRouter)
 
   // ==================== 捕获所有路由，返回 index.html (SPA 支持) ====================
   app.get('*', (req: Request, res: Response) => {

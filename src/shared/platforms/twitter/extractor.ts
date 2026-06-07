@@ -100,6 +100,40 @@ export const EXTRACT_FOLLOWING_LIST_CODE = `
 `
 
 /**
+ * 提取当前登录用户的 Twitter handle
+ * 从侧边栏 Profile 链接或 account switcher 获取
+ */
+export const EXTRACT_SELF_HANDLE_CODE = `
+  (function() {
+    // 方式1：侧边栏 Profile 链接
+    var profileLink = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]');
+    if (profileLink) {
+      var href = profileLink.getAttribute('href') || '';
+      var handle = href.split('/').filter(Boolean)[0] || '';
+      if (handle) return handle.replace(/^@/, '');
+    }
+    // 方式2：account switcher 按钮内的显示名
+    var switcher = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
+    if (switcher) {
+      var spans = switcher.querySelectorAll('span');
+      for (var i = 0; i < spans.length; i++) {
+        var text = spans[i].innerText || '';
+        if (text.startsWith('@') && text.length > 1) return text.replace(/^@/, '');
+      }
+    }
+    // 方式3：从 cookie 中读取 screen_name
+    var cookies = document.cookie.split(';');
+    for (var i = 0; i < cookies.length; i++) {
+      var c = cookies[i].trim();
+      if (c.startsWith('screen_name=')) {
+        return c.substring('screen_name='.length);
+      }
+    }
+    return '';
+  })()
+`
+
+/**
  * 迭代 5.4: 提取用户资料
  * 从用户主页提取头像/简介/关注数/粉丝数/位置/加入日期
  * 一次性提取，不滚动

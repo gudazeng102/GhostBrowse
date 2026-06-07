@@ -11,7 +11,7 @@ import { Logger } from '../../shared/utils/logger'
 import { TWITTER_SELECTORS } from '../../shared/platforms/twitter/selectors'
 import { buildTwitterHomeUrl, buildTwitterFollowingUrl, buildTwitterUserUrl } from '../../shared/platforms/twitter/urls'
 import { generateComment } from '../ai/comment-generator'
-import { extractTweetFromElement, CHECK_LOGIN_CODE, EXTRACT_USER_PROFILE_CODE, EXTRACT_FOLLOWING_LIST_CODE } from '../../shared/platforms/twitter/extractor'
+import { extractTweetFromElement, CHECK_LOGIN_CODE, EXTRACT_USER_PROFILE_CODE, EXTRACT_FOLLOWING_LIST_CODE, EXTRACT_SELF_HANDLE_CODE } from '../../shared/platforms/twitter/extractor'
 
 const logger = new Logger('TaskExecutor')
 
@@ -164,6 +164,17 @@ async function executeExtraction(
       throw new Error('Twitter 未登录，请先配置平台账号并启动登录后再试')
     }
     callbacks.onLog('✅ Twitter 已登录')
+
+    // 提取当前登录窗口的 Twitter 用户名（用于后续 AI 分析时过滤自己）
+    try {
+      const selfHandle = await driver.evaluate(EXTRACT_SELF_HANDLE_CODE) as string
+      if (selfHandle && selfHandle.length > 0 && callbacks.onData) {
+        callbacks.onData('self_handle', JSON.stringify({ handle: selfHandle.replace(/^@/, '') }))
+        callbacks.onLog(`👤 当前窗口登录账号: @${selfHandle.replace(/^@/, '')}`)
+      }
+    } catch (e: any) {
+      callbacks.onLog(`⚠️ 获取当前登录账号失败: ${(e.message || '').substring(0, 50)}`)
+    }
   }
 
   // Step 2: 根据目标类型导航
@@ -783,14 +794,21 @@ async function doComment(driver: CDPDriver, plan: TaskPlan, tweetSelector: strin
   `) as string
   if (!tweetText) { callbacks.onLog('推文文本为空，跳过评论'); return }
 
-  callbacks.onLog('正在为推文生成评论...')
-  let result
-  try {
-    result = await generateComment(tweetText, { platformId: plan.platform || 'twitter' })
-    callbacks.onLog('AI 评论: ' + result.comment)
-  } catch (err: any) {
-    callbacks.onLog(`AI 评论生成失败: ${err.message}，跳过评论`)
-    return
+  // 如果有预置评论内容，直接使用；否则让 AI 实时生成
+  let commentBody: string
+  if (plan.presetCommentText) {
+    commentBody = plan.presetCommentText
+    callbacks.onLog('使用预置文案: ' + commentBody.substring(0, 60) + '...')
+  } else {
+    callbacks.onLog('正在为推文生成评论...')
+    try {
+      const result = await generateComment(tweetText, { platformId: plan.platform || 'twitter' })
+      commentBody = result.comment
+      callbacks.onLog('AI 评论: ' + commentBody)
+    } catch (err: any) {
+      callbacks.onLog(`AI 评论生成失败: ${err.message}，跳过评论`)
+      return
+    }
   }
 
   const opened = await driver.evaluate(`
@@ -811,7 +829,7 @@ async function doComment(driver: CDPDriver, plan: TaskPlan, tweetSelector: strin
       const editor = document.querySelector('div[data-testid="tweetTextarea_0"]');
       if (!editor) return { ok: false };
       editor.focus();
-      document.execCommand('insertText', false, ${JSON.stringify(result.comment)});
+      document.execCommand('insertText', false, ${JSON.stringify(commentBody)});
       return { ok: true };
     })()
   `) as { ok: boolean }
