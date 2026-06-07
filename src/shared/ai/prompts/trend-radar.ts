@@ -130,7 +130,16 @@ export function extractUserInfoMap(rawData: any[]): Map<string, UserInfo> {
       data = item
     }
 
-    const handle = (data.authorHandle || data.userName || '').toLowerCase().replace(/^@/, '')
+    // 优先从 url 提取真实 handle（稳定可靠），fallback 到 authorHandle
+    // url 格式: https://x.com/SoujiOniwa/status/xxx
+    let handle = ''
+    if (data.url) {
+      const parts = data.url.replace('https://x.com/', '').replace('https://twitter.com/', '').split('/')
+      handle = (parts[0] || '').toLowerCase()
+    }
+    if (!handle) {
+      handle = (data.authorHandle || data.userName || '').toLowerCase().replace(/^@/, '')
+    }
     const displayName = data.authorName || ''
 
     if (handle && !map.has(handle)) {

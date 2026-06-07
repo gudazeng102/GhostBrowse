@@ -208,7 +208,8 @@ export async function analyzeTrend(
       targetAccountName = ''
       targetAccountHandle = ''
     }
-    // 规则二：必须在作者列表中（userInfoMap），否则是 AI 编造/幻觉
+    // 规则二：不在作者列表中 → 只加警告，不清空 targetAccount
+    // 保留 AI 推荐的账号值，让用户自己去判断是否要去评论
     else {
       const userInfo = userInfoMap.get(targetAccount.toLowerCase())
       if (userInfo) {
@@ -216,28 +217,26 @@ export async function analyzeTrend(
         targetAccountHandle = userInfo.handle
         // 校验通过，无告警
       } else {
-        targetAccountWarning = `AI 推荐了 @${targetAccount}（不在采集数据的推文作者中，已自动清除）`
-        logger.warning(`AI 推荐的 "@${targetAccount}" 不是推文作者，已强制清除`)
-        targetAccount = ''
-        targetAccountName = ''
-        targetAccountHandle = ''
+        // 从 allValidHandles 判断目标是否在 @提及中出现过
+        const allValidHandles = extractMentionedHandles(rawTweets)
+        const mentioned = allValidHandles.has(targetAccount.toLowerCase())
+        targetAccountWarning = mentioned
+          ? `AI 推荐了 @${targetAccount}（该账号在推文文本中被 @提及，不在采集数据的推文作者中，建议人工确认是否为真实目标）`
+          : `AI 推荐了 @${targetAccount}（该账号不在本次采集数据中，建议人工确认该账号是否存在）`
+        logger.warning(`AI 推荐了 "@${targetAccount}"，不在推文作者列表中，已保留给用户确认`)
+        targetAccountName = targetAccount
+        targetAccountHandle = targetAccount
       }
     }
   }
 
-  // ---- 兜底：如果 targetAccount 被清空（AI 编造/自己）且原策略是互动类 → 降级为原创发推 ----
-  // 用户采集话题的目的是蹭热点，至少应该拿到可用文案
-  if (!targetAccount && (strategyRaw.action === 'comment' || strategyRaw.action === 'retweet')) {
-    logger.info('目标账号无效，策略自动降级为 original（原创发推）')
-  }
-
-  // 提取采集数据中 @提及 仅用于日志（不再用于放行判断）
+  // 提取采集数据中 @提及 仅用于日志
   const allValidHandles = extractMentionedHandles(rawTweets)
-  if (targetAccount && !allValidHandles.has(targetAccount.toLowerCase())) {
-    logger.info(`最终 targetAccount @${targetAccount} 在采集数据中有出现`)
+  if (targetAccount && allValidHandles.has(targetAccount.toLowerCase())) {
+    logger.info(`targetAccount @${targetAccount} 在采集数据的 @提及 中出现过`)
   }
 
-  const selectedAction = targetAccount ? (strategyRaw.action || 'original') : 'original'
+  const selectedAction = strategyRaw.action || 'original'
 
   const selectedStrategy: TrendAnalysisStrategy = {
     targetAccount: targetAccount ? `@${targetAccount}` : '',
